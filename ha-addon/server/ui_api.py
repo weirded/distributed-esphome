@@ -276,6 +276,30 @@ async def set_client_disabled(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "disabled": disabled})
 
 
+@routes.post("/ui/api/queue/clear")
+async def clear_queue(request: web.Request) -> web.Response:
+    """Remove terminal jobs from the queue permanently.
+
+    Body: { "states": ["success"] }  or  { "states": ["success", "failed", "timed_out"] }
+    Returns: { "cleared": N }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    states = body.get("states", [])
+    if not isinstance(states, list):
+        return web.json_response({"error": "states must be a list"}, status=400)
+
+    queue = request.app["queue"]
+    try:
+        cleared = await queue.clear(states)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"cleared": cleared})
+
+
 @routes.post("/ui/api/cancel")
 async def cancel_jobs(request: web.Request) -> web.Response:
     """Cancel jobs by id.

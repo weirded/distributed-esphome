@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 SERVER_URL = os.environ["SERVER_URL"].rstrip("/")
 SERVER_TOKEN = os.environ["SERVER_TOKEN"]
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "1"))
 HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "10"))
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "300"))
 OTA_TIMEOUT = int(os.environ.get("OTA_TIMEOUT", "120"))
@@ -54,7 +54,7 @@ HEADERS = {
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.1"
+CLIENT_VERSION = "0.0.2"
 
 # Set when the heartbeat detects a newer server-side client bundle.
 # Checked in the main loop so updates only happen between jobs.
@@ -291,6 +291,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager) -> None:
         # OTA phase (with one retry on failure)
         # ---------------------------------------------------------------
         ota_result = "failed"
+        ota_logs: list[str] = []
         for attempt in range(2):
             if attempt > 0:
                 logger.info("OTA failed, retrying in 5s (attempt %d/2)", attempt + 1)
@@ -303,6 +304,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager) -> None:
                 timeout=OTA_TIMEOUT,
                 label=f"OTA upload (attempt {attempt + 1})",
             )
+            ota_logs.append(ota_log)
             if ota_ok:
                 ota_result = "success"
                 break
@@ -310,7 +312,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager) -> None:
                 break  # Don't retry timeouts
 
         logger.info("OTA result for job %s: %s", job_id, ota_result)
-        _submit_ota_result(job_id, ota_result)
+        _submit_ota_result(job_id, ota_result, "\n".join(ota_logs))
 
     finally:
         _in_job = False
@@ -407,13 +409,13 @@ def _submit_result(
                 time.sleep(2)
 
 
-def _submit_ota_result(job_id: str, ota_result: str) -> None:
-    """POST OTA result update to server."""
+def _submit_ota_result(job_id: str, ota_result: str, ota_log: str) -> None:
+    """POST OTA result (and log) update to server."""
     for attempt in range(3):
         try:
             resp = post(
                 f"/api/v1/jobs/{job_id}/result",
-                {"status": "success", "ota_result": ota_result},
+                {"status": "success", "ota_result": ota_result, "log": ota_log},
                 timeout=30,
             )
             if resp.ok:
@@ -479,6 +481,7 @@ def main() -> None:
             if _update_available.is_set() and not _in_job:
                 _apply_update()  # may os.execv — never returns on success
 
+            did_work = False
             try:
                 resp = requests.get(
                     f"{SERVER_URL}/api/v1/jobs/next",
@@ -495,6 +498,7 @@ def main() -> None:
                     job = resp.json()
                     logger.info("Claimed job %s for target %s", job["job_id"], job["target"])
                     run_job(client_id, job, version_manager)
+                    did_work = True
                 else:
                     logger.warning("Unexpected response from jobs/next: %d", resp.status_code)
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
@@ -502,7 +506,8 @@ def main() -> None:
             except Exception as exc:
                 logger.exception("Unexpected error in poll loop: %s", exc)
 
-            time.sleep(POLL_INTERVAL)
+            if not did_work:
+                time.sleep(POLL_INTERVAL)
     except KeyboardInterrupt:
         logger.info("Shutting down")
     finally:

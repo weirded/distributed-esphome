@@ -240,9 +240,11 @@ class JobQueue:
             if job is None:
                 return False
 
-            # OTA-only update on an already-finished job
-            if job.state in (JobState.SUCCESS, JobState.FAILED) and ota_result is not None and log is None:
+            # OTA update on an already-finished job (ota_result required; log is appended if provided)
+            if job.state in (JobState.SUCCESS, JobState.FAILED) and ota_result is not None:
                 job.ota_result = ota_result
+                if log is not None:
+                    job.log = (job.log or "") + "\n" + log
                 job.status_text = None
                 self._persist()
                 logger.info("Job %s OTA result: %s", job_id, ota_result)
@@ -376,3 +378,18 @@ class JobQueue:
             for j in self._jobs.values()
             if j.state in (JobState.PENDING, JobState.ASSIGNED, JobState.RUNNING)
         )
+
+    async def clear(self, states: list[str]) -> int:
+        """Remove terminal jobs whose state is in *states*. Returns count removed."""
+        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT}
+        target_states = {JobState(s) for s in states if JobState(s) in terminal}
+        async with self._lock:
+            to_remove = [
+                job_id for job_id, job in self._jobs.items()
+                if job.state in target_states
+            ]
+            for job_id in to_remove:
+                del self._jobs[job_id]
+            if to_remove:
+                self._persist()
+            return len(to_remove)

@@ -463,7 +463,9 @@
       <h2>Queue</h2>
       <div class="actions">
         <button class="btn-warn btn-sm" onclick="retryAllFailed()">Retry All Failed</button>
+        <button class="btn-warn btn-sm" id="btn-retry-selected" onclick="retrySelected()">Retry Selected</button>
         <button class="btn-danger btn-sm" id="btn-cancel-selected" onclick="cancelSelected()">Cancel Selected</button>
+        <button class="btn-secondary btn-sm" onclick="clearSucceeded()">Clear Succeeded</button>
         <button class="btn-secondary btn-sm" onclick="clearFinished()">Clear Finished</button>
       </div>
     </div>
@@ -1010,12 +1012,48 @@ async function forceUpgrade(target) {
   await doCompile([target]);
 }
 
-function clearFinished() {
-  // Client-side only: collapse finished jobs from view by filtering them out of display
-  // (They still exist in the server queue; this is just a UI convenience)
-  queueData = queueData.filter(j => !['success','failed'].includes(j.state));
-  expandedJobs.clear();
-  renderQueue();
+async function retrySelected() {
+  const checked = [...document.querySelectorAll('.job-checkbox:checked')];
+  const ids = checked
+    .map(cb => cb.dataset.jobId)
+    .filter(id => {
+      const job = queueData.find(j => j.id === id);
+      return job && ['failed','timed_out'].includes(job.state);
+    });
+  if (!ids.length) { toast('No failed/timed-out jobs selected', 'warn'); return; }
+  await retryJobs(ids);
+}
+
+async function clearSucceeded() {
+  const r = await apiFetch('./ui/api/queue/clear', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ states: ['success'] }),
+  });
+  if (r.ok) {
+    const data = await r.json();
+    expandedJobs.clear();
+    toast(`Cleared ${data.cleared} succeeded job(s)`, 'success');
+    await refreshQueue();
+  } else {
+    toast('Clear failed', 'error');
+  }
+}
+
+async function clearFinished() {
+  const r = await apiFetch('./ui/api/queue/clear', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ states: ['success', 'failed', 'timed_out'] }),
+  });
+  if (r.ok) {
+    const data = await r.json();
+    expandedJobs.clear();
+    toast(`Cleared ${data.cleared} finished job(s)`, 'success');
+    await refreshQueue();
+  } else {
+    toast('Clear failed', 'error');
+  }
 }
 
 // ============================================================
