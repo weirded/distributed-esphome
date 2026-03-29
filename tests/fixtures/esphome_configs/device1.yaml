@@ -1,0 +1,28 @@
+substitutions:
+  device_name: device1
+
+esphome:
+  name: ${device_name}
+  friendly_name: "Device One"
+
+esp8266:
+  board: d1_mini
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+  level: INFO
+
+sensor:
+  - platform: uptime
+    name: "${device_name} Uptime"

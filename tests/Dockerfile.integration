@@ -1,0 +1,34 @@
+FROM python:3.11-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libffi-dev libssl-dev git \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Install client runtime deps first (layer caching)
+COPY client/requirements.txt client/requirements.txt
+RUN pip install --no-cache-dir -r client/requirements.txt
+
+# Install test deps
+RUN pip install --no-cache-dir pytest pytest-asyncio
+
+# Copy source and tests, preserving the repo structure that conftest.py expects
+COPY client/ client/
+COPY ha-addon/server/ ha-addon/server/
+COPY tests/ tests/
+COPY pytest.ini .
+
+# ESPHome venvs are installed here by VersionManager at test time.
+# PlatformIO toolchains and frameworks live in PLATFORMIO_CORE_DIR.
+# Mount named volumes to cache both across runs:
+#   docker run \
+#     -v esphome-versions-cache:/esphome-versions \
+#     -v platformio-cache:/platformio-packages \
+#     esphome-dist-test
+VOLUME /esphome-versions
+VOLUME /platformio-packages
+ENV ESPHOME_VERSIONS_DIR=/esphome-versions
+ENV PLATFORMIO_CORE_DIR=/platformio-packages
+
+CMD ["pytest", "tests/test_e2e_client.py", "-m", "integration", "-v", "-s"]

@@ -1,0 +1,6 @@
+aiohttp>=3.9
+aioesphomeapi>=18.0
+zeroconf>=0.131
+pyyaml>=6.0
+esphome>=2024.1.0
+requests>=2.31

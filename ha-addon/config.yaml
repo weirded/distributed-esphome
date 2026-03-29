@@ -1,0 +1,36 @@
+name: "ESPHome Distributed Build Server"
+version: "0.0.1"
+slug: "esphome_dist_server"
+description: "Distributed ESPHome compilation coordinator"
+url: "https://github.com/weirded/distributed-esphome"
+arch: [aarch64, amd64, armhf, armv7, i386]
+startup: application
+boot: auto
+init: false
+
+# Ingress: Web UI embedded in HA sidebar, authenticated by HA
+ingress: true
+ingress_port: 8765
+panel_icon: mdi:progress-wrench
+panel_title: "ESPH Distributed"
+
+# Direct port: build clients (Docker) connect here with Bearer token auth
+ports:
+  8765/tcp: 8765
+
+map:
+  - config:rw
+options:
+  token: ""
+  job_timeout: 300
+  ota_timeout: 120
+  client_offline_threshold: 30
+  device_poll_interval: 60
+  disable_local_client: false
+schema:
+  token: password
+  job_timeout: int
+  ota_timeout: int
+  client_offline_threshold: int
+  device_poll_interval: int
+  disable_local_client: bool

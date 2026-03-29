@@ -1,0 +1,1214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ESPHome Distributed Build</title>
+  <link rel="icon" href="https://esphome.io/favicon.ico">
+  <base href="./">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --accent: #6366f1;
+      --accent-hover: #4f52d4;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+      --orange: #f97316;
+      --radius: 8px;
+      --shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow);
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+
+    header .version-badge {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    header .spacer { flex: 1; }
+
+    header .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      .panel-left { grid-row: auto !important; }
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .panel-left {
+      grid-column: 1;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .panel-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .panel-header .actions { display: flex; gap: 8px; align-items: center; }
+
+    .panel-body { padding: 0; }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th {
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover td { background: var(--surface2); }
+
+    .empty-row td {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 28px;
+      font-size: 13px;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+
+    .badge-pending   { background: #374151; color: #9ca3af; }
+    .badge-assigned  { background: #1e3a5f; color: #60a5fa; }
+    .badge-running   { background: #1e3a5f; color: #60a5fa; }
+    .badge-success   { background: #14532d; color: #4ade80; }
+    .badge-failed    { background: #450a0a; color: #f87171; }
+    .badge-timed_out { background: #431407; color: #fb923c; }
+
+    .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+    .dot-online  { background: var(--success); }
+    .dot-offline { background: #4b5563; }
+
+    .needs-update-yes { color: var(--warn); font-weight: 600; }
+    .needs-update-no  { color: var(--text-muted); }
+
+    /* Buttons */
+    button {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary   { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+
+    .btn-danger    { background: #7f1d1d; color: #fca5a5; }
+    .btn-danger:hover:not(:disabled) { background: #991b1b; }
+
+    .btn-warn      { background: #78350f; color: #fcd34d; }
+    .btn-warn:hover:not(:disabled) { background: #92400e; }
+
+    .btn-success   { background: #14532d; color: #4ade80; border: 1px solid #166534; }
+    .btn-success:hover:not(:disabled) { background: #166534; }
+
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* Checkboxes */
+    input[type="checkbox"] {
+      width: 16px; height: 16px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
+    /* Log expand row */
+    .log-row td {
+      padding: 0;
+      background: #0d1117;
+    }
+    .log-content {
+      font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px;
+      color: #a3e635;
+      padding: 14px 18px;
+      max-height: 320px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .device-name { font-weight: 600; }
+    .device-filename { font-size: 11px; color: var(--text-muted); margin-top: 1px; font-family: monospace; }
+    .device-comment { font-size: 10px; color: #6b7280; margin-top: 1px; font-style: italic; }
+
+    /* Monaco editor modal */
+    .editor-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 400;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .editor-overlay.open { display: flex; }
+    .editor-modal {
+      background: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 1200px;
+      height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    }
+    .editor-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: #2d2d2d;
+      border-bottom: 1px solid #3c3c3c;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .editor-header h3 { font-size: 14px; font-weight: 500; color: #cccccc; flex: 1; }
+    .editor-header .modal-close { color: #888; }
+    .editor-header .modal-close:hover { color: #ccc; background: #3c3c3c; }
+    #monaco-container { flex: 1; overflow: hidden; border-radius: 0 0 var(--radius) var(--radius); }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Log modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 960px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+      gap: 12px;
+    }
+    .modal-header-left { display: flex; align-items: center; gap: 10px; }
+    .modal-header h3 { font-size: 15px; font-weight: 600; }
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 7px;
+      border-radius: var(--radius);
+      line-height: 1;
+    }
+    .modal-close:hover { background: var(--border); color: var(--text); }
+    .modal-body { flex: 1; overflow: auto; }
+    .modal-body .log-content { max-height: none; padding: 16px 18px; }
+
+    /* Toast notifications */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 999;
+    }
+
+    .toast {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      color: var(--text);
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      font-size: 13px;
+      max-width: 340px;
+      animation: slideIn 0.2s ease;
+    }
+    .toast.success { border-left-color: var(--success); }
+    .toast.error   { border-left-color: var(--danger); }
+    @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } }
+  </style>
+</head>
+<body>
+
+<header>
+  <img src="https://media.esphome.io/logo/logo-text-on-dark.svg" alt="ESPHome" height="28" style="display:block">
+  <h1 style="font-size:15px;font-weight:500;color:var(--text-muted)">Distributed Build</h1>
+  <span class="version-badge" id="server-version">v?</span>
+  <span class="spacer"></span>
+  <span class="status-dot" id="server-dot" title="Server online"></span>
+</header>
+
+<main>
+  <!-- Devices Panel (left column, spans both rows) -->
+  <div class="panel panel-left">
+    <div class="panel-header">
+      <h2>Devices</h2>
+      <div class="actions">
+        <span id="devices-count" style="font-size:12px;color:var(--text-muted)"></span>
+        <button class="btn-primary btn-sm" id="btn-upgrade-all" onclick="compileAll()">Upgrade All</button>
+        <button class="btn-secondary btn-sm" id="btn-upgrade-selected" onclick="compileSelected()">Upgrade Selected</button>
+        <button class="btn-warn btn-sm" id="btn-upgrade-outdated" onclick="upgradeOutdated()">Upgrade Outdated</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="devices-select-all" onchange="toggleDevicesSelectAll(this)"></th>
+            <th>Device</th>
+            <th>Status</th>
+            <th>IP</th>
+            <th>Running</th>
+            <th>Update</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="devices-tbody">
+          <tr class="empty-row"><td colspan="7">No targets discovered</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Right column: clients + queue stacked -->
+  <div style="display:flex;flex-direction:column;gap:20px;">
+
+  <!-- Clients Panel -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Clients</h2>
+      <div class="actions">
+        <span id="clients-count" style="font-size:12px;color:var(--text-muted)"></span>
+      </div>
+    </div>
+    <div class="panel-body">
+      <table>
+        <thead>
+          <tr>
+            <th>Hostname</th>
+            <th>Platform</th>
+            <th>Status</th>
+            <th>Current Job</th>
+            <th>Version</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="clients-tbody">
+          <tr class="empty-row"><td colspan="4">No clients registered</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Connect a Client Panel -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Connect a Client</h2>
+    </div>
+    <div class="panel-body" style="padding:14px 18px;">
+      <p style="color:var(--text-muted);font-size:12px;margin-bottom:10px;">Run this on a remote machine to connect a build client:</p>
+      <div style="position:relative;">
+        <pre id="docker-cmd" style="background:#0d1117;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;padding-right:70px;font-size:11px;font-family:monospace;color:#a3e635;white-space:pre-wrap;word-break:break-all;line-height:1.6;"></pre>
+        <button class="btn-secondary btn-sm" style="position:absolute;top:8px;right:8px;" onclick="copyDockerCmd()">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Queue Panel -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Queue</h2>
+      <div class="actions">
+        <button class="btn-warn btn-sm" onclick="retryAllFailed()">Retry All Failed</button>
+        <button class="btn-danger btn-sm" id="btn-cancel-selected" onclick="cancelSelected()">Cancel Selected</button>
+        <button class="btn-secondary btn-sm" onclick="clearFinished()">Clear Finished</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="queue-select-all" onchange="toggleSelectAll(this)"></th>
+            <th>Device</th>
+            <th>State</th>
+            <th>Client</th>
+            <th>Duration</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="queue-tbody">
+          <tr class="empty-row"><td colspan="6">No jobs in queue</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  </div> <!-- end right column -->
+</main>
+
+<div id="toast-container"></div>
+
+<!-- Monaco Editor modal -->
+<div id="editor-modal" class="editor-overlay" onclick="closeEditorModal(event)">
+  <div class="editor-modal">
+    <div class="editor-header">
+      <h3 id="editor-filename"></h3>
+      <button class="btn-primary btn-sm" onclick="saveEditor()">Save</button>
+      <button class="modal-close" onclick="closeEditorModal()">✕</button>
+    </div>
+    <div id="monaco-container"></div>
+  </div>
+</div>
+
+<!-- Log modal -->
+<div id="log-modal" class="modal-overlay" onclick="closeLogModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-header-left">
+        <h3 id="modal-title"></h3>
+        <span id="modal-state"></span>
+        <span id="modal-meta" style="font-size:12px;color:var(--text-muted)"></span>
+      </div>
+      <button class="modal-close" onclick="closeLogModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="log-content" id="modal-log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let serverVersion = '?';
+let targetsData = [];
+let devicesData = [];
+let queueData = [];
+let clientsData = [];
+let serverInfo = { token: '', port: 8765 };
+let expandedJobs = new Set(); // unused, kept for safety
+let activeRun = false;
+
+// ============================================================
+// Utility
+// ============================================================
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function stripYaml(s) {
+  return s ? s.replace(/\.ya?ml$/i, '') : s;
+}
+
+function fmtDuration(secs) {
+  if (secs == null) return '—';
+  const s = Math.round(secs);
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+async function apiFetch(path, opts={}) {
+  const resp = await fetch(path, opts);
+  return resp;
+}
+
+// ============================================================
+// Data refresh functions
+// ============================================================
+async function refreshServerInfo() {
+  try {
+    const r = await apiFetch('./ui/api/server-info');
+    if (r.ok) {
+      serverInfo = await r.json();
+      renderDockerCmd();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function clientVersionHtml(ver) {
+  if (!ver) return '<span style="color:var(--text-muted)">—</span>';
+  const scv = serverInfo.server_client_version;
+  if (!scv || ver === scv) {
+    return `<code style="font-size:11px;color:var(--text-muted)">${ver}</code>`;
+  }
+  return `<code style="font-size:11px;color:var(--warn)" title="Outdated — server: ${scv}">${ver} ↑</code>`;
+}
+
+function renderDockerCmd() {
+  const host = window.location.hostname;
+  const port = serverInfo.port || 8765;
+  const token = serverInfo.token || '';
+  const serverUrl = `http://${host}:${port}`;
+  const seedLine = serverVersion && serverVersion !== '?'
+    ? ` \\\n  -e ESPHOME_SEED_VERSION=${serverVersion}` : '';
+  const cmd = `docker run -d --restart unless-stopped \\\n  --hostname $(hostname) \\\n  -e SERVER_URL=${serverUrl} \\\n  -e SERVER_TOKEN=${token}${seedLine} \\\n  -v esphome-versions:/esphome-versions \\\n  ghcr.io/weirded/esphome-dist-client:latest`;
+  document.getElementById('docker-cmd').textContent = cmd;
+}
+
+function copyDockerCmd() {
+  const text = document.getElementById('docker-cmd').textContent;
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success'));
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('Copied!', 'success');
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const r = await apiFetch('./ui/api/clients');
+    if (r.ok) {
+      clientsData = await r.json();
+      renderClients();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function refreshDevices() {
+  try {
+    const [tr, dr] = await Promise.all([
+      apiFetch('./ui/api/targets'),
+      apiFetch('./ui/api/devices'),
+    ]);
+    if (tr.ok) {
+      targetsData = await tr.json();
+      if (targetsData.length > 0 && targetsData[0].server_version) {
+        serverVersion = targetsData[0].server_version;
+        document.getElementById('server-version').textContent = 'esphome v' + serverVersion;
+      }
+    }
+    if (dr.ok) { devicesData = await dr.json(); }
+    renderDevices();
+  } catch(e) { /* ignore */ }
+}
+
+async function refreshQueue() {
+  try {
+    const r = await apiFetch('./ui/api/queue');
+    if (!r.ok) return;
+    queueData = await r.json();
+    // Check for active run
+    activeRun = queueData.some(j => ['pending','assigned','running'].includes(j.state));
+    renderQueue();
+    updateTargetButtons();
+  } catch(e) { /* ignore */ }
+}
+
+// ============================================================
+// Render: Clients
+// ============================================================
+function renderClients() {
+  const tbody = document.getElementById('clients-tbody');
+  const online = clientsData.filter(c => c.online).length;
+  document.getElementById('clients-count').textContent =
+    online + '/' + clientsData.length + ' online';
+
+  if (!clientsData.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No clients registered</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = clientsData.map(c => {
+    const statusHtml = c.disabled
+      ? '<span class="dot dot-offline"></span><span style="color:var(--text-muted)">Disabled</span>'
+      : c.online
+        ? '<span class="dot dot-online"></span>Online'
+        : '<span class="dot dot-offline"></span>Offline';
+    const jobHtml = c.current_job_target
+      ? '<code style="font-size:12px;color:var(--text)">' + escapeHtml(stripYaml(c.current_job_target)) + '</code>'
+      : c.current_job_id ? '<span style="color:var(--text-muted);font-size:11px">…</span>' : '—';
+    const disableBtnCls = c.disabled ? 'btn-success btn-sm' : 'btn-warn btn-sm';
+    const disableBtnLabel = c.disabled ? 'Enable' : 'Disable';
+    return `<tr${c.disabled ? ' style="opacity:0.6"' : ''}>
+      <td>${escapeHtml(c.hostname)}</td>
+      <td style="color:var(--text-muted)">${escapeHtml(c.platform)}</td>
+      <td>${statusHtml}</td>
+      <td>${jobHtml}</td>
+      <td>${clientVersionHtml(c.client_version)}</td>
+      <td><button class="${disableBtnCls}" onclick="toggleClientDisabled('${escapeHtml(c.client_id)}', ${!c.disabled})">${disableBtnLabel}</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ============================================================
+// Render: Devices (managed targets + unmanaged mDNS devices)
+// ============================================================
+function renderDevices() {
+  const tbody = document.getElementById('devices-tbody');
+
+  // Unmanaged: mDNS-discovered devices with no matching YAML config
+  const managedTargets = new Set(targetsData.map(t => t.target));
+  const unmanaged = devicesData.filter(d => !d.compile_target);
+
+  const totalOnline = targetsData.filter(t => t.online).length
+    + unmanaged.filter(d => d.online).length;
+  const totalKnown = targetsData.filter(t => t.online != null).length
+    + unmanaged.length;
+  document.getElementById('devices-count').textContent =
+    totalKnown ? totalOnline + '/' + totalKnown + ' online' : '';
+
+  if (!targetsData.length && !unmanaged.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No devices found</td></tr>';
+    return;
+  }
+
+  const sortedTargets = [...targetsData].sort((a, b) => a.target.localeCompare(b.target));
+  const sortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
+
+  const managedRows = sortedTargets.map(t => {
+    const statusHtml = t.online == null
+      ? '<span class="dot dot-offline"></span><span style="color:var(--text-muted)">Unknown</span>'
+      : t.online
+        ? '<span class="dot dot-online"></span>Online'
+        : '<span class="dot dot-offline"></span>Offline';
+    const needsUpd = t.needs_update;
+    const updHtml = needsUpd == null ? '—'
+      : needsUpd
+        ? '<span class="needs-update-yes">Yes</span>'
+        : '<span class="needs-update-no">—</span>';
+    const upgradeBtnCls = needsUpd ? 'btn-success' : 'btn-secondary';
+    const nameHtml = t.friendly_name
+      ? `<span class="device-name">${escapeHtml(t.friendly_name)}</span>`
+      : `<span class="device-name">${escapeHtml(t.device_name || stripYaml(t.target))}</span>`;
+    const filenameHtml = `<div class="device-filename">${escapeHtml(stripYaml(t.target))}</div>`;
+    const commentHtml = t.comment ? `<div class="device-comment">${escapeHtml(t.comment)}</div>` : '';
+    return `<tr>
+      <td><input type="checkbox" class="target-cb" value="${escapeHtml(t.target)}" /></td>
+      <td>
+        ${nameHtml}
+        ${filenameHtml}
+        ${commentHtml}
+      </td>
+      <td>${statusHtml}</td>
+      <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(t.ip_address || '—')}</td>
+      <td style="font-size:12px">${escapeHtml(t.running_version || '—')}</td>
+      <td>${updHtml}</td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <button class="${upgradeBtnCls} btn-sm" onclick="forceUpgrade('${escapeHtml(t.target)}')">Upgrade</button>
+          <button class="btn-secondary btn-sm" onclick="openEditor('${escapeHtml(t.target)}')">Edit</button>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  const unmanagedRows = sortedUnmanaged.map(d => {
+    const statusHtml = d.online
+      ? '<span class="dot dot-online"></span>Online'
+      : '<span class="dot dot-offline"></span>Offline';
+    return `<tr>
+      <td></td>
+      <td>
+        <span class="device-name" style="color:var(--text-muted)">${escapeHtml(stripYaml(d.name))}</span>
+        <div class="device-friendly">No config</div>
+      </td>
+      <td>${statusHtml}</td>
+      <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(d.ip_address || '—')}</td>
+      <td style="font-size:12px">${escapeHtml(d.running_version || '—')}</td>
+      <td>—</td>
+      <td></td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = [...managedRows, ...unmanagedRows].join('');
+}
+
+function updateTargetButtons() {
+  const btns = ['btn-upgrade-all','btn-upgrade-selected','btn-upgrade-outdated'];
+  btns.forEach(id => {
+    document.getElementById(id).disabled = activeRun;
+  });
+}
+
+// ============================================================
+// Render: Queue
+// ============================================================
+function renderQueue() {
+  const tbody = document.getElementById('queue-tbody');
+  if (!queueData.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No jobs in queue</td></tr>';
+    return;
+  }
+
+  // Sort: active first, then by created_at desc
+  const stateOrder = { running:0, assigned:1, pending:2, timed_out:3, failed:4, success:5 };
+  const sorted = [...queueData].sort((a, b) => {
+    const so = (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9);
+    if (so !== 0) return so;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+
+  const rows = [];
+  for (const job of sorted) {
+    const clientName = job.assigned_client_id
+      ? clientsData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)
+      : '—';
+    const isActive = ['pending', 'assigned', 'running'].includes(job.state);
+    const dur = job.duration_seconds != null
+      ? fmtDuration(job.duration_seconds)
+      : (isActive && job.assigned_at ? fmtDuration((Date.now() - new Date(job.assigned_at)) / 1000) : '—');
+
+    // Combined state+OTA badge
+    let badgeLabel, badgeCls;
+    if (job.state === 'failed') {
+      badgeLabel = 'Compile Failed'; badgeCls = 'badge badge-failed';
+    } else if (job.state === 'success') {
+      if (job.ota_result === 'success') {
+        badgeLabel = 'Success'; badgeCls = 'badge badge-success';
+      } else if (job.ota_result === 'failed') {
+        badgeLabel = 'OTA Failed'; badgeCls = 'badge badge-timed_out';
+      } else {
+        badgeLabel = 'Compiled'; badgeCls = 'badge badge-success';
+      }
+    } else if (job.state === 'timed_out') {
+      badgeLabel = 'Timed Out'; badgeCls = 'badge badge-timed_out';
+    } else {
+      badgeLabel = job.state; badgeCls = 'badge badge-' + job.state;
+    }
+
+    const statusHtml = job.status_text && ['assigned','running'].includes(job.state)
+      ? `<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(job.status_text)}</span>`
+      : '';
+
+    const hasLog = job.log && ['success','failed','timed_out'].includes(job.state);
+    const canRetry = ['failed','timed_out'].includes(job.state);
+
+    rows.push(`<tr data-job="${job.id}">
+      <td><input type="checkbox" class="queue-cb" value="${job.id}"></td>
+      <td><strong>${escapeHtml(stripYaml(job.target))}</strong><br><span style="font-size:11px;color:var(--text-muted)">${job.id.slice(0,8)}</span></td>
+      <td><span class="${badgeCls}">${badgeLabel}</span>${statusHtml}</td>
+      <td style="font-size:12px">${escapeHtml(clientName)}</td>
+      <td style="font-size:12px">${dur}</td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          ${isActive ? `<button class="btn-danger btn-sm" onclick="cancelJobs(['${job.id}'])">Cancel</button>` : ''}
+          ${canRetry ? `<button class="btn-warn btn-sm" onclick="retryJobs(['${job.id}'])">Retry</button>` : ''}
+          ${hasLog ? `<button class="btn-secondary btn-sm" onclick="openLogModal('${job.id}')">Log</button>` : ''}
+        </div>
+      </td>
+    </tr>`);
+  }
+
+  tbody.innerHTML = rows.join('');
+}
+
+function openLogModal(jobId) {
+  const job = queueData.find(j => j.id === jobId);
+  if (!job) return;
+  const clientName = job.assigned_client_id
+    ? clientsData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)
+    : null;
+  const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
+  const meta = [clientName, dur ? dur + ' duration' : null].filter(Boolean).join(' · ');
+
+  document.getElementById('modal-title').textContent = job.target;
+  document.getElementById('modal-state').innerHTML = `<span class="badge badge-${job.state}">${job.state}</span>`;
+  document.getElementById('modal-meta').textContent = meta;
+  document.getElementById('modal-log').textContent = job.log || '(no log)';
+  document.getElementById('log-modal').classList.add('open');
+}
+
+function closeLogModal(e) {
+  if (!e || e.target === document.getElementById('log-modal')) {
+    document.getElementById('log-modal').classList.remove('open');
+  }
+}
+
+function toggleSelectAll(cb) {
+  document.querySelectorAll('.queue-cb').forEach(el => { el.checked = cb.checked; });
+}
+
+function toggleDevicesSelectAll(cb) {
+  document.querySelectorAll('.target-cb').forEach(el => { el.checked = cb.checked; });
+}
+
+// ============================================================
+// Actions
+// ============================================================
+async function compileAll() {
+  await doCompile('all');
+}
+
+async function compileSelected() {
+  const selected = [...document.querySelectorAll('.target-cb:checked')].map(cb => cb.value);
+  if (!selected.length) { toast('No devices selected', 'error'); return; }
+  await doCompile(selected);
+}
+
+async function upgradeOutdated() {
+  await doCompile('outdated');
+}
+
+async function doCompile(targets) {
+  try {
+    const r = await apiFetch('./ui/api/compile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targets }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      toast(`Upgrading ${data.enqueued} device(s) — run ${data.run_id.slice(0,8)}`, 'success');
+      await refreshQueue();
+    } else {
+      toast('Error: ' + (data.error || r.status), 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function cancelSelected() {
+  const selected = [...document.querySelectorAll('.queue-cb:checked')].map(cb => cb.value);
+  if (!selected.length) { toast('No jobs selected', 'error'); return; }
+  await cancelJobs(selected);
+}
+
+async function cancelJobs(jobIds) {
+  try {
+    const r = await apiFetch('./ui/api/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_ids: jobIds }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      toast(`Cancelled ${data.cancelled} job(s)`, 'success');
+      await refreshQueue();
+    } else {
+      toast('Error: ' + (data.error || r.status), 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function retryJobs(jobIds) {
+  try {
+    const r = await apiFetch('./ui/api/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_ids: jobIds }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      toast(`Retrying ${data.retried} job(s)`, 'success');
+      await refreshQueue();
+    } else {
+      toast('Error: ' + (data.error || r.status), 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function retryAllFailed() {
+  try {
+    const r = await apiFetch('./ui/api/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_ids: 'all_failed' }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      toast(`Retrying ${data.retried} failed job(s)`, 'success');
+      await refreshQueue();
+    } else {
+      toast('Error: ' + (data.error || r.status), 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function toggleClientDisabled(clientId, disabled) {
+  try {
+    const r = await apiFetch(`./ui/api/clients/${clientId}/disable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled }),
+    });
+    if (r.ok) {
+      toast(disabled ? 'Client disabled — will finish current job' : 'Client enabled', 'success');
+      const cr = await apiFetch('./ui/api/clients');
+      if (cr.ok) { clientsData = await cr.json(); renderClients(); }
+    } else {
+      toast('Error toggling client', 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function forceUpgrade(target) {
+  if (!target || target === 'undefined') { toast('No compile target for this device', 'error'); return; }
+  await doCompile([target]);
+}
+
+function clearFinished() {
+  // Client-side only: collapse finished jobs from view by filtering them out of display
+  // (They still exist in the server queue; this is just a UI convenience)
+  queueData = queueData.filter(j => !['success','failed'].includes(j.state));
+  expandedJobs.clear();
+  renderQueue();
+}
+
+// ============================================================
+// Monaco Editor
+// ============================================================
+let monacoEditor = null;
+let editorTarget = null;
+let monacoLoaded = false;
+
+async function openEditor(target) {
+  editorTarget = target;
+  document.getElementById('editor-filename').textContent = target;
+  document.getElementById('editor-modal').classList.add('open');
+
+  // Fetch file content
+  let content = '';
+  try {
+    const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(target)}/content`);
+    if (r.ok) {
+      const data = await r.json();
+      content = data.content || '';
+    } else {
+      toast('Failed to load file: ' + r.status, 'error');
+      closeEditorModal();
+      return;
+    }
+  } catch(e) {
+    toast('Network error loading file', 'error');
+    closeEditorModal();
+    return;
+  }
+
+  if (!monacoLoaded) {
+    await loadMonaco();
+  }
+
+  const container = document.getElementById('monaco-container');
+  if (monacoEditor) {
+    monacoEditor.dispose();
+    monacoEditor = null;
+  }
+  container.innerHTML = '';
+
+  monacoEditor = monaco.editor.create(container, {
+    value: content,
+    language: 'yaml',
+    theme: 'vs-dark',
+    fontSize: 13,
+    lineNumbers: 'on',
+    minimap: { enabled: false },
+    wordWrap: 'on',
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    tabSize: 2,
+    insertSpaces: true,
+  });
+
+  // ESPHome completion provider (basic)
+  if (!window._esphomeCompletionRegistered) {
+    window._esphomeCompletionRegistered = true;
+    monaco.languages.registerCompletionItemProvider('yaml', {
+      provideCompletionItems(model, position) {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+        const keywords = [
+          'esphome', 'name', 'friendly_name', 'comment', 'platform',
+          'board', 'wifi', 'ssid', 'password', 'ap', 'logger', 'api',
+          'encryption', 'key', 'ota', 'sensor', 'binary_sensor', 'switch',
+          'light', 'fan', 'climate', 'cover', 'output', 'uart', 'i2c',
+          'spi', 'substitutions', 'packages', 'esp32', 'esp8266',
+          'deep_sleep', 'interval', 'lambda', 'id', 'on_boot', 'on_shutdown',
+        ];
+        return {
+          suggestions: keywords.map(k => ({
+            label: k,
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: k,
+            range,
+          })),
+        };
+      },
+    });
+  }
+}
+
+function loadMonaco() {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/monaco-editor@0.44.0/min/vs/loader.js';
+    script.onload = () => {
+      require.config({ paths: { vs: 'https://unpkg.com/monaco-editor@0.44.0/min/vs' } });
+      require(['vs/editor/editor.main'], () => {
+        monacoLoaded = true;
+        resolve();
+      });
+    };
+    script.onerror = () => reject(new Error('Failed to load Monaco'));
+    document.head.appendChild(script);
+  });
+}
+
+async function saveEditor() {
+  if (!monacoEditor || !editorTarget) return;
+  const content = monacoEditor.getValue();
+  try {
+    const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(editorTarget)}/content`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (r.ok) {
+      toast('Saved ' + editorTarget, 'success');
+    } else {
+      const data = await r.json().catch(() => ({}));
+      toast('Save failed: ' + (data.error || r.status), 'error');
+    }
+  } catch(e) {
+    toast('Network error saving file', 'error');
+  }
+}
+
+function closeEditorModal(e) {
+  if (e && e.target !== document.getElementById('editor-modal')) return;
+  document.getElementById('editor-modal').classList.remove('open');
+  if (monacoEditor) {
+    monacoEditor.dispose();
+    monacoEditor = null;
+  }
+  editorTarget = null;
+}
+
+// ============================================================
+// Auto-refresh loops
+// ============================================================
+function startPolling() {
+  // Clients: every 5s
+  setInterval(async () => {
+    try {
+      const r = await apiFetch('./ui/api/clients');
+      if (r.ok) { clientsData = await r.json(); renderClients(); }
+    } catch(e) {}
+  }, 5000);
+
+  // Devices + targets: every 15s
+  setInterval(async () => {
+    try {
+      const [tr, dr] = await Promise.all([
+        apiFetch('./ui/api/targets'),
+        apiFetch('./ui/api/devices'),
+      ]);
+      if (tr.ok) {
+        targetsData = await tr.json();
+        if (targetsData.length && targetsData[0].server_version) {
+          serverVersion = targetsData[0].server_version;
+          document.getElementById('server-version').textContent = 'esphome v' + serverVersion;
+        }
+      }
+      if (dr.ok) { devicesData = await dr.json(); }
+      renderDevices();
+    } catch(e) {}
+  }, 15000);
+
+  // Queue: every 3s
+  setInterval(async () => {
+    try {
+      const r = await apiFetch('./ui/api/queue');
+      if (r.ok) {
+        queueData = await r.json();
+        activeRun = queueData.some(j => ['pending','assigned','running'].includes(j.state));
+        renderQueue();
+        updateTargetButtons();
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+// ============================================================
+// Init
+// ============================================================
+async function init() {
+  await Promise.all([refreshServerInfo(), refreshStatus(), refreshDevices(), refreshQueue()]);
+  startPolling();
+}
+
+window.addEventListener('DOMContentLoaded', init);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeLogModal(); closeEditorModal(); }
+});
+</script>
+</body>
+</html>

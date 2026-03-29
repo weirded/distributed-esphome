@@ -1,0 +1,34 @@
+substitutions:
+  device_name: device2
+
+esphome:
+  name: ${device_name}
+  friendly_name: "Device Two"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+packages:
+  common: !include packages/common.yaml
+
+logger:
+  level: DEBUG
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "${device_name} Button"

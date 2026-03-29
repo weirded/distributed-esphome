@@ -1,0 +1,12 @@
+# Common package shared by multiple devices
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"
+
+text_sensor:
+  - platform: version
+    name: "ESPHome Version"
