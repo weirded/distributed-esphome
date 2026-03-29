@@ -344,34 +344,42 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 ```
 startup:
   register with server → get client_id
+  check for client update (synchronous heartbeat)
+  start heartbeat thread (POST /api/v1/clients/heartbeat every 10s)
+  start N worker threads (N = MAX_PARALLEL_JOBS, default 2)
 
-loop (concurrent):
-  heartbeat thread: POST /api/v1/clients/heartbeat every 10s
+per worker thread (loop):
+  poll GET /api/v1/jobs/next every 1s (when idle)
 
-  main thread:
-    poll GET /api/v1/jobs/next every 5s (when idle)
+  on job received:
+    ensure esphome version installed (install if not present; thread-safe LRU cache)
+    extract bundle to temp dir
+    start timeout timer (job.timeout_seconds)
+    run: esphome compile <target.yaml> (capture stdout+stderr)
 
-    on job received:
-      ensure esphome version installed (install if not present)
-      extract bundle to temp dir
-      start timeout timer (job.timeout_seconds)
-      run: esphome compile <target.yaml> (capture stdout+stderr)
+    if completed within timeout and exit code 0:
+      POST /api/v1/jobs/{id}/result { status: "success", log }
+      run: esphome upload <target.yaml> (OTA)
+      POST /api/v1/jobs/{id}/result { ota_result: "success"|"failed"|"skipped" }
 
-      if completed within timeout and exit code 0:
-        POST /api/v1/jobs/{id}/result { status: "success", log }
-        run: esphome upload <target.yaml> (OTA)
-        POST /api/v1/jobs/{id}/result { ota_result: "success"|"failed"|"skipped" }
+    if completed within timeout and exit code != 0:
+      POST /api/v1/jobs/{id}/result { status: "failed", log }
 
-      if completed within timeout and exit code != 0:
-        POST /api/v1/jobs/{id}/result { status: "failed", log }
+    if timeout exceeded:
+      kill subprocess
+      POST /api/v1/jobs/{id}/result { status: "failed", log: "timed out after Ns" }
 
-      if timeout exceeded:
-        kill subprocess
-        POST /api/v1/jobs/{id}/result { status: "failed", log: "timed out after Ns" }
+    cleanup temp dir (always, via try/finally)
+    immediately poll for next job (no sleep after work)
 
-      cleanup temp dir (always, via try/finally)
-      resume polling
+main thread:
+  monitors re-register and update events
+  waits for all workers to be idle before applying either event
 ```
+
+Workers run independently — each polls for and executes one job at a time.
+With the default N=2, one worker can be doing OTA (network-bound) while the
+other compiles the next job (CPU-bound), keeping utilization high.
 
 ### 2.4 OTA Upload
 
@@ -411,6 +419,7 @@ Clients self-update when the server is running a newer client version:
 | `JOB_TIMEOUT` | `300` | Compile timeout in seconds |
 | `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
 | `MAX_ESPHOME_VERSIONS` | `3` | Max cached ESPHome versions on disk |
+| `MAX_PARALLEL_JOBS` | `2` | Number of concurrent build workers per client |
 | `HOSTNAME` | `socket.gethostname()` | Worker name shown in UI |
 | `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup |
 | `ESPHOME_BIN` | — | Use this binary directly instead of version-manager venvs |

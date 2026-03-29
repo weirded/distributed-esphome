@@ -38,6 +38,7 @@ HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "10"))
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "300"))
 OTA_TIMEOUT = int(os.environ.get("OTA_TIMEOUT", "120"))
 MAX_ESPHOME_VERSIONS = int(os.environ.get("MAX_ESPHOME_VERSIONS", "3"))
+MAX_PARALLEL_JOBS = int(os.environ.get("MAX_PARALLEL_JOBS", "2"))
 HOSTNAME = os.environ.get("HOSTNAME", socket.gethostname())
 PLATFORM = os.environ.get("PLATFORM", sys.platform)
 ESPHOME_BIN = os.environ.get("ESPHOME_BIN")  # If set, skip version manager
@@ -54,12 +55,16 @@ HEADERS = {
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.4"
+CLIENT_VERSION = "0.0.5"
 
 # Set when the heartbeat detects a newer server-side client bundle.
 # Checked in the main loop so updates only happen between jobs.
 _update_available: threading.Event = threading.Event()
-_in_job: bool = False
+
+# Active job counter — incremented/decremented by run_job(); main loop
+# waits for this to reach zero before applying updates or re-registering.
+_active_jobs: int = 0
+_active_jobs_lock: threading.Lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Connectivity / auth state — deduplicate repeated log messages
@@ -69,6 +74,12 @@ _in_job: bool = False
 _server_reachable: bool = True   # False once we've logged "server offline"
 _auth_ok: bool = True            # False once we've logged "auth failed"
 _reregister_needed: threading.Event = threading.Event()  # set by heartbeat on 404
+
+
+def _is_idle() -> bool:
+    """Return True when no jobs are currently running across all workers."""
+    with _active_jobs_lock:
+        return _active_jobs == 0
 
 
 def _on_server_unreachable(exc: Exception) -> None:
@@ -240,8 +251,9 @@ def _apply_update(current_client_id: str) -> None:
 
 def run_job(client_id: str, job: dict, version_manager: VersionManager) -> None:
     """Execute a single build job end-to-end."""
-    global _in_job
-    _in_job = True
+    global _active_jobs
+    with _active_jobs_lock:
+        _active_jobs += 1
     job_id = job["job_id"]
     target = job["target"]
     esphome_version = job["esphome_version"]
@@ -262,6 +274,8 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager) -> None:
         except Exception as exc:
             logger.error("Failed to install esphome==%s: %s", esphome_version, exc)
             _submit_result(job_id, "failed", log=f"Version install failed: {exc}", ota_result=None)
+            with _active_jobs_lock:
+                _active_jobs -= 1
             return
 
     tmp_dir = tempfile.mkdtemp(prefix="esphome-job-")
@@ -328,7 +342,8 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager) -> None:
         _submit_ota_result(job_id, ota_result, "\n".join(ota_logs))
 
     finally:
-        _in_job = False
+        with _active_jobs_lock:
+            _active_jobs -= 1
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             logger.debug("Cleaned up temp dir %s", tmp_dir)
@@ -441,6 +456,63 @@ def _submit_ota_result(job_id: str, ota_result: str, ota_log: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Worker loop (one per parallel slot)
+# ---------------------------------------------------------------------------
+
+def worker_loop(
+    worker_id: int,
+    client_id: str,
+    version_manager: VersionManager,
+    stop_event: threading.Event,
+) -> None:
+    """Poll for jobs and execute them. Runs in its own thread."""
+    logger.info("Worker %d started", worker_id)
+    while not stop_event.is_set():
+        # Pause polling when update or re-register is pending so the main
+        # thread can reach idle state and handle the event.
+        if _reregister_needed.is_set() or _update_available.is_set():
+            stop_event.wait(1)
+            continue
+
+        try:
+            resp = requests.get(
+                f"{SERVER_URL}/api/v1/jobs/next",
+                headers={**HEADERS, "X-Client-Id": client_id},
+                timeout=30,
+            )
+            _on_server_reachable()
+            if resp.status_code == 401:
+                _on_auth_failed()
+                stop_event.wait(POLL_INTERVAL)
+            elif resp.status_code == 204:
+                _on_auth_ok()
+                stop_event.wait(POLL_INTERVAL)
+            elif resp.status_code == 200:
+                _on_auth_ok()
+                job = resp.json()
+                logger.info(
+                    "Worker %d claimed job %s for target %s",
+                    worker_id, job["job_id"], job["target"],
+                )
+                run_job(client_id, job, version_manager)
+                # No sleep after work — immediately poll for next job
+            else:
+                logger.warning(
+                    "Worker %d: unexpected response from jobs/next: %d",
+                    worker_id, resp.status_code,
+                )
+                stop_event.wait(POLL_INTERVAL)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            _on_server_unreachable(exc)
+            stop_event.wait(POLL_INTERVAL)
+        except Exception as exc:
+            logger.exception("Worker %d: unexpected error in poll loop: %s", worker_id, exc)
+            stop_event.wait(POLL_INTERVAL)
+
+    logger.info("Worker %d stopped", worker_id)
+
+
+# ---------------------------------------------------------------------------
 # Main polling loop
 # ---------------------------------------------------------------------------
 
@@ -464,8 +536,37 @@ def _initial_version_check(client_id: str) -> None:
         logger.debug("Initial version check failed (non-fatal): %s", exc)
 
 
+def _stop_workers(worker_stop: threading.Event, worker_threads: list[threading.Thread]) -> None:
+    """Signal workers to stop and wait for them to finish their current jobs."""
+    worker_stop.set()
+    for t in worker_threads:
+        t.join()
+
+
+def _launch_workers(
+    client_id: str,
+    version_manager: VersionManager,
+) -> tuple[threading.Event, list[threading.Thread]]:
+    """Start MAX_PARALLEL_JOBS worker threads. Returns (stop_event, threads)."""
+    stop = threading.Event()
+    threads = []
+    for i in range(MAX_PARALLEL_JOBS):
+        t = threading.Thread(
+            target=worker_loop,
+            args=(i + 1, client_id, version_manager, stop),
+            daemon=True,
+            name=f"worker-{i + 1}",
+        )
+        t.start()
+        threads.append(t)
+    return stop, threads
+
+
 def main() -> None:
-    logger.info("ESPHome Build Client starting (hostname=%s)", HOSTNAME)
+    logger.info(
+        "ESPHome Build Client starting (hostname=%s, workers=%d)",
+        HOSTNAME, MAX_PARALLEL_JOBS,
+    )
 
     version_manager = VersionManager(max_versions=MAX_ESPHOME_VERSIONS)
 
@@ -494,20 +595,36 @@ def main() -> None:
     )
     hb_thread.start()
 
-    # Apply update immediately if detected (before first poll)
+    # Apply update immediately if detected (before starting workers)
     if _update_available.is_set():
-        _apply_update(client_id)
+        stop_heartbeat.set()
+        hb_thread.join(timeout=2)
+        _apply_update(client_id)  # may os.execv — never returns on success
+        # Update failed — restart heartbeat
+        stop_heartbeat = threading.Event()
+        hb_thread = threading.Thread(
+            target=heartbeat_loop,
+            args=(client_id, stop_heartbeat),
+            daemon=True,
+            name="heartbeat",
+        )
+        hb_thread.start()
 
-    logger.info("Polling for jobs every %ds", POLL_INTERVAL)
+    logger.info("Starting %d worker(s), polling every %ds", MAX_PARALLEL_JOBS, POLL_INTERVAL)
+    worker_stop, worker_threads = _launch_workers(client_id, version_manager)
 
     try:
         while True:
-            # Re-register if the heartbeat told us the server doesn't know us
-            if _reregister_needed.is_set() and not _in_job:
+            # Re-register if the heartbeat told us the server doesn't know us.
+            # Wait until all workers are idle so in-flight jobs can complete.
+            if _reregister_needed.is_set() and _is_idle():
                 _reregister_needed.clear()
+                _stop_workers(worker_stop, worker_threads)
                 stop_heartbeat.set()
                 hb_thread.join(timeout=2)
+
                 client_id = register()
+
                 stop_heartbeat = threading.Event()
                 hb_thread = threading.Thread(
                     target=heartbeat_loop,
@@ -516,41 +633,30 @@ def main() -> None:
                     name="heartbeat",
                 )
                 hb_thread.start()
+                worker_stop, worker_threads = _launch_workers(client_id, version_manager)
 
-            # Apply pending update only when idle (no job running)
-            if _update_available.is_set() and not _in_job:
+            # Apply pending update only when all workers are idle
+            elif _update_available.is_set() and _is_idle():
+                _stop_workers(worker_stop, worker_threads)
+                stop_heartbeat.set()
+                hb_thread.join(timeout=2)
                 _apply_update(client_id)  # may os.execv — never returns on success
-
-            did_work = False
-            try:
-                resp = requests.get(
-                    f"{SERVER_URL}/api/v1/jobs/next",
-                    headers={**HEADERS, "X-Client-Id": client_id},
-                    timeout=30,
+                # Update failed — restart heartbeat and workers
+                stop_heartbeat = threading.Event()
+                hb_thread = threading.Thread(
+                    target=heartbeat_loop,
+                    args=(client_id, stop_heartbeat),
+                    daemon=True,
+                    name="heartbeat",
                 )
-                _on_server_reachable()
-                if resp.status_code == 401:
-                    _on_auth_failed()
-                elif resp.status_code == 204:
-                    _on_auth_ok()
-                elif resp.status_code == 200:
-                    _on_auth_ok()
-                    job = resp.json()
-                    logger.info("Claimed job %s for target %s", job["job_id"], job["target"])
-                    run_job(client_id, job, version_manager)
-                    did_work = True
-                else:
-                    logger.warning("Unexpected response from jobs/next: %d", resp.status_code)
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
-                _on_server_unreachable(exc)
-            except Exception as exc:
-                logger.exception("Unexpected error in poll loop: %s", exc)
+                hb_thread.start()
+                worker_stop, worker_threads = _launch_workers(client_id, version_manager)
 
-            if not did_work:
-                time.sleep(POLL_INTERVAL)
+            time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutting down")
     finally:
+        worker_stop.set()
         stop_heartbeat.set()
 
 
