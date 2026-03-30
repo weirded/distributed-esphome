@@ -28,7 +28,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.32"
+CLIENT_VERSION = "0.0.33"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
