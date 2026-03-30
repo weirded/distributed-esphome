@@ -158,7 +158,7 @@ async def start_compile(request: web.Request) -> web.Response:
 
     server_version = get_esphome_version()
     all_targets = scan_configs(config_dir)
-    timeout_seconds = config.get("job_timeout", 300)
+    timeout_seconds = config.get("job_timeout", 600)
 
     if targets_param == "all":
         selected = all_targets
@@ -263,7 +263,7 @@ async def retry_jobs(request: web.Request) -> web.Response:
     config = request.app["config"]
 
     server_version = get_esphome_version()
-    timeout_seconds = config.get("job_timeout", 300)
+    timeout_seconds = config.get("job_timeout", 600)
 
     if job_ids_param == "all_failed":
         from job_queue import JobState  # noqa: PLC0415

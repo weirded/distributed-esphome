@@ -34,7 +34,7 @@ INDEX_HTML = STATIC_DIR / "index.html"
 
 DEFAULTS: dict = {
     "token": os.environ.get("SERVER_TOKEN", ""),
-    "job_timeout": int(os.environ.get("JOB_TIMEOUT", "300")),
+    "job_timeout": int(os.environ.get("JOB_TIMEOUT", "600")),
     "ota_timeout": int(os.environ.get("OTA_TIMEOUT", "120")),
     "client_offline_threshold": int(os.environ.get("CLIENT_OFFLINE_THRESHOLD", "30")),
     "device_poll_interval": int(os.environ.get("DEVICE_POLL_INTERVAL", "60")),

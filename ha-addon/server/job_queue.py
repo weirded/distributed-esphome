@@ -52,7 +52,7 @@ class Job:
     assigned_client_id: Optional[str] = None
     assigned_at: Optional[datetime] = None
     worker_id: Optional[int] = None
-    timeout_seconds: int = 300
+    timeout_seconds: int = 600
     created_at: datetime = field(default_factory=_utcnow)
     finished_at: Optional[datetime] = None
     retry_count: int = 0
@@ -91,7 +91,7 @@ class Job:
             assigned_client_id=d.get("assigned_client_id"),
             assigned_at=_from_iso(d.get("assigned_at")),
             worker_id=d.get("worker_id"),
-            timeout_seconds=d.get("timeout_seconds", 300),
+            timeout_seconds=d.get("timeout_seconds", 600),
             created_at=_from_iso(d.get("created_at")) or _utcnow(),
             finished_at=_from_iso(d.get("finished_at")),
             retry_count=d.get("retry_count", 0),
@@ -159,7 +159,7 @@ class JobQueue:
         target: str,
         esphome_version: str,
         run_id: str,
-        timeout_seconds: int = 300,
+        timeout_seconds: int = 600,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -350,7 +350,7 @@ class JobQueue:
         job_ids: list[str],
         esphome_version: str,
         run_id: str,
-        timeout_seconds: int = 300,
+        timeout_seconds: int = 600,
     ) -> list["Job"]:
         """Re-enqueue failed/timed_out jobs as new PENDING jobs. Returns new jobs.
 
