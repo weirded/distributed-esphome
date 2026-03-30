@@ -20,8 +20,5 @@ COPY VERSION /app/VERSION
 # Bundle client code so the server can serve it to remote clients for auto-update
 COPY client/ /app/client/
 
-# s6-overlay service: the HA base image runs /init which starts s6,
-# which looks for services in /etc/services.d/
-COPY rootfs /
-RUN chmod a+x /etc/services.d/esphome-dist-server/run \
-    /etc/services.d/esphome-dist-server/finish
+ENTRYPOINT []
+CMD ["python3", "/app/main.py"]
