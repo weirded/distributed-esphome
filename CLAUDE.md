@@ -62,7 +62,7 @@ The server is an `aiohttp` async application with two authentication tiers:
 - `queue.py` — In-memory job queue persisted to `/data/queue.json`. State machine: `PENDING → ASSIGNED → RUNNING → SUCCESS/FAILED/TIMED_OUT`. Jobs time out and retry up to 3 times before permanently failing. On server restart, `ASSIGNED`/`RUNNING` jobs reset to `PENDING`.
 - `scanner.py` — Discovers `.yaml` targets in `/config/esphome/` (excluding `secrets.yaml` from the target list but including it in bundles). `create_bundle()` produces a tar.gz of the full config directory.
 - `registry.py` — In-memory build client registry; clients are considered online if last heartbeat was within 30s.
-- `device_poller.py` — Discovers ESPHome devices via `_esphomelib._tcp` mDNS, polls them every 60s via `aioesphomeapi` for running firmware version. Maps devices to YAML targets by name (e.g., `living_room.yaml` ↔ device named `living_room`).
+- `device_poller.py` — Discovers ESPHome devices via `_esphomelib._tcp` mDNS, polls them every 60s via `aioesphomeapi` for running firmware version and compilation time. Maps devices to YAML targets using a name map built from parsed `esphome.name` fields (handles cases where filename differs from device name).
 - `api.py` — Client REST API: register, heartbeat, claim job (`GET /api/v1/jobs/next` returns base64 tar.gz bundle), submit result.
 - `ui_api.py` — Browser JSON API: targets, devices, clients, queue state, compile trigger, cancel.
 - `static/index.html` — Single-file vanilla JS/CSS UI; no build step. Refresh rates: queue=3s, clients=5s, devices=15s.

@@ -220,6 +220,7 @@
 
     .needs-update-yes { color: var(--warn); font-weight: 600; }
     .needs-update-no  { color: var(--text-muted); }
+    .config-modified  { color: var(--orange); font-size: 10px; font-weight: 600; }
 
     /* ---- Buttons ---- */
     button {
@@ -481,12 +482,11 @@
               <th>Status</th>
               <th>IP</th>
               <th>Running</th>
-              <th>Update</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="devices-tbody">
-            <tr class="empty-row"><td colspan="7">No targets discovered</td></tr>
+            <tr class="empty-row"><td colspan="6">No targets discovered</td></tr>
           </tbody>
         </table>
       </div>
@@ -848,7 +848,7 @@ function renderDevices() {
     totalKnown ? totalOnline + '/' + totalKnown : targetsData.length || '';
 
   if (!targetsData.length && !unmanaged.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No devices found — ensure ESPHome configs are in /config/esphome/</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No devices found — ensure ESPHome configs are in /config/esphome/</td></tr>';
     return;
   }
 
@@ -861,11 +861,7 @@ function renderDevices() {
       : t.online
         ? '<span class="dot dot-online"></span>Online'
         : '<span class="dot dot-offline"></span>Offline';
-    const needsUpd = t.needs_update;
-    const updHtml = needsUpd == null ? '—'
-      : needsUpd ? '<span class="needs-update-yes">Yes</span>'
-      : '<span class="needs-update-no">—</span>';
-    const upgradeBtnCls = needsUpd ? 'btn-success' : 'btn-secondary';
+    const upgradeBtnCls = t.needs_update ? 'btn-success' : 'btn-secondary';
     const nameHtml = t.friendly_name
       ? `<span class="device-name">${escapeHtml(t.friendly_name)}</span>`
       : `<span class="device-name">${escapeHtml(t.device_name || stripYaml(t.target))}</span>`;
@@ -876,8 +872,7 @@ function renderDevices() {
       <td>${nameHtml}${filenameHtml}${commentHtml}</td>
       <td>${statusHtml}</td>
       <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(t.ip_address || '—')}</td>
-      <td style="font-size:12px">${escapeHtml(t.running_version || '—')}</td>
-      <td>${updHtml}</td>
+      <td style="font-size:12px">${escapeHtml(t.running_version || '—')}${t.config_modified ? '<div class="config-modified">config changed</div>' : ''}</td>
       <td><div style="display:flex;gap:4px;">
         <button class="${upgradeBtnCls} btn-sm" onclick="forceUpgrade('${escapeHtml(t.target)}')">Upgrade</button>
         <button class="btn-secondary btn-sm" onclick="openEditor('${escapeHtml(t.target)}')">Edit</button>
@@ -898,7 +893,7 @@ function renderDevices() {
       <td>${statusHtml}</td>
       <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(d.ip_address || '—')}</td>
       <td style="font-size:12px">${escapeHtml(d.running_version || '—')}</td>
-      <td>—</td><td></td>
+      <td></td>
     </tr>`;
   });
 
@@ -973,7 +968,8 @@ function renderQueue() {
     }
 
     const hasLog = job.log && ['success','failed','timed_out'].includes(job.state);
-    const canRetry = ['failed','timed_out'].includes(job.state);
+    const canRetry = ['failed','timed_out'].includes(job.state)
+      || (job.state === 'success' && job.ota_result === 'failed');
 
     rows.push(`<tr data-job="${job.id}">
       <td><input type="checkbox" class="queue-cb" value="${job.id}"${checkedIds.has(job.id) ? ' checked' : ''}></td>
@@ -1142,7 +1138,8 @@ async function retrySelected() {
     .map(cb => cb.value)
     .filter(id => {
       const job = queueData.find(j => j.id === id);
-      return job && ['failed','timed_out'].includes(job.state);
+      return job && (['failed','timed_out'].includes(job.state)
+        || (job.state === 'success' && job.ota_result === 'failed'));
     });
   if (!ids.length) { toast('No failed/timed-out jobs selected', 'error'); return; }
   await retryJobs(ids);

@@ -4,7 +4,7 @@ Offload ESPHome firmware compilation to remote machines. A Home Assistant add-on
 
 ## Why?
 
-ESPHome compilation is CPU-intensive and slow on the Raspberry Pi or similar ARM hardware running Home Assistant. This project lets you point the work at faster x86 machines while keeping HA as the source of truth for your device configs.
+ESPHome compilation is CPU-intensive and slow on the Raspberry Pi or similar low-power hardware running Home Assistant. This project lets you point the work at faster machines (x86 or ARM, including Apple Silicon) while keeping HA as the source of truth for your device configs.
 
 ## Architecture
 
@@ -108,13 +108,13 @@ Access via the HA sidebar (**ESPH Distributed**) or directly at `http://your-ha-
 
 Three tabs — works on mobile and small laptop screens:
 
-- **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, running version, needs-update flag); compile individual, all, or only outdated ones; inline YAML editor
-- **Queue** — live job status with logs; retry failed jobs, cancel in-progress jobs; badge shows active/failed count
+- **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, running version); "config changed" indicator when the YAML has been modified since the last compile; compile individual, all, or only outdated ones; inline YAML editor
+- **Queue** — live job status with logs; retry failed jobs (including OTA failures), cancel in-progress jobs; badge shows active/failed count
 - **Clients** — connected build workers with online status, current job per slot, version; enable/disable clients; **+ Connect Client** button opens a pre-filled `docker run` command
 
 ## How It Works
 
-1. The server scans `/config/esphome/*.yaml` on HA for compilable targets
+1. The server scans `/config/esphome/*.yaml` on HA for compilable targets (re-scans every 30s for changes)
 2. When you trigger a compile, one job per YAML is added to the queue
 3. Build clients poll `GET /api/v1/jobs/next` every 5 seconds
 4. On claiming a job, the client receives the full ESPHome config directory as a `tar.gz` bundle (including `secrets.yaml`)

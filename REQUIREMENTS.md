@@ -226,24 +226,25 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 **Layout:** Three-tab interface — Devices | Queue | Clients — replacing the two-column desktop-only grid. All tables scroll horizontally on mobile/small screens. The active tab persists across page refreshes via `sessionStorage`.
 
 **Header**
-- Shows the add-on version badge (e.g. `v0.0.9`) and an ESPHome version badge (e.g. `ESPHome 2024.6.0`)
+- Shows the add-on version badge (e.g. `v0.0.11`) and an ESPHome version badge (e.g. `ESPHome 2024.6.0`)
 - Tab bar below the header with live badge counts (e.g. `3/5 online`, `2 active`, `1/2 online`)
 
 **Devices tab**
 - Combines the former "Targets" and device-status columns into one view
-- Table: `[ ] | Device | Status | IP | Running | Update | Actions`
-- "Needs Update" = true when running version ≠ server ESPHome version
+- Table: `[ ] | Device | Status | IP | Running | Actions`
+- "config changed" indicator when the YAML file has been modified since the device's last compile (detected via `compilation_time` from device API vs file mtime)
 - "Upgrade" button per row (green when update needed); "Edit" opens inline Monaco YAML editor
 - Buttons: `Upgrade All`, `Upgrade Selected`, `Upgrade Outdated`
+- Device-to-config matching uses the parsed `esphome.name` field (not just filename stem), so `cyd-office-info.yaml` with `esphome: name: office-info-display-1` matches the device `office-info-display-1`
 - Unmanaged devices (mDNS-discovered but no matching YAML) listed below managed rows
-- Auto-refreshes every 15 seconds
+- Auto-refreshes every 15 seconds; server re-scans config directory every 30s for new/changed files
 
 **Queue tab**
 - Table columns: `[ ] | Target | State | Client | Duration | Actions`
 - Client column shows `hostname/worker_id` (e.g. `builder/2`) for multi-slot clients
 - State badge: pending=grey, running=blue, success=green, failed=red, timed_out=orange
 - OTA outcome reflected in badge: `Success` / `OTA Failed` / `Compiled` (no OTA yet)
-- `Cancel Selected`, `Retry Selected`, `Retry All Failed`, `Clear Succeeded`, `Clear Finished` buttons
+- `Cancel Selected`, `Retry Selected`, `Retry All Failed` (includes OTA failures), `Clear Succeeded`, `Clear Finished` buttons
 - Per-row `Retry` / `Cancel` / `Log` buttons
 - Triggering a new compile for a target removes any previous terminal jobs for that target
 - Auto-refreshes every 3 seconds; tab badge shows active/failed count
@@ -266,7 +267,7 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 | `GET`  | `/ui/api/devices` | Known ESPHome devices with version info |
 | `POST` | `/ui/api/compile` | Start a compile run `{ "targets": ["all" \| "outdated" \| ["file.yaml", ...]] }` |
 | `POST` | `/ui/api/cancel` | Cancel jobs `{ "job_ids": ["uuid", ...] }` |
-| `POST` | `/ui/api/retry` | Re-enqueue failed/timed_out jobs `{ "job_ids": ["uuid", ...] \| "all_failed" }` |
+| `POST` | `/ui/api/retry` | Re-enqueue failed/timed_out/OTA-failed jobs `{ "job_ids": ["uuid", ...] \| "all_failed" }` |
 | `POST` | `/ui/api/clients/{client_id}/disable` | Enable/disable a client `{ "disabled": true \| false }` |
 | `GET`  | `/ui/api/targets/{filename}/content` | Read YAML config file content |
 | `POST` | `/ui/api/targets/{filename}/content` | Write YAML config file content |

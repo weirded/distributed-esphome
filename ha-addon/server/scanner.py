@@ -100,6 +100,44 @@ def get_friendly_name(config_dir: str, target: str) -> Optional[str]:
     return meta["friendly_name"] or meta["device_name"]
 
 
+def build_name_to_target_map(config_dir: str, targets: list[str]) -> dict[str, str]:
+    """Build a mapping from ESPHome device name → YAML filename.
+
+    For each target, parse the ``esphome.name`` field.  If explicitly set, map
+    that name to the target.  Always also map the filename stem (without
+    extension) so filename-based matching still works as a fallback.
+    """
+    name_map: dict[str, str] = {}
+    for target in targets:
+        stem = Path(target).stem
+        name_map[stem] = target  # fallback: filename stem
+        meta = get_device_metadata(config_dir, target)
+        raw_name = meta.get("device_name")
+        if raw_name:
+            # device_name is title-cased for display; recover the raw name
+            # by re-parsing the YAML (get_device_metadata already does this).
+            pass
+        # Parse raw esphome.name directly (not the title-cased display version)
+        try:
+            from esphome.yaml_util import load_yaml  # noqa: PLC0415
+            from esphome.components.substitutions import do_substitution_pass  # noqa: PLC0415
+            from esphome.core import CORE  # noqa: PLC0415
+
+            path = Path(config_dir) / target
+            CORE.config_path = path
+            config = load_yaml(path)
+            if isinstance(config, dict):
+                do_substitution_pass(config, None, ignore_missing=True)
+                esphome_block = config.get("esphome") or {}
+                if isinstance(esphome_block, dict):
+                    esph_name = esphome_block.get("name")
+                    if esph_name:
+                        name_map[str(esph_name)] = target
+        except Exception:
+            logger.debug("Could not parse esphome.name from %s", target, exc_info=True)
+    return name_map
+
+
 def get_esphome_version() -> str:
     """Return the installed ESPHome package version, or 'unknown' on error."""
     try:

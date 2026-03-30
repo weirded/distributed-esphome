@@ -361,7 +361,11 @@ class JobQueue:
             new_jobs: list[Job] = []
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
-                if job is None or job.state not in (JobState.FAILED, JobState.TIMED_OUT):
+                if job is None:
+                    continue
+                is_failed = job.state in (JobState.FAILED, JobState.TIMED_OUT)
+                is_ota_failed = job.state == JobState.SUCCESS and job.ota_result == "failed"
+                if not (is_failed or is_ota_failed):
                     continue
                 target = job.target
                 # Remove all terminal jobs for this target (including the one being retried)

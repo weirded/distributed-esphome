@@ -45,6 +45,7 @@ class Device:
     ip_address: str
     online: bool = False
     running_version: Optional[str] = None
+    compilation_time: Optional[str] = None  # e.g. "Mar 29 2026, 17:00:00"
     last_seen: Optional[datetime] = None
     compile_target: Optional[str] = None  # e.g. "living_room.yaml"
 
@@ -54,6 +55,7 @@ class Device:
             "ip_address": self.ip_address,
             "online": self.online,
             "running_version": self.running_version,
+            "compilation_time": self.compilation_time,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "compile_target": self.compile_target,
         }
@@ -69,6 +71,7 @@ class DevicePoller:
         self._poll_interval = poll_interval
         self._devices: dict[str, Device] = {}  # keyed by device name
         self._compile_targets: list[str] = []
+        self._name_to_target: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._zeroconf: Optional[AsyncZeroconf] = None
         self._browser: Optional[ServiceBrowser] = None
@@ -237,6 +240,7 @@ class DevicePoller:
                     dev = self._devices.get(name)
                     if dev:
                         dev.running_version = info.esphome_version
+                        dev.compilation_time = getattr(info, "compilation_time", None) or None
                         dev.online = True
                         dev.last_seen = _utcnow()
                         self._save_cache()
@@ -266,6 +270,7 @@ class DevicePoller:
                     ip_address=info.get("ip_address", ""),
                     online=False,  # unknown until mDNS confirms
                     running_version=info.get("running_version"),
+                    compilation_time=info.get("compilation_time"),
                     compile_target=compile_target,
                 )
             logger.info("Loaded %d devices from cache", len(data))
@@ -276,7 +281,11 @@ class DevicePoller:
         """Persist current device IPs and versions to disk."""
         try:
             data = {
-                name: {"ip_address": dev.ip_address, "running_version": dev.running_version}
+                name: {
+                    "ip_address": dev.ip_address,
+                    "running_version": dev.running_version,
+                    "compilation_time": dev.compilation_time,
+                }
                 for name, dev in self._devices.items()
             }
             DEVICE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -290,17 +299,33 @@ class DevicePoller:
     # Public
     # ------------------------------------------------------------------
 
-    def update_compile_targets(self, targets: list[str]) -> None:
+    def update_compile_targets(
+        self,
+        targets: list[str],
+        name_to_target: Optional[dict[str, str]] = None,
+    ) -> None:
         """
         Inform the poller about known YAML targets so it can map device
         names to compile targets.  Also re-maps existing devices.
+
+        *name_to_target* maps ESPHome device names (and filename stems) to
+        YAML filenames, handling cases where ``esphome.name`` differs from
+        the filename.
         """
         self._compile_targets = list(targets)
+        self._name_to_target = name_to_target or {}
         for dev in self._devices.values():
             dev.compile_target = self._map_target(dev.name)
 
     def _map_target(self, device_name: str) -> Optional[str]:
-        """Return the YAML filename matching *device_name* stem, or None."""
+        """Return the YAML filename matching *device_name*, or None.
+
+        Checks the name-to-target map first (covers both explicit
+        ``esphome.name`` overrides and filename stems), then falls back
+        to a direct filename-stem comparison.
+        """
+        if device_name in self._name_to_target:
+            return self._name_to_target[device_name]
         for target in self._compile_targets:
             stem = Path(target).stem
             if stem == device_name:

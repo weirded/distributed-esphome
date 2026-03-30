@@ -215,6 +215,8 @@ async def get_client_code(request: web.Request) -> web.Response:
     base = _CLIENT_CODE_DIR if _CLIENT_CODE_DIR.exists() else Path(__file__).parent
     files = {}
     for path in sorted(base.glob("*.py")):
+        if path.name.startswith("._"):
+            continue
         try:
             files[path.name] = path.read_text(encoding="utf-8")
         except Exception:

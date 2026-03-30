@@ -52,6 +52,19 @@ async def get_targets(request: web.Request) -> web.Response:
     for target in targets:
         dev = devices_by_target.get(target)
         meta = get_device_metadata(config_dir, target)
+        # Detect config changes since last compile
+        config_modified = None
+        if dev and dev.compilation_time:
+            try:
+                from datetime import datetime  # noqa: PLC0415
+                # compilation_time format: "Mar 29 2026, 17:00:00"
+                compile_dt = datetime.strptime(dev.compilation_time, "%b %d %Y, %H:%M:%S")
+                config_path = Path(config_dir) / target
+                if config_path.exists():
+                    mtime_dt = datetime.fromtimestamp(config_path.stat().st_mtime)
+                    config_modified = mtime_dt > compile_dt
+            except Exception:
+                pass
         entry: dict = {
             "target": target,
             "friendly_name": meta["friendly_name"],
@@ -59,6 +72,8 @@ async def get_targets(request: web.Request) -> web.Response:
             "comment": meta["comment"],
             "online": dev.online if dev else None,
             "running_version": dev.running_version if dev else None,
+            "compilation_time": dev.compilation_time if dev else None,
+            "config_modified": config_modified,
             "needs_update": (
                 dev.running_version != server_version
                 if dev and dev.running_version
@@ -252,7 +267,11 @@ async def retry_jobs(request: web.Request) -> web.Response:
 
     if job_ids_param == "all_failed":
         from job_queue import JobState  # noqa: PLC0415
-        job_ids = [j.id for j in queue.get_all() if j.state in (JobState.FAILED, JobState.TIMED_OUT)]
+        job_ids = [
+            j.id for j in queue.get_all()
+            if j.state in (JobState.FAILED, JobState.TIMED_OUT)
+            or (j.state == JobState.SUCCESS and j.ota_result == "failed")
+        ]
     elif isinstance(job_ids_param, list):
         job_ids = job_ids_param
     else:

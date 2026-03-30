@@ -130,6 +130,28 @@ async def timeout_checker(app: web.Application) -> None:
             logger.exception("Error in timeout checker")
 
 
+async def config_scanner(app: web.Application) -> None:
+    """Background task: re-scan config dir every 30s and update device poller targets."""
+    from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
+
+    config_dir = app["scanner_config_dir"]
+    device_poller = app.get("device_poller")
+    prev_targets: list[str] = []
+
+    while True:
+        await asyncio.sleep(30)
+        try:
+            targets = scan_configs(config_dir)
+            if targets != prev_targets:
+                logger.info("Config change detected: %d targets (was %d)", len(targets), len(prev_targets))
+                if device_poller:
+                    name_map = build_name_to_target_map(config_dir, targets)
+                    device_poller.update_compile_targets(targets, name_map)
+                prev_targets = targets
+        except Exception:
+            logger.exception("Error in config scanner")
+
+
 # ---------------------------------------------------------------------------
 # Static file serving with ingress path injection
 # ---------------------------------------------------------------------------
@@ -198,26 +220,29 @@ def create_app() -> web.Application:
         logger.info("Token configured: %s", bool(config.get("token")))
 
         # Update device poller with known targets
-        from scanner import scan_configs  # noqa: PLC0415
+        from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
         targets = scan_configs(config_dir)
-        device_poller.update_compile_targets(targets)
+        name_map = build_name_to_target_map(config_dir, targets)
+        device_poller.update_compile_targets(targets, name_map)
 
         # Start device poller
         await device_poller.start(app)
 
-        # Start background timeout checker
+        # Start background tasks
         app["timeout_checker_task"] = asyncio.create_task(timeout_checker(app))
+        app["config_scanner_task"] = asyncio.create_task(config_scanner(app))
 
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down ESPHome Distributed Build Server")
 
-        task = app.get("timeout_checker_task")
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for task_name in ("timeout_checker_task", "config_scanner_task"):
+            task = app.get(task_name)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         await device_poller.stop()
 
