@@ -297,12 +297,6 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - Row shows three tiers: (1) `friendly_name` from config (bold, primary); (2) the YAML filename stem without `.yaml` extension (always shown, secondary); (3) `comment` from `esphome.comment` field (smaller, muted, only if set)
 - All `.yaml` extensions are stripped from target/device names throughout the UI (devices panel, queue panel, clients panel)
 
-**Built-in local client:**
-- The server add-on container runs a bundled build client so at least one client is always available
-- Client starts 5 seconds after the server starts (allows token generation) and uses the system ESPHome binary via `ESPHOME_BIN` env override, skipping virtualenv creation
-- Controlled by `disable_local_client` config option (default `false`); when `true`, no background client is spawned
-- `ESPHOME_BIN` env var: if set on an external client, that binary is used directly instead of the version-manager virtualenv
-
 **Client hostname:**
 - Docker run command shown in UI includes `--hostname $(hostname)` so the container adopts the Docker host's hostname
 - Client reads `HOSTNAME` env var set by `--hostname`; falls back to `socket.gethostname()`
@@ -337,10 +331,6 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - Device info cached to `/data/device_cache.json`; loaded on startup so UI has immediate data
 - Cached devices show `online: false` until mDNS confirms; mDNS events update status
 - Poll loop performs an immediate pass 3 seconds after startup before entering the normal interval
-
-**Disable local client option:**
-- `disable_local_client: false` added to add-on config options/schema
-- When `true`, `run.sh` skips spawning the background client process
 
 **Add-on sidebar title:** `"ESPH Distributed"`
 
@@ -481,14 +471,12 @@ options:
   ota_timeout: 120
   client_offline_threshold: 30
   device_poll_interval: 60
-  disable_local_client: false
 schema:
   token: password
   job_timeout: int
   ota_timeout: int
   client_offline_threshold: int
   device_poll_interval: int
-  disable_local_client: bool
 ```
 
 A `VERSION` file at `ha-addon/VERSION` contains the plain version string (e.g. `0.0.1`). The server reads this file at runtime via `GET /api/v1/client/version` and includes it in heartbeat responses. The version in `config.yaml`, `VERSION`, and `CLIENT_VERSION` in `client.py` must all be kept in sync.

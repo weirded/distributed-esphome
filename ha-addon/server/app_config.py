@@ -47,7 +47,6 @@ class AppConfig:
     ota_timeout: int = 120
     client_offline_threshold: int = 30
     device_poll_interval: int = 60
-    disable_local_client: bool = False
     config_dir: str = "/config/esphome"
     port: int = 8765
 
@@ -79,7 +78,6 @@ class AppConfig:
             ota_timeout=_val("ota_timeout", "OTA_TIMEOUT", cls.ota_timeout),
             client_offline_threshold=_val("client_offline_threshold", "CLIENT_OFFLINE_THRESHOLD", cls.client_offline_threshold),
             device_poll_interval=_val("device_poll_interval", "DEVICE_POLL_INTERVAL", cls.device_poll_interval),
-            disable_local_client=bool(file_opts.get("disable_local_client", False)),
             config_dir=os.environ.get("ESPHOME_CONFIG_DIR", cls.config_dir),
             port=int(os.environ.get("PORT", str(cls.port))),
         )

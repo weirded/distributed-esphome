@@ -7,7 +7,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 COPY server/ .
 COPY VERSION /app/VERSION
 
-# Bundle local build client (runs alongside the server to ensure a client is always available)
+# Bundle client code so the server can serve it to remote clients for auto-update
 COPY client/ /app/client/
 
 COPY run.sh /run.sh

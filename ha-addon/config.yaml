@@ -1,5 +1,5 @@
 name: "ESPHome Distributed Build Server"
-version: "0.0.21"
+version: "0.0.22"
 slug: "esphome_dist_server"
 description: "Distributed ESPHome compilation coordinator"
 url: "https://github.com/weirded/distributed-esphome"
@@ -26,11 +26,9 @@ options:
   ota_timeout: 120
   client_offline_threshold: 30
   device_poll_interval: 60
-  disable_local_client: false
 schema:
   token: password
   job_timeout: int
   ota_timeout: int
   client_offline_threshold: int
   device_poll_interval: int
-  disable_local_client: bool

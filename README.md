@@ -35,7 +35,7 @@ ESPHome compilation is CPU-intensive and slow on the Raspberry Pi or similar low
   [ESPHome devices on LAN]
 ```
 
-The server add-on includes a built-in local client, so compilation works out of the box without any external machines. Add remote clients to parallelise builds or move them to faster hardware.
+Add one or more remote build clients (Docker containers) to compile firmware and push it via OTA.
 
 ## Installation
 
@@ -71,7 +71,6 @@ Then in HA: **Settings → Add-ons → Local add-ons → ESPHome Distributed Bui
 | `ota_timeout` | `120` | OTA upload timeout in seconds |
 | `client_offline_threshold` | `30` | Seconds before a client is considered offline |
 | `device_poll_interval` | `60` | How often to poll device firmware versions (seconds) |
-| `disable_local_client` | `false` | Set `true` to disable the built-in local build client |
 
 ### 3. Add Remote Build Clients (optional)
 

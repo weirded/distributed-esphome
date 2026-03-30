@@ -184,13 +184,13 @@ Parse the target YAML (ESPHome already has a resolver for this — `_resolve_esp
 
 **Description:**
 
-Build clients connect to the server over `http://` (plaintext). This is hardcoded in `run.sh` line 24 (`SERVER_URL=http://localhost:8765`) for the local client, and generated in the UI's docker command (`static/index.html:713`):
+Build clients connect to the server over `http://` (plaintext). The server URL is generated in the UI's docker command (`static/index.html:713`):
 
 ```javascript
 const serverUrl = `http://${host}:${port}`;
 ```
 
-For the local (same-container) client, HTTP over loopback is acceptable. For remote build clients connecting across a LAN, all of the following are transmitted in cleartext:
+For build clients connecting across a LAN, all of the following are transmitted in cleartext:
 
 - The Bearer auth token (on every request).
 - The full ESPHome config bundle including `secrets.yaml` (F-04), sent per job.
