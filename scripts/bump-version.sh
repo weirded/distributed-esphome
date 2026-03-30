@@ -2,7 +2,7 @@
 # Bump the version number in all three places that must stay in sync:
 #   1. ha-addon/VERSION           (read by server at runtime)
 #   2. ha-addon/config.yaml       (required by HA add-on manifest)
-#   3. client/client.py           (CLIENT_VERSION constant)
+#   3. ha-addon/client/client.py  (CLIENT_VERSION constant)
 #
 # Usage: bash scripts/bump-version.sh X.Y.Z
 set -euo pipefail
@@ -17,12 +17,10 @@ sed -i.bak "s/^version: .*/version: \"$VERSION\"/" "$REPO/ha-addon/config.yaml"
 rm -f "$REPO/ha-addon/config.yaml.bak"
 
 # client.py — CLIENT_VERSION = "X.Y.Z"
-sed -i.bak "s/^CLIENT_VERSION = .*/CLIENT_VERSION = \"$VERSION\"/" "$REPO/client/client.py"
-rm -f "$REPO/client/client.py.bak"
+sed -i.bak "s/^CLIENT_VERSION = .*/CLIENT_VERSION = \"$VERSION\"/" "$REPO/ha-addon/client/client.py"
+rm -f "$REPO/ha-addon/client/client.py.bak"
 
 echo "Bumped to $VERSION in:"
 echo "  ha-addon/VERSION"
 echo "  ha-addon/config.yaml"
-echo "  client/client.py"
-echo ""
-echo "Next: bash scripts/sync-client.sh  (syncs client/ → ha-addon/client/)"
+echo "  ha-addon/client/client.py"

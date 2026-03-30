@@ -24,7 +24,7 @@ pytest tests/test_client.py::TestVersionManager::test_lru_eviction
 pip install pytest pytest-asyncio aiohttp aioesphomeapi zeroconf requests
 # Or from requirements files:
 pip install -r ha-addon/server/requirements.txt
-pip install -r client/requirements.txt
+pip install -r ha-addon/client/requirements.txt
 ```
 
 ### Run the Server Locally
@@ -34,13 +34,13 @@ ESPHOME_CONFIG_DIR=/path/to/configs PORT=8765 SERVER_TOKEN=dev-token python ha-a
 
 ### Run the Client Locally
 ```bash
-SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python client/client.py
+SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python ha-addon/client/client.py
 ```
 
 ### Build Docker Images
 ```bash
 docker build -t esphome-dist-server ha-addon/
-docker build -t esphome-dist-client client/
+docker build -t esphome-dist-client ha-addon/client/
 ```
 
 ### Package the HA Add-on Tarball
@@ -67,7 +67,7 @@ The server is an `aiohttp` async application with two authentication tiers:
 - `ui_api.py` — Browser JSON API: targets, devices, clients, queue state, compile trigger, cancel.
 - `static/index.html` — Single-file vanilla JS/CSS UI; no build step. Refresh rates: queue=3s, clients=5s, devices=15s.
 
-### Client (`client/`)
+### Client (`ha-addon/client/`)
 
 The client is a synchronous polling loop with a background heartbeat thread:
 1. Registers with server → gets `client_id`
@@ -89,7 +89,7 @@ Client config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 
 ## Test Setup
 
-`tests/conftest.py` adds `ha-addon/server` and `client` to `sys.path`. Tests use `asyncio_mode = auto` (configured in `pytest.ini`). Sample ESPHome YAML fixtures are in `tests/fixtures/esphome_configs/`.
+`tests/conftest.py` adds `ha-addon/server` and `ha-addon/client` to `sys.path`. Tests use `asyncio_mode = auto` (configured in `pytest.ini`). Sample ESPHome YAML fixtures are in `tests/fixtures/esphome_configs/`.
 
 ## Deployment
 

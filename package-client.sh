@@ -33,7 +33,7 @@ PLATFORM="${3:-$_DEFAULT_PLATFORM}"
 IMAGE="esphome-dist-client"
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 VERSION="$(cat "$REPO_ROOT/ha-addon/VERSION" 2>/dev/null || echo "0.0.1")"
-SCRIPTS_DIR="$REPO_ROOT/client/dist-scripts"
+SCRIPTS_DIR="$REPO_ROOT/ha-addon/client/dist-scripts"
 
 # Arch suffix (omitted for amd64 to stay backward-compatible)
 case "$PLATFORM" in
@@ -52,7 +52,7 @@ docker buildx build \
     --load \
     -t "$IMAGE:$VERSION" \
     -t "$IMAGE:latest" \
-    "$REPO_ROOT/client/"
+    "$REPO_ROOT/ha-addon/client/"
 
 echo "==> Saving image to tar ..."
 mkdir -p "$OUT_DIR"

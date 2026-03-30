@@ -10,6 +10,6 @@ echo "==> pre-push: mypy — server..."
 mypy ha-addon/server/ --ignore-missing-imports
 
 echo "==> pre-push: mypy — client..."
-mypy client/ --ignore-missing-imports
+mypy ha-addon/client/ --ignore-missing-imports
 
 echo "==> pre-push: all checks passed."

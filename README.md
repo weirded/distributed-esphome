@@ -216,30 +216,24 @@ ESPHOME_CONFIG_DIR=/path/to/esphome/configs PORT=8765 SERVER_TOKEN=dev-token \
 ### Run a Client Locally
 
 ```bash
-SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python client/client.py
+SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python ha-addon/client/client.py
 ```
 
 ### Build Docker Images
 
 ```bash
-# Sync client/ → ha-addon/client/ first (ha-addon/client/ is gitignored)
-bash scripts/sync-client.sh
-
 # Server image
 docker build -t esphome-dist-server ha-addon/
 
 # Client image (auto-detects host arch; pass explicit platform if needed)
-docker build -t esphome-dist-client client/
+docker build -t esphome-dist-client ha-addon/client/
 # ARM64 (Apple Silicon, Raspberry Pi 4+):
-docker buildx build --platform linux/arm64 --load -t esphome-dist-client client/
+docker buildx build --platform linux/arm64 --load -t esphome-dist-client ha-addon/client/
 ```
 
 ### Package the HA Add-on
 
 ```bash
-# sync-client.sh is called automatically by push-to-hass-4.sh
-# For a manual tarball:
-bash scripts/sync-client.sh
 tar -czf distributed-esphome-addon.tar.gz -s '/^ha-addon/distributed-esphome/' ha-addon
 ```
 
@@ -249,7 +243,7 @@ tar -czf distributed-esphome-addon.tar.gz -s '/^ha-addon/distributed-esphome/' h
 bash scripts/bump-version.sh 0.0.X
 ```
 
-Updates `ha-addon/VERSION`, `ha-addon/config.yaml`, and `client/client.py` atomically.
+Updates `ha-addon/VERSION`, `ha-addon/config.yaml`, and `ha-addon/client/client.py` atomically.
 
 ## Repository Layout
 
@@ -259,25 +253,27 @@ distributed-esphome/
 │   ├── config.yaml           # HA add-on manifest (version: must match VERSION)
 │   ├── Dockerfile
 │   ├── VERSION               # Single source of truth for the version number
-│   ├── rootfs/               # s6-overlay service scripts
-│   ├── client/               # Generated — run scripts/sync-client.sh (gitignored)
+│   ├── DOCS.md               # Documentation tab in HA UI
+│   ├── CHANGELOG.md          # Changelog tab in HA UI
+│   ├── translations/en.yaml  # Config option labels for HA UI
+│   ├── build.yaml            # Multi-arch base image mapping
+│   ├── client/               # Build client code (also used for standalone Docker image)
+│   │   ├── Dockerfile
+│   │   ├── client.py         # Main loop, heartbeat, job runner, auto-update
+│   │   ├── version_manager.py # ESPHome version install/eviction (LRU)
+│   │   └── dist-scripts/     # start.sh / stop.sh / uninstall.sh + PowerShell variants
 │   └── server/
 │       ├── main.py           # aiohttp app, middleware, background tasks
 │       ├── api.py            # /api/v1/* — client REST API (Bearer token auth)
 │       ├── ui_api.py         # /ui/api/* — browser JSON API (Ingress auth)
+│       ├── app_config.py     # Centralised configuration (AppConfig dataclass)
 │       ├── job_queue.py      # Job state machine, persistence
 │       ├── scanner.py        # YAML discovery, bundle generation
 │       ├── registry.py       # Build client registry
 │       ├── device_poller.py  # mDNS listener + aioesphomeapi polling
 │       └── static/index.html # Single-file Web UI (tab layout)
-├── client/
-│   ├── Dockerfile
-│   ├── client.py             # Main loop, heartbeat, job runner, auto-update
-│   ├── version_manager.py    # ESPHome version install/eviction (LRU)
-│   └── dist-scripts/         # start.sh / stop.sh / uninstall.sh for distribution
 ├── scripts/
 │   ├── bump-version.sh       # Update version in all 3 places atomically
-│   ├── sync-client.sh        # Copy client/ → ha-addon/client/
 │   ├── install-hooks.sh      # Configure git to use .githooks/
 │   └── ...
 ├── .githooks/pre-push        # Runs tests + mypy before every push
@@ -292,7 +288,7 @@ The version lives in three places that must stay in sync — use `bash scripts/b
 
 1. `ha-addon/VERSION` — read by the server at runtime
 2. `ha-addon/config.yaml` — required by the HA add-on manifest
-3. `client/client.py` — `CLIENT_VERSION` constant (checked against server on heartbeat)
+3. `ha-addon/client/client.py` — `CLIENT_VERSION` constant (checked against server on heartbeat)
 
 ## Platform Support
 
@@ -303,7 +299,7 @@ Both the HA add-on (server) and standalone build clients support **x86-64 and AR
 
 ```bash
 # Build a native ARM64 client image (e.g. on Apple Silicon or Raspberry Pi 4)
-docker buildx build --platform linux/arm64 --load -t esphome-dist-client client/
+docker buildx build --platform linux/arm64 --load -t esphome-dist-client ha-addon/client/
 
 # Package and distribute an ARM64 client archive
 ./package-client.sh http://your-ha-host:8765 your-token linux/arm64

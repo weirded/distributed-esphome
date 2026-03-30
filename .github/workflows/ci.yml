@@ -29,4 +29,4 @@ jobs:
         run: mypy ha-addon/server/ --ignore-missing-imports
 
       - name: mypy — client
-        run: mypy client/ --ignore-missing-imports
+        run: mypy ha-addon/client/ --ignore-missing-imports
