@@ -1,4 +1,0 @@
-#!/bin/bash
-
-echo "Starting ESPHome Distributed Build Server"
-exec python3 /app/main.py

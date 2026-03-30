@@ -1,11 +1,45 @@
 # Changelog
 
+## 0.0.31
+- Remove custom AppArmor profile — use HA default instead
+
+## 0.0.30
+- Fix AppArmor — add execute permission for binaries
+
+## 0.0.29
+- Use s6-overlay properly with `init: true`
+
+## 0.0.28
+- Use plain bash in run.sh — drop bashio/s6 dependencies
+
+## 0.0.27
+- Fix /init permission denied — override base image ENTRYPOINT
+
+## 0.0.26
+- Revert to CMD+run.sh — s6-overlay /init permission denied
+
+## 0.0.25
+- Version bump for client auto-update
+
+## 0.0.24
+- Network diagnostics on OTA failure
+- Use `wifi.use_address` for OTA diagnostics target
+- Proxmox LXC template builder for client package
+
+## 0.0.23
+- HA add-on compliance: s6-overlay service runner, DOCS.md, translations, AppArmor profile
+- Added changelog
+
 ## 0.0.22
 - Removed dead local client code
 - Security audit and documentation
 
 ## 0.0.21
 - Persist client hostname on job so queue UI survives client deregister
+
+## 0.0.20
+- Version bump
+- Restore hostname in queue client column, add pinned hint below
 
 ## 0.0.19
 - Pin OTA retry jobs to the original client

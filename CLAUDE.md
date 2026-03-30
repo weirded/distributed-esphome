@@ -98,6 +98,10 @@ Client config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 ./push-to-hass-4.sh
 ```
 
+## Release Process
+
+When bumping the version (updating `ha-addon/VERSION` and `ha-addon/config.yaml`), always add an entry to `ha-addon/CHANGELOG.md` describing what changed. The changelog is in reverse-chronological order with the newest version at the top.
+
 ## Design Specification
 
 `REQUIREMENTS.md` is the authoritative design document covering the full API spec, job state machine behavior, bundle format, device polling details, and acceptance criteria.
