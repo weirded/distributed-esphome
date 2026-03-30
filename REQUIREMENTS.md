@@ -124,18 +124,33 @@ All endpoints are under `/api/v1/`. Authentication: shared secret token in `Auth
 **`POST /api/v1/clients/register`**
 ```json
 // Request
-{ "hostname": "build-node-1", "platform": "linux/amd64", "client_version": "0.0.1" }
+{
+  "hostname": "build-node-1",
+  "platform": "linux/amd64",
+  "client_version": "0.0.1",
+  "max_parallel_jobs": 2,
+  "system_info": {
+    "cpu_arch": "x86_64",
+    "os_version": "Debian 12",
+    "cpu_cores": 8,
+    "cpu_model": "Intel Core i7-1270P",
+    "total_memory": "16 GB",
+    "uptime": "5m"
+  }
+}
 // Response
 { "client_id": "uuid" }
 ```
+`system_info` is optional — old clients that omit it are still accepted.
 
 **`POST /api/v1/clients/heartbeat`**
 ```json
 // Request
-{ "client_id": "uuid" }
+{ "client_id": "uuid", "system_info": { ... } }
 // Response
 { "ok": true, "server_client_version": "0.0.1" }
 ```
+`system_info` in heartbeats keeps the `uptime` field current. The server updates the stored `system_info` if a non-null value is provided.
 The client compares `server_client_version` against its own `CLIENT_VERSION` constant. If they differ, the client triggers a self-update (see §2.6).
 
 **`GET /api/v1/jobs/next`**
@@ -176,7 +191,7 @@ Disabled clients receive 204 without a job being dequeued.
 
 ### 1.7 Client Registry
 
-- Clients register on connect; server tracks `{ client_id, hostname, platform, last_seen, current_job_id, disabled, client_version, max_parallel_jobs }`
+- Clients register on connect; server tracks `{ client_id, hostname, platform, last_seen, current_job_id, disabled, client_version, max_parallel_jobs, system_info }`
 - A client is considered **online** if `last_seen` is within 30 seconds (configurable)
 - Heartbeat interval: 10 seconds (client side)
 - Clients can be **disabled** via `POST /ui/api/clients/{client_id}/disable`. Disabled clients still heartbeat and appear in the UI but will not be assigned new jobs (`GET /api/v1/jobs/next` returns 204 immediately)
@@ -252,6 +267,9 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 **Clients tab**
 - Table: `Hostname/Slot | Platform | Status | Current Job | Version | Actions`
 - One row per worker slot; slot suffix `/N` when client has > 1 slot
+- Hostname cell shows a subtitle line with `cpu_arch · cpu_cores cores · total_memory` from `system_info` (when available)
+- Platform cell shows OS version and CPU model as subtitle lines from `system_info` (when available)
+- Status cell shows client process uptime (e.g. `up 2h 15m`) from `system_info.uptime` (when available)
 - **"+ Connect Client"** button in panel header opens a modal with the pre-filled `docker run` command and a Copy button
 - Disabled clients shown at reduced opacity; Enable/Disable button per client; Remove button for offline clients
 - Auto-refreshes every 5 seconds

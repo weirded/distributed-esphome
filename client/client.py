@@ -6,6 +6,7 @@ import base64
 import io
 import logging
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -27,7 +28,172 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.15"
+CLIENT_VERSION = "0.0.16"
+
+# ---------------------------------------------------------------------------
+# System information gathering (stdlib only — no psutil dependency)
+# ---------------------------------------------------------------------------
+
+# Captured at process start so uptime can be computed on each heartbeat.
+_PROCESS_START_TIME: float = time.monotonic()
+
+
+def _get_os_version() -> str:
+    """Return a human-readable OS version string using only stdlib."""
+    system = platform.system()
+
+    if system == "Darwin":
+        # e.g. "macOS 15.3"
+        mac_ver = platform.mac_ver()[0]
+        return f"macOS {mac_ver}" if mac_ver else "macOS"
+
+    if system == "Linux":
+        # Parse /etc/os-release for NAME and VERSION_ID (most distros)
+        os_release: dict[str, str] = {}
+        try:
+            with open("/etc/os-release", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line:
+                        key, _, val = line.partition("=")
+                        os_release[key.strip()] = val.strip().strip('"')
+        except OSError:
+            pass
+
+        name = os_release.get("NAME") or os_release.get("ID", "")
+        version = os_release.get("VERSION_ID", "")
+        if name and version:
+            return f"{name} {version}"
+        if name:
+            return name
+
+        # Fallback for minimal containers without /etc/os-release
+        kernel = platform.release()
+        return f"Linux {kernel}" if kernel else "Linux"
+
+    # Windows or other
+    return platform.platform()
+
+
+def _get_cpu_model() -> str:
+    """Return CPU model string using stdlib and /proc/cpuinfo or sysctl."""
+    system = platform.system()
+
+    if system == "Darwin":
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True, text=True, timeout=3,
+            )
+            model = result.stdout.strip()
+            if model:
+                return model
+        except Exception:
+            pass
+        # Apple Silicon reports via hw.model (e.g. "Apple M1 Pro")
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.model"],
+                capture_output=True, text=True, timeout=3,
+            )
+            model = result.stdout.strip()
+            if model:
+                return model
+        except Exception:
+            pass
+
+    if system == "Linux":
+        # Try /proc/cpuinfo — "model name" on x86, "Model name" or "Hardware" on ARM
+        try:
+            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if ":" in line:
+                        key, _, val = line.partition(":")
+                        key = key.strip().lower()
+                        if key in ("model name", "hardware", "cpu model"):
+                            val = val.strip()
+                            if val:
+                                return val
+        except OSError:
+            pass
+
+    # Generic fallback
+    machine = platform.machine()
+    processor = platform.processor()
+    return processor or machine or "Unknown"
+
+
+def _get_total_memory_bytes() -> Optional[int]:
+    """Return total physical memory in bytes using stdlib only."""
+    system = platform.system()
+
+    if system == "Linux":
+        # Parse /proc/meminfo
+        try:
+            with open("/proc/meminfo", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        # Format: "MemTotal:     16384000 kB"
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            kb = int(parts[1])
+                            return kb * 1024
+        except (OSError, ValueError):
+            pass
+
+    if system == "Darwin":
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True, text=True, timeout=3,
+            )
+            return int(result.stdout.strip())
+        except Exception:
+            pass
+
+    return None
+
+
+def _format_memory(bytes_: int) -> str:
+    """Return a human-readable memory string, e.g. '16 GB' or '512 MB'."""
+    gb = bytes_ / (1024 ** 3)
+    if gb >= 1:
+        # Round to nearest whole GB for clean display
+        return f"{round(gb)} GB"
+    mb = bytes_ / (1024 ** 2)
+    return f"{round(mb)} MB"
+
+
+def _format_uptime(seconds: float) -> str:
+    """Return uptime as a compact human-readable string, e.g. '2d 3h' or '45m'."""
+    total = int(seconds)
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m"
+    return f"{secs}s"
+
+
+def collect_system_info() -> dict:
+    """Gather hardware/OS details using stdlib only. All fields are best-effort."""
+    cpu_count = os.cpu_count()
+    mem_bytes = _get_total_memory_bytes()
+
+    info: dict = {
+        "cpu_arch": platform.machine(),
+        "os_version": _get_os_version(),
+        "cpu_cores": cpu_count,
+        "cpu_model": _get_cpu_model(),
+        "total_memory": _format_memory(mem_bytes) if mem_bytes is not None else None,
+        "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
+    }
+    return info
+
 
 # ---------------------------------------------------------------------------
 # Logging setup — per-worker context filter
@@ -173,6 +339,7 @@ def register() -> str:
                 "platform": PLATFORM,
                 "client_version": CLIENT_VERSION,
                 "max_parallel_jobs": MAX_PARALLEL_JOBS,
+                "system_info": collect_system_info(),
             }
             if existing_id:
                 payload["client_id"] = existing_id
@@ -194,7 +361,10 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
     while not stop_event.is_set():
         try:
-            resp = post("/api/v1/clients/heartbeat", {"client_id": client_id})
+            resp = post("/api/v1/clients/heartbeat", {
+                "client_id": client_id,
+                "system_info": collect_system_info(),
+            })
             if resp.status_code == 401:
                 _on_auth_failed()
             elif resp.status_code == 404:
@@ -573,7 +743,10 @@ def _initial_version_check(client_id: str) -> None:
     main loop applies the update before picking up any jobs.
     """
     try:
-        resp = post("/api/v1/clients/heartbeat", {"client_id": client_id}, timeout=10)
+        resp = post("/api/v1/clients/heartbeat", {
+            "client_id": client_id,
+            "system_info": collect_system_info(),
+        }, timeout=10)
         if resp.ok:
             sv = resp.json().get("server_client_version")
             if sv and sv != CLIENT_VERSION:

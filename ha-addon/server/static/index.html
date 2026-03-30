@@ -772,6 +772,37 @@ async function refreshQueue() {
 // ============================================================
 // Render: Clients
 // ============================================================
+function clientSystemInfoHtml(c) {
+  const si = c.system_info;
+  if (!si) return '';
+  const parts = [];
+  if (si.cpu_arch) parts.push(escapeHtml(si.cpu_arch));
+  if (si.cpu_cores) parts.push(si.cpu_cores + ' cores');
+  if (si.total_memory) parts.push(escapeHtml(si.total_memory));
+  if (!parts.length) return '';
+  return `<br><span style="font-size:10px;color:var(--text-muted)">${parts.join(' · ')}</span>`;
+}
+
+function clientPlatformHtml(c) {
+  const si = c.system_info;
+  const platformText = escapeHtml(c.platform);
+  if (!si) return `<span style="color:var(--text-muted)">${platformText}</span>`;
+  const lines = [`<span style="color:var(--text-muted)">${platformText}</span>`];
+  if (si.os_version) {
+    lines.push(`<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.os_version)}</span>`);
+  }
+  if (si.cpu_model) {
+    lines.push(`<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.cpu_model)}</span>`);
+  }
+  return lines.join('');
+}
+
+function clientUptimeHtml(c) {
+  const si = c.system_info;
+  if (!si || !si.uptime) return '';
+  return `<br><span style="font-size:10px;color:var(--text-muted)" title="Client process uptime">up ${escapeHtml(si.uptime)}</span>`;
+}
+
 function renderClients() {
   const tbody = document.getElementById('clients-tbody');
   const online = clientsData.filter(c => c.online).length;
@@ -816,9 +847,9 @@ function renderClients() {
 
       if (slot === 1) {
         rows.push(`<tr${rowAttr}>
-          <td>${slotName}</td>
-          <td style="color:var(--text-muted)">${escapeHtml(c.platform)}</td>
-          <td>${statusHtml}</td>
+          <td>${slotName}${clientSystemInfoHtml(c)}</td>
+          <td>${clientPlatformHtml(c)}</td>
+          <td>${statusHtml}${clientUptimeHtml(c)}</td>
           <td>${jobHtml}</td>
           <td>${clientVersionHtml(c.client_version)}</td>
           <td><div style="display:flex;gap:4px;">

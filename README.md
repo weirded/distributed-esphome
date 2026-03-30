@@ -110,7 +110,7 @@ Three tabs — works on mobile and small laptop screens:
 
 - **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, running version); "config changed" indicator when the YAML has been modified since the last compile; compile individual, all, or only outdated ones; inline YAML editor
 - **Queue** — live job status with logs; retry failed jobs (including OTA failures), cancel in-progress jobs; badge shows active/failed count
-- **Clients** — connected build workers with online status, current job per slot, version; enable/disable clients; remove offline clients; **+ Connect Client** button opens a pre-filled `docker run` command
+- **Clients** — connected build workers with online status, current job per slot, version, and system info (CPU arch, core count, memory, OS version, CPU model, uptime); enable/disable clients; remove offline clients; **+ Connect Client** button opens a pre-filled `docker run` command
 
 ## How It Works
 

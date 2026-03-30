@@ -25,6 +25,7 @@ class Client:
     disabled: bool = False
     client_version: Optional[str] = None
     max_parallel_jobs: int = 1
+    system_info: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -36,6 +37,7 @@ class Client:
             "disabled": self.disabled,
             "client_version": self.client_version,
             "max_parallel_jobs": self.max_parallel_jobs,
+            "system_info": self.system_info,
         }
 
 
@@ -52,6 +54,7 @@ class ClientRegistry:
         client_version: Optional[str] = None,
         existing_client_id: Optional[str] = None,
         max_parallel_jobs: int = 1,
+        system_info: Optional[dict] = None,
     ) -> str:
         """Register a client. Returns client_id.
 
@@ -66,6 +69,8 @@ class ClientRegistry:
             client.client_version = client_version
             client.max_parallel_jobs = max_parallel_jobs
             client.last_seen = _utcnow()
+            if system_info is not None:
+                client.system_info = system_info
             logger.info(
                 "Re-registered client %s (%s / %s / v%s / %d slots)",
                 existing_client_id, hostname, platform, client_version or "?", max_parallel_jobs,
@@ -79,6 +84,7 @@ class ClientRegistry:
             platform=platform,
             client_version=client_version,
             max_parallel_jobs=max_parallel_jobs,
+            system_info=system_info,
         )
         self._clients[client_id] = client
         logger.info(
@@ -87,12 +93,14 @@ class ClientRegistry:
         )
         return client_id
 
-    def heartbeat(self, client_id: str) -> bool:
+    def heartbeat(self, client_id: str, system_info: Optional[dict] = None) -> bool:
         """Update last_seen for *client_id*. Returns False if unknown."""
         client = self._clients.get(client_id)
         if client is None:
             return False
         client.last_seen = _utcnow()
+        if system_info is not None:
+            client.system_info = system_info
         return True
 
     def set_job(self, client_id: str, job_id: Optional[str]) -> bool:

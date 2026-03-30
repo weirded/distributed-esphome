@@ -68,8 +68,11 @@ async def register_client(request: web.Request) -> web.Response:
     client_version = body.get("client_version")
     existing_client_id = body.get("client_id")
     max_parallel_jobs = int(body.get("max_parallel_jobs", 1))
+    system_info = body.get("system_info") if isinstance(body.get("system_info"), dict) else None
     registry = request.app["registry"]
-    client_id = registry.register(hostname, platform, client_version, existing_client_id, max_parallel_jobs)
+    client_id = registry.register(
+        hostname, platform, client_version, existing_client_id, max_parallel_jobs, system_info,
+    )
     return web.json_response({"client_id": client_id})
 
 
@@ -86,8 +89,9 @@ async def client_heartbeat(request: web.Request) -> web.Response:
     if not client_id:
         return web.json_response({"error": "client_id required"}, status=400)
 
+    system_info = body.get("system_info") if isinstance(body.get("system_info"), dict) else None
     registry = request.app["registry"]
-    if not registry.heartbeat(client_id):
+    if not registry.heartbeat(client_id, system_info):
         # Unknown client — let it re-register
         return web.json_response({"error": "Unknown client_id"}, status=404)
     return web.json_response({
