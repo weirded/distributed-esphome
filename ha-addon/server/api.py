@@ -145,7 +145,8 @@ async def get_next_job(request: web.Request) -> web.Response:
     except ValueError:
         worker_id = 1
 
-    job = await queue.claim_next(client_id, worker_id)
+    hostname = client.hostname if client else None
+    job = await queue.claim_next(client_id, worker_id, hostname=hostname)
     if job is None:
         return web.Response(status=204)
 

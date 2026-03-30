@@ -973,13 +973,15 @@ function renderQueue() {
     const pinnedClient = job.pinned_client_id
       ? clientsData.find(c => c.client_id === job.pinned_client_id)
       : null;
-    const baseHostname = assignedClient?.hostname || (job.assigned_client_id ? job.assigned_client_id.slice(0,8) : null);
+    // Prefer the persisted hostname (survives client deregistration), fall back to live lookup
+    const baseHostname = job.assigned_hostname || assignedClient?.hostname || null;
     const showSlot = baseHostname && job.worker_id != null && (assignedClient?.max_parallel_jobs || 1) > 1;
     const clientName = baseHostname
       ? (showSlot ? `${baseHostname}/${job.worker_id}` : baseHostname)
       : '—';
-    const pinnedHtml = (pinnedClient && job.state === 'pending')
-      ? `<br><span style="font-size:10px;color:var(--text-muted)">→ ${escapeHtml(pinnedClient.hostname)}</span>`
+    const pinnedHostname = pinnedClient?.hostname || job.assigned_hostname;
+    const pinnedHtml = (pinnedHostname && job.pinned_client_id && job.state === 'pending')
+      ? `<br><span style="font-size:10px;color:var(--text-muted)">→ ${escapeHtml(pinnedHostname)}</span>`
       : '';
     const isActive = ['pending', 'assigned', 'running'].includes(job.state);
     const dur = job.duration_seconds != null

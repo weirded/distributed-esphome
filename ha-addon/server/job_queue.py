@@ -50,6 +50,7 @@ class Job:
     state: JobState
     run_id: str
     assigned_client_id: Optional[str] = None
+    assigned_hostname: Optional[str] = None  # persisted so UI works after client deregisters
     assigned_at: Optional[datetime] = None
     worker_id: Optional[int] = None
     timeout_seconds: int = 600
@@ -70,6 +71,7 @@ class Job:
             "state": self.state.value,
             "run_id": self.run_id,
             "assigned_client_id": self.assigned_client_id,
+            "assigned_hostname": self.assigned_hostname,
             "assigned_at": _iso(self.assigned_at),
             "worker_id": self.worker_id,
             "timeout_seconds": self.timeout_seconds,
@@ -93,6 +95,7 @@ class Job:
             state=JobState(d["state"]),
             run_id=d.get("run_id", ""),
             assigned_client_id=d.get("assigned_client_id"),
+            assigned_hostname=d.get("assigned_hostname"),
             assigned_at=_from_iso(d.get("assigned_at")),
             worker_id=d.get("worker_id"),
             timeout_seconds=d.get("timeout_seconds", 600),
@@ -212,7 +215,7 @@ class JobQueue:
             logger.info("Enqueued job %s for target %s", job.id, target)
             return job
 
-    async def claim_next(self, client_id: str, worker_id: int = 1) -> Optional[Job]:
+    async def claim_next(self, client_id: str, worker_id: int = 1, hostname: Optional[str] = None) -> Optional[Job]:
         """
         Atomically claim the next pending job for *client_id*.
 
@@ -227,6 +230,7 @@ class JobQueue:
                     continue
                 job.state = JobState.ASSIGNED
                 job.assigned_client_id = client_id
+                job.assigned_hostname = hostname
                 job.assigned_at = _utcnow()
                 job.worker_id = worker_id
                 self._persist()
