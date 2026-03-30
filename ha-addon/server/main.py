@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
-import secrets
 from pathlib import Path
 
 from aiohttp import web
 
 import api as api_module
 import ui_api as ui_api_module
+from app_config import AppConfig
 from device_poller import DevicePoller
 from job_queue import JobQueue
 from registry import ClientRegistry
@@ -23,56 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Config loading
-# ---------------------------------------------------------------------------
-
-OPTIONS_FILE = Path("/data/options.json")
-TOKEN_FILE = Path("/data/auth_token")
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
-
-DEFAULTS: dict = {
-    "token": os.environ.get("SERVER_TOKEN", ""),
-    "job_timeout": int(os.environ.get("JOB_TIMEOUT", "600")),
-    "ota_timeout": int(os.environ.get("OTA_TIMEOUT", "120")),
-    "client_offline_threshold": int(os.environ.get("CLIENT_OFFLINE_THRESHOLD", "30")),
-    "device_poll_interval": int(os.environ.get("DEVICE_POLL_INTERVAL", "60")),
-}
-
-
-def _get_or_create_token() -> str:
-    """Return the persisted auth token, generating one if it doesn't exist."""
-    if TOKEN_FILE.exists():
-        token = TOKEN_FILE.read_text().strip()
-        if token:
-            return token
-    token = secrets.token_hex(16)
-    try:
-        TOKEN_FILE.write_text(token)
-        logger.info("Generated new auth token and saved to %s", TOKEN_FILE)
-    except Exception:
-        logger.exception("Failed to save generated token to %s", TOKEN_FILE)
-    return token
-
-
-def load_config() -> dict:
-    if OPTIONS_FILE.exists():
-        try:
-            data = json.loads(OPTIONS_FILE.read_text())
-            # Merge with defaults
-            merged = {**DEFAULTS, **data}
-        except Exception:
-            logger.exception("Failed to read %s; using defaults", OPTIONS_FILE)
-            merged = dict(DEFAULTS)
-    else:
-        merged = dict(DEFAULTS)
-
-    # Auto-generate token if not configured
-    if not merged.get("token"):
-        merged["token"] = _get_or_create_token()
-
-    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -97,12 +47,12 @@ async def auth_middleware(request: web.Request, handler):
         if peer_ip == "172.30.32.2":
             return await handler(request)
 
-        config = request.app["config"]
-        token = config.get("token", "")
-        auth_header = request.headers.get("Authorization", "")
-        if token and auth_header == f"Bearer {token}":
-            return await handler(request)
-        if not token:
+        cfg: AppConfig = request.app["config"]
+        if cfg.token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header == f"Bearer {cfg.token}":
+                return await handler(request)
+        else:
             # No token configured — allow all (development mode)
             logger.warning("No auth token configured; allowing unauthenticated request to %s", path)
             return await handler(request)
@@ -134,18 +84,18 @@ async def config_scanner(app: web.Application) -> None:
     """Background task: re-scan config dir every 30s and update device poller targets."""
     from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
 
-    config_dir = app["scanner_config_dir"]
+    cfg: AppConfig = app["config"]
     device_poller = app.get("device_poller")
     prev_targets: list[str] = []
 
     while True:
         await asyncio.sleep(30)
         try:
-            targets = scan_configs(config_dir)
+            targets = scan_configs(cfg.config_dir)
             if targets != prev_targets:
                 logger.info("Config change detected: %d targets (was %d)", len(targets), len(prev_targets))
                 if device_poller:
-                    name_map = build_name_to_target_map(config_dir, targets)
+                    name_map = build_name_to_target_map(cfg.config_dir, targets)
                     device_poller.update_compile_targets(targets, name_map)
                 prev_targets = targets
         except Exception:
@@ -185,22 +135,20 @@ async def serve_index(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 def create_app() -> web.Application:
-    config = load_config()
-    config_dir = os.environ.get("ESPHOME_CONFIG_DIR", "/config/esphome")
+    cfg = AppConfig.load()
 
     queue = JobQueue()
     queue.load()
 
     registry = ClientRegistry()
 
-    poll_interval = config.get("device_poll_interval", 60)
-    device_poller = DevicePoller(poll_interval=poll_interval)
+    device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
 
     app = web.Application(middlewares=[auth_middleware])
-    app["config"] = config
+    app["config"] = cfg
     app["queue"] = queue
     app["registry"] = registry
-    app["scanner_config_dir"] = config_dir
+    app["scanner_config_dir"] = cfg.config_dir
     app["device_poller"] = device_poller
 
     # Register routes
@@ -216,13 +164,13 @@ def create_app() -> web.Application:
     # Startup/shutdown hooks
     async def on_startup(app: web.Application) -> None:
         logger.info("Starting ESPHome Distributed Build Server")
-        logger.info("Config dir: %s", app["scanner_config_dir"])
-        logger.info("Token configured: %s", bool(config.get("token")))
+        logger.info("Config dir: %s", cfg.config_dir)
+        logger.info("Token configured: %s", bool(cfg.token))
 
         # Update device poller with known targets
         from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
-        targets = scan_configs(config_dir)
-        name_map = build_name_to_target_map(config_dir, targets)
+        targets = scan_configs(cfg.config_dir)
+        name_map = build_name_to_target_map(cfg.config_dir, targets)
         device_poller.update_compile_targets(targets, name_map)
 
         # Start device poller
@@ -257,6 +205,6 @@ def create_app() -> web.Application:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8765"))
+    cfg = AppConfig.load()
     app = create_app()
-    web.run_app(app, host="0.0.0.0", port=port)
+    web.run_app(app, host="0.0.0.0", port=cfg.port)

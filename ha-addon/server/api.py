@@ -6,10 +6,10 @@ import base64
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from aiohttp import web
 
+from app_config import AppConfig
 from job_queue import JobState
 from scanner import create_bundle, get_esphome_version
 
@@ -31,14 +31,13 @@ logger = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
 
-def _get_config(request: web.Request) -> dict:
+def _cfg(request: web.Request) -> AppConfig:
     return request.app["config"]
 
 
 def _check_auth(request: web.Request) -> bool:
     """Return True if the request is authorized."""
-    config = _get_config(request)
-    token = config.get("token", "")
+    cfg = _cfg(request)
     # Requests from HA supervisor (ingress internal address) are always trusted
     peer = request.transport and request.transport.get_extra_info("peername")
     if peer:
@@ -46,7 +45,7 @@ def _check_auth(request: web.Request) -> bool:
         if peer_ip == "172.30.32.2":
             return True
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer ") and auth_header[7:] == token:
+    if auth_header.startswith("Bearer ") and auth_header[7:] == cfg.token:
         return True
     return False
 
@@ -108,7 +107,7 @@ async def get_next_job(request: web.Request) -> web.Response:
 
     queue = request.app["queue"]
     registry = request.app["registry"]
-    config_dir = request.app["scanner_config_dir"]
+    cfg = _cfg(request)
 
     # Don't assign new jobs to disabled clients
     client = registry.get(client_id)
@@ -127,7 +126,7 @@ async def get_next_job(request: web.Request) -> web.Response:
 
     # Generate bundle on demand
     try:
-        bundle_bytes = create_bundle(config_dir)
+        bundle_bytes = create_bundle(cfg.config_dir)
         bundle_b64 = base64.b64encode(bundle_bytes).decode("ascii")
     except Exception:
         logger.exception("Failed to create bundle for job %s", job.id)
@@ -144,6 +143,7 @@ async def get_next_job(request: web.Request) -> web.Response:
             "esphome_version": job.esphome_version,
             "bundle_b64": bundle_b64,
             "timeout_seconds": job.timeout_seconds,
+            "ota_only": job.ota_only,
         }
     )
 
@@ -232,13 +232,12 @@ async def get_status(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return _unauthorized()
 
+    cfg = _cfg(request)
     registry = request.app["registry"]
     queue = request.app["queue"]
-    config = _get_config(request)
-    threshold = config.get("client_offline_threshold", 30)
 
     online_clients = sum(
-        1 for c in registry.get_all() if registry.is_online(c.client_id, threshold)
+        1 for c in registry.get_all() if registry.is_online(c.client_id, cfg.client_offline_threshold)
     )
 
     return web.json_response(

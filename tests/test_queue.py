@@ -147,7 +147,7 @@ def test_concurrent_claims_atomic():
 
     async def _run():
         q = JobQueue(queue_file=Path("/tmp/test_atomic_queue.json"))
-        await q.enqueue("device.yaml", "2024.3.1", "run1")
+        await q.enqueue("device.yaml", "2024.3.1", "run1", 300)
 
         results = await asyncio.gather(
             q.claim_next("client-A"),
@@ -356,7 +356,7 @@ def test_retry_failed_job_creates_pending(queue):
     claimed = run(queue.claim_next("client-A"))
     run(queue.submit_result(claimed.id, "failed", log="error"))
 
-    new_jobs = run(queue.retry([claimed.id], "2024.3.1", "run2"))
+    new_jobs = run(queue.retry([claimed.id], "2024.3.1", "run2", 300))
     assert len(new_jobs) == 1
     assert new_jobs[0].state == JobState.PENDING
     assert new_jobs[0].target == "device1.yaml"
@@ -385,7 +385,7 @@ def test_retry_timed_out_job_creates_pending(tmp_queue_file):
         None,
     )
     if timed_out_job:
-        new_jobs = run(q.retry([timed_out_job.id], "2024.3.1", "run2"))
+        new_jobs = run(q.retry([timed_out_job.id], "2024.3.1", "run2", 300))
         assert len(new_jobs) == 1
         assert new_jobs[0].state == JobState.PENDING
 
@@ -394,7 +394,7 @@ def test_retry_ignores_non_terminal_jobs(queue):
     job = run(_enqueue(queue, "device1.yaml"))
     run(queue.claim_next("client-A"))  # now ASSIGNED
 
-    new_jobs = run(queue.retry([job.id], "2024.3.1", "run2"))
+    new_jobs = run(queue.retry([job.id], "2024.3.1", "run2", 300))
     assert new_jobs == []  # ASSIGNED job is not retryable
 
 
@@ -403,7 +403,7 @@ def test_retry_ignores_success_jobs(queue):
     claimed = run(queue.claim_next("client-A"))
     run(queue.submit_result(claimed.id, "success"))
 
-    new_jobs = run(queue.retry([claimed.id], "2024.3.1", "run2"))
+    new_jobs = run(queue.retry([claimed.id], "2024.3.1", "run2", 300))
     assert new_jobs == []  # SUCCESS is terminal, not retryable
 
 
@@ -415,7 +415,7 @@ def test_retry_multiple_jobs(queue):
     run(queue.submit_result(c1.id, "failed"))
     run(queue.submit_result(c2.id, "failed"))
 
-    new_jobs = run(queue.retry([c1.id, c2.id], "2024.3.1", "run2"))
+    new_jobs = run(queue.retry([c1.id, c2.id], "2024.3.1", "run2", 300))
     assert len(new_jobs) == 2
     targets = {j.target for j in new_jobs}
     assert targets == {"d1.yaml", "d2.yaml"}

@@ -950,7 +950,9 @@ function renderQueue() {
       : (isActive && job.assigned_at ? fmtDuration((Date.now() - new Date(job.assigned_at)) / 1000) : '—');
 
     let badgeLabel, badgeCls;
-    if (job.state === 'pending') {
+    if (job.state === 'pending' && job.ota_only) {
+      badgeLabel = 'OTA Retry'; badgeCls = 'badge badge-timed_out';
+    } else if (job.state === 'pending') {
       badgeLabel = 'Pending'; badgeCls = 'badge badge-pending';
     } else if (job.state === 'assigned' || job.state === 'running') {
       badgeLabel = job.status_text || 'Working'; badgeCls = 'badge badge-running';

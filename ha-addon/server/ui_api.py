@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from pathlib import Path
 
 from aiohttp import web
 
+from app_config import AppConfig
 from device_poller import Device
 from job_queue import JobState
 from scanner import scan_configs, get_esphome_version, get_device_metadata
@@ -18,15 +18,19 @@ logger = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
 
+def _cfg(request: web.Request) -> AppConfig:
+    return request.app["config"]
+
+
 @routes.get("/ui/api/server-info")
 async def get_server_info(request: web.Request) -> web.Response:
     """Return server configuration needed by the UI (token, port, versions)."""
     from api import _get_server_client_version  # noqa: PLC0415
-    config = request.app["config"]
+    cfg = _cfg(request)
     addon_version = _get_server_client_version()
     return web.json_response({
-        "token": config.get("token", ""),
-        "port": int(os.environ.get("PORT", "8765")),
+        "token": cfg.token,
+        "port": cfg.port,
         "server_client_version": addon_version,
         "addon_version": addon_version,
     })
@@ -35,11 +39,11 @@ async def get_server_info(request: web.Request) -> web.Response:
 @routes.get("/ui/api/targets")
 async def get_targets(request: web.Request) -> web.Response:
     """List discovered YAML targets with device status."""
-    config_dir = request.app["scanner_config_dir"]
+    cfg = _cfg(request)
     device_poller = request.app.get("device_poller")
     server_version = get_esphome_version()
 
-    targets = scan_configs(config_dir)
+    targets = scan_configs(cfg.config_dir)
 
     # Build device lookup by compile_target filename
     devices_by_target: dict[str, Device] = {}
@@ -51,7 +55,7 @@ async def get_targets(request: web.Request) -> web.Response:
     result = []
     for target in targets:
         dev = devices_by_target.get(target)
-        meta = get_device_metadata(config_dir, target)
+        meta = get_device_metadata(cfg.config_dir, target)
         # Detect config changes since last compile
         config_modified = None
         if dev and dev.compilation_time:
@@ -59,7 +63,7 @@ async def get_targets(request: web.Request) -> web.Response:
                 from datetime import datetime  # noqa: PLC0415
                 # compilation_time format: "Mar 29 2026, 17:00:00"
                 compile_dt = datetime.strptime(dev.compilation_time, "%b %d %Y, %H:%M:%S")
-                config_path = Path(config_dir) / target
+                config_path = Path(cfg.config_dir) / target
                 if config_path.exists():
                     mtime_dt = datetime.fromtimestamp(config_path.stat().st_mtime)
                     config_modified = mtime_dt > compile_dt
@@ -100,13 +104,12 @@ async def get_clients(request: web.Request) -> web.Response:
     """Return list of registered build clients with online status."""
     registry = request.app["registry"]
     queue = request.app["queue"]
-    config = request.app["config"]
-    threshold = config.get("client_offline_threshold", 30)
+    cfg = _cfg(request)
 
     result = []
     for client in registry.get_all():
         d = client.to_dict()
-        d["online"] = registry.is_online(client.client_id, threshold)
+        d["online"] = registry.is_online(client.client_id, cfg.client_offline_threshold)
         if d.get("current_job_id"):
             job = queue.get(d["current_job_id"])
             if job:
@@ -151,14 +154,12 @@ async def start_compile(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
     targets_param = body.get("targets", "all")
-    config_dir = request.app["scanner_config_dir"]
+    cfg = _cfg(request)
     queue = request.app["queue"]
     device_poller = request.app.get("device_poller")
-    config = request.app["config"]
 
     server_version = get_esphome_version()
-    all_targets = scan_configs(config_dir)
-    timeout_seconds = config.get("job_timeout", 600)
+    all_targets = scan_configs(cfg.config_dir)
 
     if targets_param == "all":
         selected = all_targets
@@ -195,7 +196,7 @@ async def start_compile(request: web.Request) -> web.Response:
             target=target,
             esphome_version=server_version,
             run_id=run_id,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=cfg.job_timeout,
         )
         if job is not None:
             enqueued += 1
@@ -208,7 +209,8 @@ async def start_compile(request: web.Request) -> web.Response:
 async def get_target_content(request: web.Request) -> web.Response:
     """Return the raw YAML content of a config file."""
     filename = request.match_info["filename"]
-    config_dir = Path(request.app["scanner_config_dir"])
+    cfg = _cfg(request)
+    config_dir = Path(cfg.config_dir)
     path = (config_dir / filename).resolve()
     try:
         path.relative_to(config_dir.resolve())
@@ -227,7 +229,8 @@ async def get_target_content(request: web.Request) -> web.Response:
 async def save_target_content(request: web.Request) -> web.Response:
     """Write raw YAML content back to a config file."""
     filename = request.match_info["filename"]
-    config_dir = Path(request.app["scanner_config_dir"])
+    cfg = _cfg(request)
+    config_dir = Path(cfg.config_dir)
     path = (config_dir / filename).resolve()
     try:
         path.relative_to(config_dir.resolve())
@@ -260,13 +263,11 @@ async def retry_jobs(request: web.Request) -> web.Response:
 
     job_ids_param = body.get("job_ids", [])
     queue = request.app["queue"]
-    config = request.app["config"]
+    cfg = _cfg(request)
 
     server_version = get_esphome_version()
-    timeout_seconds = config.get("job_timeout", 600)
 
     if job_ids_param == "all_failed":
-        from job_queue import JobState  # noqa: PLC0415
         job_ids = [
             j.id for j in queue.get_all()
             if j.state in (JobState.FAILED, JobState.TIMED_OUT)
@@ -277,7 +278,7 @@ async def retry_jobs(request: web.Request) -> web.Response:
     else:
         return web.json_response({"error": "job_ids must be a list or 'all_failed'"}, status=400)
 
-    new_jobs = await queue.retry(job_ids, server_version, str(uuid.uuid4()), timeout_seconds)
+    new_jobs = await queue.retry(job_ids, server_version, str(uuid.uuid4()), cfg.job_timeout)
     return web.json_response({"retried": len(new_jobs)})
 
 
@@ -286,10 +287,9 @@ async def remove_client(request: web.Request) -> web.Response:
     """Remove an offline client from the registry."""
     client_id = request.match_info["client_id"]
     registry = request.app["registry"]
-    config = request.app["config"]
-    threshold = config.get("client_offline_threshold", 30)
+    cfg = _cfg(request)
 
-    if registry.is_online(client_id, threshold):
+    if registry.is_online(client_id, cfg.client_offline_threshold):
         return web.json_response({"error": "Cannot remove an online client"}, status=409)
     if not registry.remove(client_id):
         return web.json_response({"error": "Unknown client_id"}, status=404)

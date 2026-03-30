@@ -27,7 +27,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.13"
+CLIENT_VERSION = "0.0.14"
 
 # ---------------------------------------------------------------------------
 # Logging setup — per-worker context filter
@@ -291,9 +291,10 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     esphome_version = job["esphome_version"]
     bundle_b64 = job["bundle_b64"]
     timeout_seconds = job.get("timeout_seconds", JOB_TIMEOUT)
+    ota_only = job.get("ota_only", False)
 
     _log_context.current_target = target
-    logger.info("Starting job %s: target=%s esphome=%s", job_id, target, esphome_version)
+    logger.info("Starting job %s: target=%s esphome=%s ota_only=%s", job_id, target, esphome_version, ota_only)
 
     # Per-slot PlatformIO core directory — prevents cross-slot package conflicts
     # when multiple workers run esphome compile simultaneously.
@@ -340,7 +341,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         # ---------------------------------------------------------------
         # Compile phase — timer starts NOW
         # ---------------------------------------------------------------
-        _report_status(job_id, "Compiling")
+        _report_status(job_id, "Compiling" + (" (OTA retry)" if ota_only else ""))
         compile_log, compile_ok = _run_subprocess(
             [esphome_bin, "compile", target_path],
             cwd=tmp_dir,
@@ -350,10 +351,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         )
 
         if not compile_ok:
-            if compile_log.endswith("TIMED OUT"):
-                _submit_result(job_id, "failed", log=compile_log, ota_result=None)
-            else:
-                _submit_result(job_id, "failed", log=compile_log, ota_result=None)
+            _submit_result(job_id, "failed", log=compile_log, ota_result=None)
             return
 
         # Compile succeeded — report success first

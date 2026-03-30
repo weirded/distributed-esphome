@@ -58,6 +58,7 @@ class Job:
     retry_count: int = 0
     log: Optional[str] = None
     ota_result: Optional[str] = None
+    ota_only: bool = False  # skip compile, just re-run OTA upload
     status_text: Optional[str] = None  # transient; not persisted
 
     def to_dict(self) -> dict:
@@ -76,6 +77,7 @@ class Job:
             "retry_count": self.retry_count,
             "log": self.log,
             "ota_result": self.ota_result,
+            "ota_only": self.ota_only,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -97,6 +99,7 @@ class Job:
             retry_count=d.get("retry_count", 0),
             log=d.get("log"),
             ota_result=d.get("ota_result"),
+            ota_only=d.get("ota_only", False),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -159,7 +162,7 @@ class JobQueue:
         target: str,
         esphome_version: str,
         run_id: str,
-        timeout_seconds: int = 600,
+        timeout_seconds: int,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -350,7 +353,7 @@ class JobQueue:
         job_ids: list[str],
         esphome_version: str,
         run_id: str,
-        timeout_seconds: int = 600,
+        timeout_seconds: int,
     ) -> list["Job"]:
         """Re-enqueue failed/timed_out jobs as new PENDING jobs. Returns new jobs.
 
@@ -384,10 +387,11 @@ class JobQueue:
                     state=JobState.PENDING,
                     run_id=run_id,
                     timeout_seconds=timeout_seconds,
+                    ota_only=is_ota_failed,
                 )
                 self._jobs[new_job.id] = new_job
                 new_jobs.append(new_job)
-                logger.info("Retrying → new job %s for %s", new_job.id, target)
+                logger.info("Retrying → new job %s for %s (ota_only=%s)", new_job.id, target, is_ota_failed)
             if new_jobs:
                 self._persist()
             return new_jobs
