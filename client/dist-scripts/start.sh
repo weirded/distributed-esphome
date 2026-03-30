@@ -41,7 +41,6 @@ echo "Starting $CONTAINER_NAME ..."
 docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    --network host \
     --hostname "$(hostname)" \
     -e SERVER_URL="$SERVER_URL" \
     -e SERVER_TOKEN="$SERVER_TOKEN" \

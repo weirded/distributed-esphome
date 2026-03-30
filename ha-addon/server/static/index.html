@@ -710,7 +710,7 @@ function renderDockerCmd() {
   const serverUrl = `http://${host}:${port}`;
   const seedLine = serverVersion && serverVersion !== '?'
     ? ` \\\n  -e ESPHOME_SEED_VERSION=${serverVersion}` : '';
-  const cmd = `docker run -d --restart unless-stopped \\\n  --network host \\\n  --hostname $(hostname) \\\n  -e SERVER_URL=${serverUrl} \\\n  -e SERVER_TOKEN=${token}${seedLine} \\\n  -v esphome-versions:/esphome-versions \\\n  ghcr.io/weirded/esphome-dist-client:latest`;
+  const cmd = `docker run -d --restart unless-stopped \\\n  --hostname $(hostname) \\\n  -e SERVER_URL=${serverUrl} \\\n  -e SERVER_TOKEN=${token}${seedLine} \\\n  -v esphome-versions:/esphome-versions \\\n  ghcr.io/weirded/esphome-dist-client:latest`;
   document.getElementById('docker-cmd').textContent = cmd;
 }
 

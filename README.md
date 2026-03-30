@@ -100,7 +100,7 @@ The archive contains three scripts:
 | `stop.sh` | Stops and removes the container. |
 | `uninstall.sh` | Stops container, removes image, optionally removes the `esphome-versions` volume. |
 
-> **Note:** Build clients must have network access to your ESP devices (same LAN or VLAN) to push firmware via OTA. The Docker container runs with `--network host` so it can reach devices directly.
+> **Note:** Build clients must have network access to your ESP devices (same LAN or VLAN) to push firmware via OTA.
 
 ## Web UI
 
