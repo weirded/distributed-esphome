@@ -1,5 +1,5 @@
 name: "ESPHome Distributed Build Server"
-version: "0.0.19"
+version: "0.0.20"
 slug: "esphome_dist_server"
 description: "Distributed ESPHome compilation coordinator"
 url: "https://github.com/weirded/distributed-esphome"
