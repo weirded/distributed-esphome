@@ -529,16 +529,26 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
 
     lines: list[str] = []
 
-    # Try to find the device address from the YAML config
+    # Try to find the device address from the YAML config.
+    # Priority order (matching ESPHome's own logic):
+    #   1. wifi.use_address (explicit override)
+    #   2. wifi.manual_ip.static_ip
+    #   3. DNS resolution of device name
     device_addr = None
     ota_port = None
     try:
         with open(target_path, encoding="utf-8", errors="replace") as f:
             content = f.read()
-        # Look for wifi.manual_ip.static_ip or use the device name
-        ip_match = _re.search(r"static_ip:\s*['\"]?(\d+\.\d+\.\d+\.\d+)", content)
-        if ip_match:
-            device_addr = ip_match.group(1)
+        # use_address takes priority — ESPHome uses this as the upload target
+        use_addr_match = _re.search(r"use_address:\s*['\"]?([^\s'\"#]+)", content)
+        if use_addr_match:
+            device_addr = use_addr_match.group(1)
+            lines.append(f"use_address: {device_addr}")
+        # Fall back to static_ip
+        if not device_addr:
+            ip_match = _re.search(r"static_ip:\s*['\"]?(\d+\.\d+\.\d+\.\d+)", content)
+            if ip_match:
+                device_addr = ip_match.group(1)
         # Check for OTA port override
         port_match = _re.search(r"port:\s*(\d+)", content.split("ota:")[1] if "ota:" in content else "")
         if port_match:
@@ -546,7 +556,7 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
     except Exception:
         pass
 
-    # Also try to extract the IP from the esphome config (resolve the device name)
+    # Extract device name for DNS fallback
     device_name = None
     try:
         with open(target_path, encoding="utf-8", errors="replace") as f:
@@ -557,6 +567,17 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
                     break
     except Exception:
         pass
+
+    # If use_address is a hostname (not IP), try to resolve it
+    if device_addr and not _re.match(r'\d+\.\d+\.\d+\.\d+$', device_addr):
+        hostname = device_addr
+        try:
+            import socket as _socket  # noqa: PLC0415
+            device_addr = _socket.gethostbyname(hostname)
+            lines.append(f"Resolved {hostname} → {device_addr}")
+        except Exception:
+            lines.append(f"DNS: {hostname} — FAILED to resolve")
+            device_addr = None
 
     if not device_addr and device_name:
         # Try DNS resolution of the device name (ESPHome devices register as <name>.local)
