@@ -59,6 +59,7 @@ class Job:
     log: Optional[str] = None
     ota_result: Optional[str] = None
     ota_only: bool = False  # skip compile, just re-run OTA upload
+    pinned_client_id: Optional[str] = None  # only this client can claim the job
     status_text: Optional[str] = None  # transient; not persisted
 
     def to_dict(self) -> dict:
@@ -78,6 +79,7 @@ class Job:
             "log": self.log,
             "ota_result": self.ota_result,
             "ota_only": self.ota_only,
+            "pinned_client_id": self.pinned_client_id,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -100,6 +102,7 @@ class Job:
             log=d.get("log"),
             ota_result=d.get("ota_result"),
             ota_only=d.get("ota_only", False),
+            pinned_client_id=d.get("pinned_client_id"),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -217,14 +220,18 @@ class JobQueue:
         """
         async with self._lock:
             for job in self._jobs.values():
-                if job.state == JobState.PENDING:
-                    job.state = JobState.ASSIGNED
-                    job.assigned_client_id = client_id
-                    job.assigned_at = _utcnow()
-                    job.worker_id = worker_id
-                    self._persist()
-                    logger.info("Job %s assigned to client %s worker %d", job.id, client_id, worker_id)
-                    return job
+                if job.state != JobState.PENDING:
+                    continue
+                # Pinned jobs can only be claimed by the designated client
+                if job.pinned_client_id and job.pinned_client_id != client_id:
+                    continue
+                job.state = JobState.ASSIGNED
+                job.assigned_client_id = client_id
+                job.assigned_at = _utcnow()
+                job.worker_id = worker_id
+                self._persist()
+                logger.info("Job %s assigned to client %s worker %d", job.id, client_id, worker_id)
+                return job
             return None
 
     async def update_to_running(self, job_id: str, client_id: str) -> bool:
@@ -371,6 +378,8 @@ class JobQueue:
                 if not (is_failed or is_ota_failed):
                     continue
                 target = job.target
+                # Pin OTA retries to the client that compiled the firmware
+                pin_to = job.assigned_client_id if is_ota_failed else None
                 # Remove all terminal jobs for this target (including the one being retried)
                 stale = [
                     jid for jid, j in self._jobs.items()
@@ -388,10 +397,14 @@ class JobQueue:
                     run_id=run_id,
                     timeout_seconds=timeout_seconds,
                     ota_only=is_ota_failed,
+                    pinned_client_id=pin_to,
                 )
                 self._jobs[new_job.id] = new_job
                 new_jobs.append(new_job)
-                logger.info("Retrying → new job %s for %s (ota_only=%s)", new_job.id, target, is_ota_failed)
+                logger.info(
+                    "Retrying → new job %s for %s (ota_only=%s, pinned=%s)",
+                    new_job.id, target, is_ota_failed, pin_to or "any",
+                )
             if new_jobs:
                 self._persist()
             return new_jobs
