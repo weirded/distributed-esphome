@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install \
+            pytest pytest-asyncio \
+            aiohttp aioesphomeapi zeroconf \
+            requests \
+            mypy types-requests
+
+      - name: Run unit tests
+        run: pytest tests/ -v
+
+      - name: mypy — server
+        run: mypy ha-addon/server/ --ignore-missing-imports
+
+      - name: mypy — client
+        run: mypy client/ --ignore-missing-imports

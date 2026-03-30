@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Pre-push hook — runs the same checks as GitHub CI.
+# Install with: bash scripts/install-hooks.sh
+set -euo pipefail
+
+echo "==> pre-push: running unit tests..."
+pytest tests/ -q
+
+echo "==> pre-push: mypy — server..."
+mypy ha-addon/server/ --ignore-missing-imports
+
+echo "==> pre-push: mypy — client..."
+mypy client/ --ignore-missing-imports
+
+echo "==> pre-push: all checks passed."

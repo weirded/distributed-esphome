@@ -691,6 +691,33 @@ Use a `docker-compose.test.yml` that:
 
 ---
 
+## CI / Development Workflow
+
+### GitHub Actions
+
+A `.github/workflows/ci.yml` workflow runs on every push and pull request:
+
+| Step | Command |
+|------|---------|
+| Unit tests | `pytest tests/ -v` |
+| Type check — server | `mypy ha-addon/server/ --ignore-missing-imports` |
+| Type check — client | `mypy client/ --ignore-missing-imports` |
+
+Python version: 3.12. Dependencies installed via `pip install` (pytest, pytest-asyncio, aiohttp, aioesphomeapi, zeroconf, requests, mypy, types-requests).
+
+### Pre-push Hook
+
+`.githooks/pre-push` runs the same checks locally before a push is sent to GitHub.
+
+Install once with:
+```bash
+bash scripts/install-hooks.sh
+```
+
+This sets `core.hooksPath = .githooks` in the local git config.
+
+---
+
 ## Implementation Order
 
 1. **`queue.py`** — job state machine, persistence, timeout tracking

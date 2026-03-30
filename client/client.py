@@ -21,10 +21,47 @@ import requests
 
 from version_manager import VersionManager
 
+# ---------------------------------------------------------------------------
+# Client version — must match the add-on VERSION file; bumped on each release.
+# The server returns this value in heartbeat responses so outdated clients
+# can detect the mismatch and self-update.
+# ---------------------------------------------------------------------------
+
+CLIENT_VERSION = "0.0.8"
+
+# ---------------------------------------------------------------------------
+# Logging setup — per-worker context filter
+# Injects "[w<N> <target>] " prefix so each line shows which worker slot and
+# which YAML file produced it, making parallel build logs easy to follow.
+# ---------------------------------------------------------------------------
+
+_log_context = threading.local()
+
+
+class _WorkerContextFilter(logging.Filter):
+    """Inject worker context prefix into every log record from this thread."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        worker_id = getattr(_log_context, "worker_id", None)
+        target = getattr(_log_context, "current_target", None)
+        if worker_id is not None:
+            if target:
+                short = os.path.basename(target).rsplit(".", 1)[0]
+                record.ctx = f"[w{worker_id} {short}] "  # type: ignore[attr-defined]
+            else:
+                record.ctx = f"[w{worker_id}] "  # type: ignore[attr-defined]
+        else:
+            record.ctx = ""  # type: ignore[attr-defined]
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    format=f"%(asctime)s %(levelname)-8s v{CLIENT_VERSION} %(ctx)s%(name)s: %(message)s",
 )
+# Attach the filter to the root handler so it runs for every log record.
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_WorkerContextFilter())
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -50,14 +87,6 @@ HEADERS = {
     "Authorization": f"Bearer {SERVER_TOKEN}",
     "Content-Type": "application/json",
 }
-
-# ---------------------------------------------------------------------------
-# Client version — must match the add-on VERSION file; bumped on each release.
-# The server returns this value in heartbeat responses so outdated clients
-# can detect the mismatch and self-update.
-# ---------------------------------------------------------------------------
-
-CLIENT_VERSION = "0.0.7"
 
 # Set when the heartbeat detects a newer server-side client bundle.
 # Checked in the main loop so updates only happen between jobs.
@@ -263,6 +292,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     bundle_b64 = job["bundle_b64"]
     timeout_seconds = job.get("timeout_seconds", JOB_TIMEOUT)
 
+    _log_context.current_target = target
     logger.info("Starting job %s: target=%s esphome=%s", job_id, target, esphome_version)
 
     # Per-slot PlatformIO core directory — prevents cross-slot package conflicts
@@ -358,6 +388,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         _submit_ota_result(job_id, ota_result, "\n".join(ota_logs))
 
     finally:
+        _log_context.current_target = None
         with _active_jobs_lock:
             _active_jobs -= 1
         try:
@@ -485,6 +516,8 @@ def worker_loop(
     stop_event: threading.Event,
 ) -> None:
     """Poll for jobs and execute them. Runs in its own thread."""
+    _log_context.worker_id = worker_id
+    _log_context.current_target = None
     logger.info("Worker %d started", worker_id)
     while not stop_event.is_set():
         # Pause polling when update or re-register is pending so the main

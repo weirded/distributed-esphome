@@ -156,6 +156,7 @@ class VersionManager:
                 continue  # re-check from the top
 
             # We own the install — run outside the lock (slow subprocess)
+            assert install_event is not None
             try:
                 self._install(version)
                 with self._lock:
