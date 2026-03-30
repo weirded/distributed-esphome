@@ -975,14 +975,12 @@ function renderQueue() {
       : null;
     const baseHostname = assignedClient?.hostname || (job.assigned_client_id ? job.assigned_client_id.slice(0,8) : null);
     const showSlot = baseHostname && job.worker_id != null && (assignedClient?.max_parallel_jobs || 1) > 1;
-    let clientName;
-    if (baseHostname) {
-      clientName = showSlot ? `${baseHostname}/${job.worker_id}` : baseHostname;
-    } else if (pinnedClient && job.state === 'pending') {
-      clientName = `<span style="color:var(--text-muted)">→ ${escapeHtml(pinnedClient.hostname)}</span>`;
-    } else {
-      clientName = '—';
-    }
+    const clientName = baseHostname
+      ? (showSlot ? `${baseHostname}/${job.worker_id}` : baseHostname)
+      : '—';
+    const pinnedHtml = (pinnedClient && job.state === 'pending')
+      ? `<br><span style="font-size:10px;color:var(--text-muted)">→ ${escapeHtml(pinnedClient.hostname)}</span>`
+      : '';
     const isActive = ['pending', 'assigned', 'running'].includes(job.state);
     const dur = job.duration_seconds != null
       ? fmtDuration(job.duration_seconds)
@@ -1019,7 +1017,7 @@ function renderQueue() {
       <td><input type="checkbox" class="queue-cb" value="${job.id}"${checkedIds.has(job.id) ? ' checked' : ''}></td>
       <td><strong>${escapeHtml(stripYaml(job.target))}</strong><br><span style="font-size:11px;color:var(--text-muted)">${job.id.slice(0,8)}</span></td>
       <td><span class="${badgeCls}">${escapeHtml(badgeLabel)}</span></td>
-      <td style="font-size:12px">${escapeHtml(clientName)}</td>
+      <td style="font-size:12px">${escapeHtml(clientName)}${pinnedHtml}</td>
       <td style="font-size:12px">${dur}</td>
       <td><div style="display:flex;gap:4px;">
         ${isActive ? `<button class="btn-danger btn-sm" onclick="cancelJobs(['${job.id}'])">Cancel</button>` : ''}
