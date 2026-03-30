@@ -71,6 +71,9 @@ chmod +x "$TMP_DIR"/*.sh
 for script in start.ps1 stop.ps1 uninstall.ps1; do
     cp "$SCRIPTS_DIR/$script" "$TMP_DIR/$script"
 done
+# Proxmox script
+cp "$SCRIPTS_DIR/proxmox-create.sh" "$TMP_DIR/proxmox-create.sh"
+chmod +x "$TMP_DIR/proxmox-create.sh"
 echo "$VERSION" > "$TMP_DIR/VERSION"
 
 # Bake build-time SERVER_URL and SERVER_TOKEN as a comment in start.sh / start.ps1
@@ -86,7 +89,8 @@ rm -f "$TMP_DIR/start.ps1.bak"
 echo "==> Creating archive $ARCHIVE ..."
 tar -czf "$ARCHIVE" -C "$TMP_DIR" VERSION esphome-dist-client.tar \
     start.sh stop.sh uninstall.sh \
-    start.ps1 stop.ps1 uninstall.ps1
+    start.ps1 stop.ps1 uninstall.ps1 \
+    proxmox-create.sh
 
 echo ""
 echo "Done: $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
@@ -98,3 +102,7 @@ echo ""
 echo "To deploy (Windows PowerShell):"
 echo "  # Extract the archive, then:"
 echo "  \$env:SERVER_URL='$SERVER_URL'; \$env:SERVER_TOKEN='$SERVER_TOKEN'; .\\start.ps1"
+echo ""
+echo "To deploy (Proxmox — run on the Proxmox host):"
+echo "  # Extract the archive, then:"
+echo "  SERVER_URL=$SERVER_URL SERVER_TOKEN=$SERVER_TOKEN ./proxmox-create.sh"
