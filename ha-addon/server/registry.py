@@ -122,5 +122,13 @@ class ClientRegistry:
         logger.info("Client %s (%s) %s", client_id, client.hostname, "disabled" if disabled else "enabled")
         return True
 
+    def remove(self, client_id: str) -> bool:
+        """Remove a client from the registry. Returns False if unknown."""
+        client = self._clients.pop(client_id, None)
+        if client is None:
+            return False
+        logger.info("Removed client %s (%s)", client_id, client.hostname)
+        return True
+
     def get(self, client_id: str) -> Optional[Client]:
         return self._clients.get(client_id)

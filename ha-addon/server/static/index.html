@@ -821,7 +821,10 @@ function renderClients() {
           <td>${statusHtml}</td>
           <td>${jobHtml}</td>
           <td>${clientVersionHtml(c.client_version)}</td>
-          <td><button class="${disableBtnCls}" onclick="toggleClientDisabled('${escapeHtml(c.client_id)}',${!c.disabled})">${disableBtnLabel}</button></td>
+          <td><div style="display:flex;gap:4px;">
+            <button class="${disableBtnCls}" onclick="toggleClientDisabled('${escapeHtml(c.client_id)}',${!c.disabled})">${disableBtnLabel}</button>
+            ${!c.online ? `<button class="btn-danger btn-sm" onclick="removeClient('${escapeHtml(c.client_id)}')">Remove</button>` : ''}
+          </div></td>
         </tr>`);
       } else {
         rows.push(`<tr${rowAttr}>
@@ -1158,6 +1161,22 @@ async function toggleClientDisabled(clientId, disabled) {
       if (cr.ok) { clientsData = await cr.json(); renderClients(); }
     } else {
       toast('Error toggling client', 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function removeClient(clientId) {
+  try {
+    const r = await apiFetch(`./ui/api/clients/${clientId}`, { method: 'DELETE' });
+    if (r.ok) {
+      toast('Client removed', 'success');
+      const cr = await apiFetch('./ui/api/clients');
+      if (cr.ok) { clientsData = await cr.json(); renderClients(); }
+    } else {
+      const data = await r.json().catch(() => ({}));
+      toast('Error: ' + (data.error || r.status), 'error');
     }
   } catch(e) {
     toast('Network error: ' + e.message, 'error');

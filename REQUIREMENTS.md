@@ -253,7 +253,7 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - Table: `Hostname/Slot | Platform | Status | Current Job | Version | Actions`
 - One row per worker slot; slot suffix `/N` when client has > 1 slot
 - **"+ Connect Client"** button in panel header opens a modal with the pre-filled `docker run` command and a Copy button
-- Disabled clients shown at reduced opacity; Enable/Disable button per client
+- Disabled clients shown at reduced opacity; Enable/Disable button per client; Remove button for offline clients
 - Auto-refreshes every 5 seconds
 
 **Internal UI API endpoints:**
@@ -269,6 +269,7 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 | `POST` | `/ui/api/cancel` | Cancel jobs `{ "job_ids": ["uuid", ...] }` |
 | `POST` | `/ui/api/retry` | Re-enqueue failed/timed_out/OTA-failed jobs `{ "job_ids": ["uuid", ...] \| "all_failed" }` |
 | `POST` | `/ui/api/clients/{client_id}/disable` | Enable/disable a client `{ "disabled": true \| false }` |
+| `DELETE` | `/ui/api/clients/{client_id}` | Remove an offline client from the registry (409 if online) |
 | `GET`  | `/ui/api/targets/{filename}/content` | Read YAML config file content |
 | `POST` | `/ui/api/targets/{filename}/content` | Write YAML config file content |
 

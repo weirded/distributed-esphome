@@ -281,6 +281,21 @@ async def retry_jobs(request: web.Request) -> web.Response:
     return web.json_response({"retried": len(new_jobs)})
 
 
+@routes.delete("/ui/api/clients/{client_id}")
+async def remove_client(request: web.Request) -> web.Response:
+    """Remove an offline client from the registry."""
+    client_id = request.match_info["client_id"]
+    registry = request.app["registry"]
+    config = request.app["config"]
+    threshold = config.get("client_offline_threshold", 30)
+
+    if registry.is_online(client_id, threshold):
+        return web.json_response({"error": "Cannot remove an online client"}, status=409)
+    if not registry.remove(client_id):
+        return web.json_response({"error": "Unknown client_id"}, status=404)
+    return web.json_response({"ok": True})
+
+
 @routes.post("/ui/api/clients/{client_id}/disable")
 async def set_client_disabled(request: web.Request) -> web.Response:
     """Enable or disable a client."""
