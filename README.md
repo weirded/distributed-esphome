@@ -168,6 +168,36 @@ All configuration is via environment variables:
 | `HOST_PLATFORM` | — | Override detected OS in UI (e.g. `macOS 15.3 (Apple M1 Pro)`) — useful when running Docker on non-Linux hosts |
 | `PLATFORMIO_CORE_DIR` | — | No longer needed — each slot automatically uses `$ESPHOME_VERSIONS_DIR/pio-slot-N/` |
 
+## Security Considerations
+
+This add-on is designed for **trusted home networks** and makes deliberate trade-offs that favour simplicity and ease of use over defence-in-depth. If you run this on an untrusted or shared network, be aware of the following:
+
+### Shared auth token
+
+A single Bearer token authenticates all build clients. The Web UI displays this token in the "Connect Client" modal so you can copy-paste it. Anyone with access to the HA UI (or the direct port) can see the token.
+
+### Plaintext HTTP
+
+All communication between the server and build clients is unencrypted HTTP. The auth token, ESPHome configs (including `secrets.yaml`), and firmware bundles are transmitted in the clear. On a typical home LAN this is acceptable; on a shared or untrusted network, consider tunnelling traffic through a VPN or reverse proxy with TLS.
+
+### secrets.yaml included in every build bundle
+
+When a client claims a job, it receives a tarball of the entire ESPHome config directory — including `secrets.yaml`. This is necessary because ESPHome compilation requires access to substituted secrets. Every build client you connect will have access to your Wi-Fi passwords, API keys, and OTA passwords.
+
+### Client auto-update
+
+Build clients automatically download updated Python code from the server and restart themselves. This makes upgrades seamless but means a compromised server (or a man-in-the-middle on the HTTP connection) could push arbitrary code to all connected clients. The auto-update only runs when clients are idle.
+
+### UI API relies on HA Ingress for authentication
+
+The `/ui/api/*` endpoints have no built-in authentication — they trust that Home Assistant's Ingress proxy has already authenticated the user. If port 8765 is accessible directly (bypassing HA), anyone on the network can manage the queue, read build logs, and edit YAML configs without credentials.
+
+### Network access requirements
+
+Build clients need direct network access to your ESP devices (for OTA on ports 3232/8266). The server needs to be reachable by all clients. Ensure your firewall rules accommodate this.
+
+For a detailed analysis, see [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
+
 ## Development
 
 ### Run Tests
