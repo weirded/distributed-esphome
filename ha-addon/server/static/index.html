@@ -35,24 +35,19 @@
       min-height: 100vh;
     }
 
+    /* ---- Header ---- */
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 0 24px;
+      padding: 0 20px;
       display: flex;
       align-items: center;
-      gap: 12px;
-      height: 56px;
+      gap: 10px;
+      height: 52px;
       position: sticky;
       top: 0;
       z-index: 100;
       box-shadow: var(--shadow);
-    }
-
-    header h1 {
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: -0.3px;
     }
 
     header .version-badge {
@@ -62,6 +57,7 @@
       font-size: 11px;
       padding: 2px 8px;
       border-radius: 999px;
+      white-space: nowrap;
     }
 
     header .spacer { flex: 1; }
@@ -70,23 +66,64 @@
       width: 8px; height: 8px;
       border-radius: 50%;
       background: var(--success);
+      flex-shrink: 0;
     }
 
+    /* ---- Tab bar ---- */
+    .tab-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+      display: flex;
+      gap: 0;
+      position: sticky;
+      top: 52px;
+      z-index: 90;
+      overflow-x: auto;
+    }
+
+    .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 18px;
+      height: 44px;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 0;
+      transition: color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    .tab:hover:not(:disabled) { color: var(--text); background: none; }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    .tab-count {
+      display: inline-block;
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .tab.active .tab-count { background: var(--accent); color: #fff; }
+
+    /* ---- Main ---- */
     main {
       max-width: 1400px;
       margin: 0 auto;
-      padding: 24px;
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 20px;
-      align-items: start;
+      padding: 20px;
     }
 
-    @media (max-width: 900px) {
-      main { grid-template-columns: 1fr; }
-      .panel-left { grid-row: auto !important; }
-    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
+    /* ---- Panel ---- */
     .panel {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -95,35 +132,34 @@
       box-shadow: var(--shadow);
     }
 
-    .panel-left {
-      grid-column: 1;
-    }
-
     .panel-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 14px 18px;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px;
       border-bottom: 1px solid var(--border);
       background: var(--surface2);
     }
 
     .panel-header h2 {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       letter-spacing: 0.3px;
       text-transform: uppercase;
       color: var(--text-muted);
+      margin-right: 4px;
     }
 
-    .panel-header .actions { display: flex; gap: 8px; align-items: center; }
+    .panel-header .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 
-    .panel-body { padding: 0; }
+    /* ---- Responsive tables ---- */
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-    /* Tables */
     table {
       width: 100%;
       border-collapse: collapse;
+      min-width: 500px;
     }
 
     th {
@@ -133,31 +169,30 @@
       font-weight: 600;
       letter-spacing: 0.5px;
       text-transform: uppercase;
-      padding: 10px 14px;
+      padding: 9px 13px;
       text-align: left;
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
 
     td {
-      padding: 10px 14px;
+      padding: 9px 13px;
       border-bottom: 1px solid var(--border);
       vertical-align: middle;
     }
 
     tr:last-child td { border-bottom: none; }
-
     tr.clickable { cursor: pointer; }
     tr.clickable:hover td { background: var(--surface2); }
 
     .empty-row td {
       text-align: center;
       color: var(--text-muted);
-      padding: 28px;
+      padding: 32px;
       font-size: 13px;
     }
 
-    /* Badges */
+    /* ---- Badges ---- */
     .badge {
       display: inline-block;
       padding: 2px 8px;
@@ -167,7 +202,6 @@
       letter-spacing: 0.3px;
       text-transform: uppercase;
     }
-
     .badge-pending   { background: #374151; color: #9ca3af; }
     .badge-assigned  { background: #1e3a5f; color: #60a5fa; }
     .badge-running   { background: #1e3a5f; color: #60a5fa; }
@@ -187,12 +221,12 @@
     .needs-update-yes { color: var(--warn); font-weight: 600; }
     .needs-update-no  { color: var(--text-muted); }
 
-    /* Buttons */
+    /* ---- Buttons ---- */
     button {
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      padding: 6px 14px;
+      padding: 6px 13px;
       border: none;
       border-radius: var(--radius);
       font-size: 13px;
@@ -200,7 +234,6 @@
       cursor: pointer;
       transition: background 0.15s, opacity 0.15s;
     }
-
     button:disabled { opacity: 0.45; cursor: not-allowed; }
 
     .btn-primary   { background: var(--accent); color: #fff; }
@@ -220,18 +253,20 @@
 
     .btn-sm { padding: 4px 10px; font-size: 12px; }
 
-    /* Checkboxes */
+    /* ---- Checkboxes ---- */
     input[type="checkbox"] {
       width: 16px; height: 16px;
       cursor: pointer;
       accent-color: var(--accent);
     }
 
-    /* Log expand row */
-    .log-row td {
-      padding: 0;
-      background: #0d1117;
-    }
+    /* ---- Device cell ---- */
+    .device-name     { font-weight: 600; }
+    .device-filename { font-size: 11px; color: var(--text-muted); margin-top: 1px; font-family: monospace; }
+    .device-comment  { font-size: 10px; color: #6b7280; margin-top: 1px; font-style: italic; }
+
+    /* ---- Log expand row ---- */
+    .log-row td { padding: 0; background: #0d1117; }
     .log-content {
       font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
       font-size: 12px;
@@ -243,11 +278,92 @@
       word-break: break-all;
     }
 
-    .device-name { font-weight: 600; }
-    .device-filename { font-size: 11px; color: var(--text-muted); margin-top: 1px; font-family: monospace; }
-    .device-comment { font-size: 10px; color: #6b7280; margin-top: 1px; font-style: italic; }
+    /* ---- Spinner ---- */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Monaco editor modal */
+    /* ---- Modal overlay (shared) ---- */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 960px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+      gap: 10px;
+    }
+    .modal-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+    .modal-header h3 { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 7px;
+      border-radius: var(--radius);
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .modal-close:hover { background: var(--border); color: var(--text); }
+    .modal-body { flex: 1; overflow: auto; }
+    .modal-body .log-content { max-height: none; padding: 16px 18px; }
+
+    /* ---- Connect client modal ---- */
+    #connect-modal .modal { max-width: 720px; }
+    .docker-cmd-wrap { position: relative; }
+    #docker-cmd {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      padding-right: 76px;
+      font-size: 11.5px;
+      font-family: monospace;
+      color: #a3e635;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.6;
+      margin: 0;
+    }
+    #docker-cmd-copy {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+    }
+
+    /* ---- Monaco editor modal ---- */
     .editor-overlay {
       display: none;
       position: fixed;
@@ -284,86 +400,26 @@
     .editor-header .modal-close:hover { color: #ccc; background: #3c3c3c; }
     #monaco-container { flex: 1; overflow: hidden; border-radius: 0 0 var(--radius) var(--radius); }
 
-    /* Spinner */
-    .spinner {
-      display: inline-block;
-      width: 14px; height: 14px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* Log modal */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.65);
-      z-index: 200;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-    }
-    .modal-overlay.open { display: flex; }
-    .modal {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      width: 100%;
-      max-width: 960px;
-      max-height: 80vh;
-      display: flex;
-      flex-direction: column;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.7);
-    }
-    .modal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 18px;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface2);
-      gap: 12px;
-    }
-    .modal-header-left { display: flex; align-items: center; gap: 10px; }
-    .modal-header h3 { font-size: 15px; font-weight: 600; }
-    .modal-close {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 18px;
-      cursor: pointer;
-      padding: 2px 7px;
-      border-radius: var(--radius);
-      line-height: 1;
-    }
-    .modal-close:hover { background: var(--border); color: var(--text); }
-    .modal-body { flex: 1; overflow: auto; }
-    .modal-body .log-content { max-height: none; padding: 16px 18px; }
-
-    /* Toast notifications */
+    /* ---- Toast ---- */
     #toast-container {
       position: fixed;
-      bottom: 24px;
-      right: 24px;
+      bottom: 20px;
+      right: 20px;
       display: flex;
       flex-direction: column;
       gap: 8px;
       z-index: 999;
     }
-
     .toast {
       background: var(--surface2);
       border: 1px solid var(--border);
       border-left: 4px solid var(--accent);
       color: var(--text);
-      padding: 12px 16px;
+      padding: 10px 14px;
       border-radius: var(--radius);
       box-shadow: var(--shadow);
       font-size: 13px;
-      max-width: 340px;
+      max-width: 320px;
       animation: slideIn 0.2s ease;
     }
     .toast.success { border-left-color: var(--success); }
@@ -373,140 +429,166 @@
 </head>
 <body>
 
+<!-- ================================================================
+     Header
+================================================================ -->
 <header>
-  <img src="https://media.esphome.io/logo/logo-text-on-dark.svg" alt="ESPHome" height="28" style="display:block">
-  <h1 style="font-size:15px;font-weight:500;color:var(--text-muted)">Distributed Build</h1>
+  <img src="https://media.esphome.io/logo/logo-text-on-dark.svg" alt="ESPHome" height="26" style="display:block;flex-shrink:0">
+  <span style="font-size:14px;font-weight:500;color:var(--text-muted);white-space:nowrap">Distributed Build</span>
   <span class="version-badge" id="server-version">v?</span>
-  <span class="version-badge" id="esphome-version" style="color:var(--text-muted)">ESPHome v?</span>
+  <span class="version-badge" id="esphome-version">ESPHome v?</span>
   <span class="spacer"></span>
   <span class="status-dot" id="server-dot" title="Server online"></span>
 </header>
 
+<!-- ================================================================
+     Tab bar
+================================================================ -->
+<nav class="tab-bar">
+  <button class="tab active" id="tab-btn-devices" onclick="switchTab('devices')">
+    Devices <span class="tab-count" id="tab-count-devices"></span>
+  </button>
+  <button class="tab" id="tab-btn-queue" onclick="switchTab('queue')">
+    Queue <span class="tab-count" id="tab-count-queue"></span>
+  </button>
+  <button class="tab" id="tab-btn-clients" onclick="switchTab('clients')">
+    Clients <span class="tab-count" id="tab-count-clients"></span>
+  </button>
+</nav>
+
+<!-- ================================================================
+     Main content
+================================================================ -->
 <main>
-  <!-- Devices Panel (left column, spans both rows) -->
-  <div class="panel panel-left">
-    <div class="panel-header">
-      <h2>Devices</h2>
-      <div class="actions">
-        <span id="devices-count" style="font-size:12px;color:var(--text-muted)"></span>
-        <button class="btn-primary btn-sm" id="btn-upgrade-all" onclick="compileAll()">Upgrade All</button>
-        <button class="btn-secondary btn-sm" id="btn-upgrade-selected" onclick="compileSelected()">Upgrade Selected</button>
-        <button class="btn-warn btn-sm" id="btn-upgrade-outdated" onclick="upgradeOutdated()">Upgrade Outdated</button>
+
+  <!-- ---- Devices tab ---- -->
+  <div class="tab-panel active" id="tab-devices">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Devices</h2>
+        <div class="actions">
+          <button class="btn-primary btn-sm" onclick="compileAll()">Upgrade All</button>
+          <button class="btn-secondary btn-sm" onclick="compileSelected()">Upgrade Selected</button>
+          <button class="btn-warn btn-sm" onclick="upgradeOutdated()">Upgrade Outdated</button>
+        </div>
       </div>
-    </div>
-    <div class="panel-body">
-      <table>
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="devices-select-all" onchange="toggleDevicesSelectAll(this)"></th>
-            <th>Device</th>
-            <th>Status</th>
-            <th>IP</th>
-            <th>Running</th>
-            <th>Update</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="devices-tbody">
-          <tr class="empty-row"><td colspan="7">No targets discovered</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Right column: clients + queue stacked -->
-  <div style="display:flex;flex-direction:column;gap:20px;">
-
-  <!-- Clients Panel -->
-  <div class="panel">
-    <div class="panel-header">
-      <h2>Clients</h2>
-      <div class="actions">
-        <span id="clients-count" style="font-size:12px;color:var(--text-muted)"></span>
-      </div>
-    </div>
-    <div class="panel-body">
-      <table>
-        <thead>
-          <tr>
-            <th>Hostname</th>
-            <th>Platform</th>
-            <th>Status</th>
-            <th>Current Job</th>
-            <th>Version</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="clients-tbody">
-          <tr class="empty-row"><td colspan="4">No clients registered</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Connect a Client Panel -->
-  <div class="panel">
-    <div class="panel-header">
-      <h2>Connect a Client</h2>
-    </div>
-    <div class="panel-body" style="padding:14px 18px;">
-      <p style="color:var(--text-muted);font-size:12px;margin-bottom:10px;">Run this on a remote machine to connect a build client:</p>
-      <div style="position:relative;">
-        <pre id="docker-cmd" style="background:#0d1117;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;padding-right:70px;font-size:11px;font-family:monospace;color:#a3e635;white-space:pre-wrap;word-break:break-all;line-height:1.6;"></pre>
-        <button class="btn-secondary btn-sm" style="position:absolute;top:8px;right:8px;" onclick="copyDockerCmd()">Copy</button>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="devices-select-all" onchange="toggleDevicesSelectAll(this)"></th>
+              <th>Device</th>
+              <th>Status</th>
+              <th>IP</th>
+              <th>Running</th>
+              <th>Update</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="devices-tbody">
+            <tr class="empty-row"><td colspan="7">No targets discovered</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
 
-  <!-- Queue Panel -->
-  <div class="panel">
-    <div class="panel-header">
-      <h2>Queue</h2>
-      <div class="actions">
-        <button class="btn-warn btn-sm" onclick="retryAllFailed()">Retry All Failed</button>
-        <button class="btn-warn btn-sm" id="btn-retry-selected" onclick="retrySelected()">Retry Selected</button>
-        <button class="btn-danger btn-sm" id="btn-cancel-selected" onclick="cancelSelected()">Cancel Selected</button>
-        <button class="btn-secondary btn-sm" onclick="clearSucceeded()">Clear Succeeded</button>
-        <button class="btn-secondary btn-sm" onclick="clearFinished()">Clear Finished</button>
+  <!-- ---- Queue tab ---- -->
+  <div class="tab-panel" id="tab-queue">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Queue</h2>
+        <div class="actions">
+          <button class="btn-warn btn-sm" onclick="retryAllFailed()">Retry All Failed</button>
+          <button class="btn-warn btn-sm" onclick="retrySelected()">Retry Selected</button>
+          <button class="btn-danger btn-sm" onclick="cancelSelected()">Cancel Selected</button>
+          <button class="btn-secondary btn-sm" onclick="clearSucceeded()">Clear Succeeded</button>
+          <button class="btn-secondary btn-sm" onclick="clearFinished()">Clear Finished</button>
+        </div>
       </div>
-    </div>
-    <div class="panel-body">
-      <table>
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="queue-select-all" onchange="toggleSelectAll(this)"></th>
-            <th>Device</th>
-            <th>State</th>
-            <th>Client</th>
-            <th>Duration</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="queue-tbody">
-          <tr class="empty-row"><td colspan="6">No jobs in queue</td></tr>
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="queue-select-all" onchange="toggleSelectAll(this)"></th>
+              <th>Device</th>
+              <th>State</th>
+              <th>Client</th>
+              <th>Duration</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="queue-tbody">
+            <tr class="empty-row"><td colspan="6">No jobs in queue</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  </div> <!-- end right column -->
+  <!-- ---- Clients tab ---- -->
+  <div class="tab-panel" id="tab-clients">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Build Clients</h2>
+        <div class="actions">
+          <span id="clients-count" style="font-size:12px;color:var(--text-muted)"></span>
+          <button class="btn-primary btn-sm" onclick="openConnectModal()">+ Connect Client</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Hostname</th>
+              <th>Platform</th>
+              <th>Status</th>
+              <th>Current Job</th>
+              <th>Version</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="clients-tbody">
+            <tr class="empty-row"><td colspan="6">No clients registered</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <div id="toast-container"></div>
 
-<!-- Monaco Editor modal -->
-<div id="editor-modal" class="editor-overlay" onclick="closeEditorModal(event)">
-  <div class="editor-modal">
-    <div class="editor-header">
-      <h3 id="editor-filename"></h3>
-      <button class="btn-primary btn-sm" onclick="saveEditor()">Save</button>
-      <button class="modal-close" onclick="closeEditorModal()">✕</button>
+<!-- ================================================================
+     Connect Client modal
+================================================================ -->
+<div id="connect-modal" class="modal-overlay" onclick="closeConnectModal(event)">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header">
+      <div class="modal-header-left">
+        <h3>Connect a Build Client</h3>
+      </div>
+      <button class="modal-close" onclick="closeConnectModal()">✕</button>
     </div>
-    <div id="monaco-container"></div>
+    <div class="modal-body" style="padding:18px">
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px;">
+        Run this on any Docker host with network access to your ESP devices:
+      </p>
+      <div class="docker-cmd-wrap">
+        <pre id="docker-cmd"></pre>
+        <button class="btn-secondary btn-sm" id="docker-cmd-copy" onclick="copyDockerCmd()">Copy</button>
+      </div>
+      <p style="color:var(--text-muted);font-size:12px;margin-top:12px;">
+        The client must be able to reach your ESP devices on the LAN (port 3232 for OTA).
+      </p>
+    </div>
   </div>
 </div>
 
-<!-- Log modal -->
+<!-- ================================================================
+     Log modal
+================================================================ -->
 <div id="log-modal" class="modal-overlay" onclick="closeLogModal(event)">
   <div class="modal">
     <div class="modal-header">
@@ -523,6 +605,20 @@
   </div>
 </div>
 
+<!-- ================================================================
+     Monaco Editor modal
+================================================================ -->
+<div id="editor-modal" class="editor-overlay" onclick="closeEditorModal(event)">
+  <div class="editor-modal">
+    <div class="editor-header">
+      <h3 id="editor-filename"></h3>
+      <button class="btn-primary btn-sm" onclick="saveEditor()">Save</button>
+      <button class="modal-close" onclick="closeEditorModal()">✕</button>
+    </div>
+    <div id="monaco-container"></div>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // State
@@ -533,7 +629,7 @@ let devicesData = [];
 let queueData = [];
 let clientsData = [];
 let serverInfo = { token: '', port: 8765 };
-let expandedJobs = new Set(); // unused, kept for safety
+let expandedJobs = new Set();
 let activeRun = false;
 
 // ============================================================
@@ -568,12 +664,22 @@ function toast(msg, type='info') {
 }
 
 async function apiFetch(path, opts={}) {
-  const resp = await fetch(path, opts);
-  return resp;
+  return fetch(path, opts);
 }
 
 // ============================================================
-// Data refresh functions
+// Tab navigation
+// ============================================================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
+  document.getElementById('tab-btn-' + name).classList.add('active');
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  sessionStorage.setItem('activeTab', name);
+}
+
+// ============================================================
+// Data refresh
 // ============================================================
 async function refreshServerInfo() {
   try {
@@ -615,8 +721,7 @@ function copyDockerCmd() {
   } else {
     const ta = document.createElement('textarea');
     ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
+    ta.style.cssText = 'position:fixed;opacity:0';
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
@@ -646,6 +751,7 @@ async function refreshDevices() {
       if (targetsData.length > 0 && targetsData[0].server_version) {
         serverVersion = targetsData[0].server_version;
         document.getElementById('esphome-version').textContent = 'ESPHome ' + serverVersion;
+        renderDockerCmd();
       }
     }
     if (dr.ok) { devicesData = await dr.json(); }
@@ -658,10 +764,8 @@ async function refreshQueue() {
     const r = await apiFetch('./ui/api/queue');
     if (!r.ok) return;
     queueData = await r.json();
-    // Check for active run
     activeRun = queueData.some(j => ['pending','assigned','running'].includes(j.state));
     renderQueue();
-    updateTargetButtons();
   } catch(e) { /* ignore */ }
 }
 
@@ -671,11 +775,12 @@ async function refreshQueue() {
 function renderClients() {
   const tbody = document.getElementById('clients-tbody');
   const online = clientsData.filter(c => c.online).length;
-  document.getElementById('clients-count').textContent =
-    online + '/' + clientsData.length + ' online';
+  const countText = online + '/' + clientsData.length + ' online';
+  document.getElementById('clients-count').textContent = countText;
+  document.getElementById('tab-count-clients').textContent = online + '/' + clientsData.length;
 
   if (!clientsData.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No clients registered</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No clients registered — click "+ Connect Client" to add one</td></tr>';
     return;
   }
 
@@ -692,7 +797,6 @@ function renderClients() {
     const rowAttr = c.disabled ? ' style="opacity:0.6"' : '';
 
     for (let slot = 1; slot <= slots; slot++) {
-      // Find active job for this slot (worker_id match; fall back to any active job for slot 1)
       const slotJob = queueData.find(j =>
         j.assigned_client_id === c.client_id &&
         (j.worker_id === slot || (slot === 1 && j.worker_id == null)) &&
@@ -703,8 +807,9 @@ function renderClients() {
         : escapeHtml(c.hostname);
       let jobHtml;
       if (slotJob) {
-        const st = slotJob.status_text ? `<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(slotJob.status_text)}</span>` : '';
-        jobHtml = `<code style="font-size:12px;color:var(--text)">${escapeHtml(stripYaml(slotJob.target))}</code>${st}`;
+        const st = slotJob.status_text
+          ? `<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(slotJob.status_text)}</span>` : '';
+        jobHtml = `<code style="font-size:12px">${escapeHtml(stripYaml(slotJob.target))}</code>${st}`;
       } else {
         jobHtml = '<span style="color:var(--text-muted);font-size:12px">Idle</span>';
       }
@@ -716,16 +821,14 @@ function renderClients() {
           <td>${statusHtml}</td>
           <td>${jobHtml}</td>
           <td>${clientVersionHtml(c.client_version)}</td>
-          <td><button class="${disableBtnCls}" onclick="toggleClientDisabled('${escapeHtml(c.client_id)}', ${!c.disabled})">${disableBtnLabel}</button></td>
+          <td><button class="${disableBtnCls}" onclick="toggleClientDisabled('${escapeHtml(c.client_id)}',${!c.disabled})">${disableBtnLabel}</button></td>
         </tr>`);
       } else {
         rows.push(`<tr${rowAttr}>
           <td>${slotName}</td>
-          <td></td>
-          <td></td>
+          <td></td><td></td>
           <td>${jobHtml}</td>
-          <td></td>
-          <td></td>
+          <td></td><td></td>
         </tr>`);
       }
     }
@@ -734,24 +837,18 @@ function renderClients() {
 }
 
 // ============================================================
-// Render: Devices (managed targets + unmanaged mDNS devices)
+// Render: Devices
 // ============================================================
 function renderDevices() {
   const tbody = document.getElementById('devices-tbody');
-
-  // Unmanaged: mDNS-discovered devices with no matching YAML config
-  const managedTargets = new Set(targetsData.map(t => t.target));
   const unmanaged = devicesData.filter(d => !d.compile_target);
-
-  const totalOnline = targetsData.filter(t => t.online).length
-    + unmanaged.filter(d => d.online).length;
-  const totalKnown = targetsData.filter(t => t.online != null).length
-    + unmanaged.length;
-  document.getElementById('devices-count').textContent =
-    totalKnown ? totalOnline + '/' + totalKnown + ' online' : '';
+  const totalOnline = targetsData.filter(t => t.online).length + unmanaged.filter(d => d.online).length;
+  const totalKnown = targetsData.filter(t => t.online != null).length + unmanaged.length;
+  document.getElementById('tab-count-devices').textContent =
+    totalKnown ? totalOnline + '/' + totalKnown : targetsData.length || '';
 
   if (!targetsData.length && !unmanaged.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No devices found</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No devices found — ensure ESPHome configs are in /config/esphome/</td></tr>';
     return;
   }
 
@@ -766,9 +863,8 @@ function renderDevices() {
         : '<span class="dot dot-offline"></span>Offline';
     const needsUpd = t.needs_update;
     const updHtml = needsUpd == null ? '—'
-      : needsUpd
-        ? '<span class="needs-update-yes">Yes</span>'
-        : '<span class="needs-update-no">—</span>';
+      : needsUpd ? '<span class="needs-update-yes">Yes</span>'
+      : '<span class="needs-update-no">—</span>';
     const upgradeBtnCls = needsUpd ? 'btn-success' : 'btn-secondary';
     const nameHtml = t.friendly_name
       ? `<span class="device-name">${escapeHtml(t.friendly_name)}</span>`
@@ -776,22 +872,16 @@ function renderDevices() {
     const filenameHtml = `<div class="device-filename">${escapeHtml(stripYaml(t.target))}</div>`;
     const commentHtml = t.comment ? `<div class="device-comment">${escapeHtml(t.comment)}</div>` : '';
     return `<tr>
-      <td><input type="checkbox" class="target-cb" value="${escapeHtml(t.target)}" /></td>
-      <td>
-        ${nameHtml}
-        ${filenameHtml}
-        ${commentHtml}
-      </td>
+      <td><input type="checkbox" class="target-cb" value="${escapeHtml(t.target)}"></td>
+      <td>${nameHtml}${filenameHtml}${commentHtml}</td>
       <td>${statusHtml}</td>
       <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(t.ip_address || '—')}</td>
       <td style="font-size:12px">${escapeHtml(t.running_version || '—')}</td>
       <td>${updHtml}</td>
-      <td>
-        <div style="display:flex;gap:4px;">
-          <button class="${upgradeBtnCls} btn-sm" onclick="forceUpgrade('${escapeHtml(t.target)}')">Upgrade</button>
-          <button class="btn-secondary btn-sm" onclick="openEditor('${escapeHtml(t.target)}')">Edit</button>
-        </div>
-      </td>
+      <td><div style="display:flex;gap:4px;">
+        <button class="${upgradeBtnCls} btn-sm" onclick="forceUpgrade('${escapeHtml(t.target)}')">Upgrade</button>
+        <button class="btn-secondary btn-sm" onclick="openEditor('${escapeHtml(t.target)}')">Edit</button>
+      </div></td>
     </tr>`;
   });
 
@@ -803,22 +893,16 @@ function renderDevices() {
       <td></td>
       <td>
         <span class="device-name" style="color:var(--text-muted)">${escapeHtml(stripYaml(d.name))}</span>
-        <div class="device-friendly">No config</div>
+        <div class="device-filename" style="color:#6b7280">No config</div>
       </td>
       <td>${statusHtml}</td>
       <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(d.ip_address || '—')}</td>
       <td style="font-size:12px">${escapeHtml(d.running_version || '—')}</td>
-      <td>—</td>
-      <td></td>
+      <td>—</td><td></td>
     </tr>`;
   });
 
   tbody.innerHTML = [...managedRows, ...unmanagedRows].join('');
-}
-
-function updateTargetButtons() {
-  // Device panel buttons are never disabled by queue state — the server
-  // handles deduplication, so users can always queue more work.
 }
 
 // ============================================================
@@ -826,12 +910,21 @@ function updateTargetButtons() {
 // ============================================================
 function renderQueue() {
   const tbody = document.getElementById('queue-tbody');
+
+  const active = queueData.filter(j => ['pending','assigned','running'].includes(j.state)).length;
+  const failed = queueData.filter(j => ['failed','timed_out'].includes(j.state)).length;
+  let countText = '';
+  if (active) countText = active + ' active';
+  else if (failed) countText = failed + ' failed';
+  else if (queueData.length) countText = queueData.length + ' done';
+  document.getElementById('tab-count-queue').textContent = countText;
+
   if (!queueData.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No jobs in queue</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No jobs in queue</td></tr>';
+    renderClients();
     return;
   }
 
-  // Sort: active first, then by created_at desc
   const stateOrder = { running:0, assigned:1, pending:2, timed_out:3, failed:4, success:5 };
   const sorted = [...queueData].sort((a, b) => {
     const so = (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9);
@@ -839,7 +932,6 @@ function renderQueue() {
     return new Date(b.created_at) - new Date(a.created_at);
   });
 
-  // Preserve checkbox state across re-renders
   const checkedIds = new Set(
     [...document.querySelectorAll('.queue-cb:checked')].map(cb => cb.value)
   );
@@ -859,7 +951,6 @@ function renderQueue() {
       ? fmtDuration(job.duration_seconds)
       : (isActive && job.assigned_at ? fmtDuration((Date.now() - new Date(job.assigned_at)) / 1000) : '—');
 
-    // Unified state badge — status_text from client is the primary label for active jobs
     let badgeLabel, badgeCls;
     if (job.state === 'pending') {
       badgeLabel = 'Pending'; badgeCls = 'badge badge-pending';
@@ -890,21 +981,21 @@ function renderQueue() {
       <td><span class="${badgeCls}">${escapeHtml(badgeLabel)}</span></td>
       <td style="font-size:12px">${escapeHtml(clientName)}</td>
       <td style="font-size:12px">${dur}</td>
-      <td>
-        <div style="display:flex;gap:4px;">
-          ${isActive ? `<button class="btn-danger btn-sm" onclick="cancelJobs(['${job.id}'])">Cancel</button>` : ''}
-          ${canRetry ? `<button class="btn-warn btn-sm" onclick="retryJobs(['${job.id}'])">Retry</button>` : ''}
-          ${hasLog ? `<button class="btn-secondary btn-sm" onclick="openLogModal('${job.id}')">Log</button>` : ''}
-        </div>
-      </td>
+      <td><div style="display:flex;gap:4px;">
+        ${isActive ? `<button class="btn-danger btn-sm" onclick="cancelJobs(['${job.id}'])">Cancel</button>` : ''}
+        ${canRetry ? `<button class="btn-warn btn-sm" onclick="retryJobs(['${job.id}'])">Retry</button>` : ''}
+        ${hasLog ? `<button class="btn-secondary btn-sm" onclick="openLogModal('${job.id}')">Log</button>` : ''}
+      </div></td>
     </tr>`);
   }
 
   tbody.innerHTML = rows.join('');
-  // Keep client slot occupancy in sync with queue state
   renderClients();
 }
 
+// ============================================================
+// Log modal
+// ============================================================
 function openLogModal(jobId) {
   const job = queueData.find(j => j.id === jobId);
   if (!job) return;
@@ -913,7 +1004,6 @@ function openLogModal(jobId) {
     : null;
   const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
   const meta = [clientName, dur ? dur + ' duration' : null].filter(Boolean).join(' · ');
-
   document.getElementById('modal-title').textContent = job.target;
   document.getElementById('modal-state').innerHTML = `<span class="badge badge-${job.state}">${job.state}</span>`;
   document.getElementById('modal-meta').textContent = meta;
@@ -927,6 +1017,23 @@ function closeLogModal(e) {
   }
 }
 
+// ============================================================
+// Connect client modal
+// ============================================================
+function openConnectModal() {
+  renderDockerCmd();
+  document.getElementById('connect-modal').classList.add('open');
+}
+
+function closeConnectModal(e) {
+  if (!e || e.target === document.getElementById('connect-modal')) {
+    document.getElementById('connect-modal').classList.remove('open');
+  }
+}
+
+// ============================================================
+// Checkbox helpers
+// ============================================================
 function toggleSelectAll(cb) {
   document.querySelectorAll('.queue-cb').forEach(el => { el.checked = cb.checked; });
 }
@@ -938,18 +1045,13 @@ function toggleDevicesSelectAll(cb) {
 // ============================================================
 // Actions
 // ============================================================
-async function compileAll() {
-  await doCompile('all');
-}
+async function compileAll() { await doCompile('all'); }
+async function upgradeOutdated() { await doCompile('outdated'); }
 
 async function compileSelected() {
   const selected = [...document.querySelectorAll('.target-cb:checked')].map(cb => cb.value);
   if (!selected.length) { toast('No devices selected', 'error'); return; }
   await doCompile(selected);
-}
-
-async function upgradeOutdated() {
-  await doCompile('outdated');
 }
 
 async function doCompile(targets) {
@@ -961,7 +1063,8 @@ async function doCompile(targets) {
     });
     const data = await r.json();
     if (r.ok) {
-      toast(`Upgrading ${data.enqueued} device(s) — run ${data.run_id.slice(0,8)}`, 'success');
+      toast(`Queued ${data.enqueued} device(s)`, 'success');
+      switchTab('queue');
       await refreshQueue();
     } else {
       toast('Error: ' + (data.error || r.status), 'error');
@@ -1034,6 +1137,17 @@ async function retryAllFailed() {
   }
 }
 
+async function retrySelected() {
+  const ids = [...document.querySelectorAll('.queue-cb:checked')]
+    .map(cb => cb.value)
+    .filter(id => {
+      const job = queueData.find(j => j.id === id);
+      return job && ['failed','timed_out'].includes(job.state);
+    });
+  if (!ids.length) { toast('No failed/timed-out jobs selected', 'error'); return; }
+  await retryJobs(ids);
+}
+
 async function toggleClientDisabled(clientId, disabled) {
   try {
     const r = await apiFetch(`./ui/api/clients/${clientId}/disable`, {
@@ -1042,7 +1156,7 @@ async function toggleClientDisabled(clientId, disabled) {
       body: JSON.stringify({ disabled }),
     });
     if (r.ok) {
-      toast(disabled ? 'Client disabled — will finish current job' : 'Client enabled', 'success');
+      toast(disabled ? 'Client disabled' : 'Client enabled', 'success');
       const cr = await apiFetch('./ui/api/clients');
       if (cr.ok) { clientsData = await cr.json(); renderClients(); }
     } else {
@@ -1058,18 +1172,6 @@ async function forceUpgrade(target) {
   await doCompile([target]);
 }
 
-async function retrySelected() {
-  const checked = [...document.querySelectorAll('.job-checkbox:checked')];
-  const ids = checked
-    .map(cb => cb.dataset.jobId)
-    .filter(id => {
-      const job = queueData.find(j => j.id === id);
-      return job && ['failed','timed_out'].includes(job.state);
-    });
-  if (!ids.length) { toast('No failed/timed-out jobs selected', 'warn'); return; }
-  await retryJobs(ids);
-}
-
 async function clearSucceeded() {
   const r = await apiFetch('./ui/api/queue/clear', {
     method: 'POST',
@@ -1078,7 +1180,6 @@ async function clearSucceeded() {
   });
   if (r.ok) {
     const data = await r.json();
-    expandedJobs.clear();
     toast(`Cleared ${data.cleared} succeeded job(s)`, 'success');
     await refreshQueue();
   } else {
@@ -1094,7 +1195,6 @@ async function clearFinished() {
   });
   if (r.ok) {
     const data = await r.json();
-    expandedJobs.clear();
     toast(`Cleared ${data.cleared} finished job(s)`, 'success');
     await refreshQueue();
   } else {
@@ -1114,7 +1214,6 @@ async function openEditor(target) {
   document.getElementById('editor-filename').textContent = target;
   document.getElementById('editor-modal').classList.add('open');
 
-  // Fetch file content
   let content = '';
   try {
     const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(target)}/content`);
@@ -1132,15 +1231,10 @@ async function openEditor(target) {
     return;
   }
 
-  if (!monacoLoaded) {
-    await loadMonaco();
-  }
+  if (!monacoLoaded) { await loadMonaco(); }
 
   const container = document.getElementById('monaco-container');
-  if (monacoEditor) {
-    monacoEditor.dispose();
-    monacoEditor = null;
-  }
+  if (monacoEditor) { monacoEditor.dispose(); monacoEditor = null; }
   container.innerHTML = '';
 
   monacoEditor = monaco.editor.create(container, {
@@ -1157,7 +1251,6 @@ async function openEditor(target) {
     insertSpaces: true,
   });
 
-  // ESPHome completion provider (basic)
   if (!window._esphomeCompletionRegistered) {
     window._esphomeCompletionRegistered = true;
     monaco.languages.registerCompletionItemProvider('yaml', {
@@ -1170,12 +1263,11 @@ async function openEditor(target) {
           endColumn: word.endColumn,
         };
         const keywords = [
-          'esphome', 'name', 'friendly_name', 'comment', 'platform',
-          'board', 'wifi', 'ssid', 'password', 'ap', 'logger', 'api',
-          'encryption', 'key', 'ota', 'sensor', 'binary_sensor', 'switch',
-          'light', 'fan', 'climate', 'cover', 'output', 'uart', 'i2c',
-          'spi', 'substitutions', 'packages', 'esp32', 'esp8266',
-          'deep_sleep', 'interval', 'lambda', 'id', 'on_boot', 'on_shutdown',
+          'esphome','name','friendly_name','comment','platform','board',
+          'wifi','ssid','password','ap','logger','api','encryption','key',
+          'ota','sensor','binary_sensor','switch','light','fan','climate',
+          'cover','output','uart','i2c','spi','substitutions','packages',
+          'esp32','esp8266','deep_sleep','interval','lambda','id','on_boot','on_shutdown',
         ];
         return {
           suggestions: keywords.map(k => ({
@@ -1196,10 +1288,7 @@ function loadMonaco() {
     script.src = 'https://unpkg.com/monaco-editor@0.44.0/min/vs/loader.js';
     script.onload = () => {
       require.config({ paths: { vs: 'https://unpkg.com/monaco-editor@0.44.0/min/vs' } });
-      require(['vs/editor/editor.main'], () => {
-        monacoLoaded = true;
-        resolve();
-      });
+      require(['vs/editor/editor.main'], () => { monacoLoaded = true; resolve(); });
     };
     script.onerror = () => reject(new Error('Failed to load Monaco'));
     document.head.appendChild(script);
@@ -1229,15 +1318,12 @@ async function saveEditor() {
 function closeEditorModal(e) {
   if (e && e.target !== document.getElementById('editor-modal')) return;
   document.getElementById('editor-modal').classList.remove('open');
-  if (monacoEditor) {
-    monacoEditor.dispose();
-    monacoEditor = null;
-  }
+  if (monacoEditor) { monacoEditor.dispose(); monacoEditor = null; }
   editorTarget = null;
 }
 
 // ============================================================
-// Auto-refresh loops
+// Auto-refresh polling
 // ============================================================
 function startPolling() {
   // Clients: every 5s
@@ -1260,6 +1346,7 @@ function startPolling() {
         if (targetsData.length && targetsData[0].server_version) {
           serverVersion = targetsData[0].server_version;
           document.getElementById('esphome-version').textContent = 'ESPHome ' + serverVersion;
+          renderDockerCmd();
         }
       }
       if (dr.ok) { devicesData = await dr.json(); }
@@ -1275,7 +1362,6 @@ function startPolling() {
         queueData = await r.json();
         activeRun = queueData.some(j => ['pending','assigned','running'].includes(j.state));
         renderQueue();
-        updateTargetButtons();
       }
     } catch(e) {}
   }, 3000);
@@ -1285,13 +1371,21 @@ function startPolling() {
 // Init
 // ============================================================
 async function init() {
+  // Restore last active tab
+  const savedTab = sessionStorage.getItem('activeTab') || 'devices';
+  switchTab(savedTab);
+
   await Promise.all([refreshServerInfo(), refreshStatus(), refreshDevices(), refreshQueue()]);
   startPolling();
 }
 
 window.addEventListener('DOMContentLoaded', init);
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeLogModal(); closeEditorModal(); }
+  if (e.key === 'Escape') {
+    closeLogModal();
+    closeEditorModal();
+    closeConnectModal();
+  }
 });
 </script>
 </body>

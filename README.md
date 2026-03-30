@@ -106,10 +106,11 @@ The archive contains three scripts:
 
 Access via the HA sidebar (**ESPH Distributed**) or directly at `http://your-ha-host:8765`.
 
-- **Targets panel** — all discovered ESPHome YAML configs with device status; compile individual, all, or only outdated ones
-- **Queue panel** — live job status with logs, retry failed jobs, cancel in-progress jobs
-- **Devices panel** — mDNS-discovered devices with running firmware version; inline YAML editor
-- **Clients panel** — connected build workers with online status, current job, version; enable/disable individual clients
+Three tabs — works on mobile and small laptop screens:
+
+- **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, running version, needs-update flag); compile individual, all, or only outdated ones; inline YAML editor
+- **Queue** — live job status with logs; retry failed jobs, cancel in-progress jobs; badge shows active/failed count
+- **Clients** — connected build workers with online status, current job per slot, version; enable/disable clients; **+ Connect Client** button opens a pre-filled `docker run` command
 
 ## How It Works
 
@@ -125,11 +126,17 @@ Access via the HA sidebar (**ESPH Distributed**) or directly at `http://your-ha-
 
 ```
 PENDING → ASSIGNED → RUNNING → SUCCESS
-                             ↘ FAILED
-           timeout ↗ (up to 3 retries, then permanent FAILED)
+                   ↘          ↘ FAILED
+                    ↖ TIMED_OUT (up to 3 retries, then permanent FAILED)
 ```
 
-Jobs that time out are re-enqueued up to 3 times before being permanently marked failed. On server restart, any `ASSIGNED`/`RUNNING` jobs reset to `PENDING`.
+- **PENDING** → **ASSIGNED**: a client worker claims the job
+- **ASSIGNED** → **RUNNING**: client starts the compile subprocess
+- **RUNNING** → **SUCCESS**: compile + OTA completed
+- **RUNNING/ASSIGNED** → **TIMED_OUT**: deadline exceeded; re-enqueued as PENDING (up to 3 retries, then permanent FAILED)
+- Any state → **FAILED**: compile error, OTA failure after retries, or user cancel
+
+On server restart, any `ASSIGNED`/`RUNNING` jobs reset to `PENDING`. Triggering a new compile for a target automatically removes any old terminal (success/failed) jobs for that target.
 
 ### Client Auto-Update
 
@@ -185,26 +192,45 @@ SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python client/client.py
 ### Build Docker Images
 
 ```bash
+# Sync client/ → ha-addon/client/ first (ha-addon/client/ is gitignored)
+bash scripts/sync-client.sh
+
+# Server image
 docker build -t esphome-dist-server ha-addon/
+
+# Client image (auto-detects host arch; pass explicit platform if needed)
 docker build -t esphome-dist-client client/
+# ARM64 (Apple Silicon, Raspberry Pi 4+):
+docker buildx build --platform linux/arm64 --load -t esphome-dist-client client/
 ```
 
 ### Package the HA Add-on
 
 ```bash
+# sync-client.sh is called automatically by push-to-hass-4.sh
+# For a manual tarball:
+bash scripts/sync-client.sh
 tar -czf distributed-esphome-addon.tar.gz -s '/^ha-addon/distributed-esphome/' ha-addon
 ```
+
+### Bump Version
+
+```bash
+bash scripts/bump-version.sh 0.0.X
+```
+
+Updates `ha-addon/VERSION`, `ha-addon/config.yaml`, and `client/client.py` atomically.
 
 ## Repository Layout
 
 ```
 distributed-esphome/
 ├── ha-addon/
-│   ├── config.yaml           # HA add-on manifest
+│   ├── config.yaml           # HA add-on manifest (version: must match VERSION)
 │   ├── Dockerfile
-│   ├── VERSION               # Semantic version (must match config.yaml + CLIENT_VERSION)
+│   ├── VERSION               # Single source of truth for the version number
 │   ├── run.sh                # Add-on entrypoint
-│   ├── client/               # Bundled client (synced from client/)
+│   ├── client/               # Generated — run scripts/sync-client.sh (gitignored)
 │   └── server/
 │       ├── main.py           # aiohttp app, middleware, background tasks
 │       ├── api.py            # /api/v1/* — client REST API (Bearer token auth)
@@ -213,22 +239,42 @@ distributed-esphome/
 │       ├── scanner.py        # YAML discovery, bundle generation
 │       ├── registry.py       # Build client registry
 │       ├── device_poller.py  # mDNS listener + aioesphomeapi polling
-│       └── static/index.html # Single-file Web UI
+│       └── static/index.html # Single-file Web UI (tab layout)
 ├── client/
 │   ├── Dockerfile
 │   ├── client.py             # Main loop, heartbeat, job runner, auto-update
-│   └── version_manager.py   # ESPHome version install/eviction (LRU)
-├── tests/
-├── package-client.sh         # Build + package client for distribution
+│   ├── version_manager.py    # ESPHome version install/eviction (LRU)
+│   └── dist-scripts/         # start.sh / stop.sh / uninstall.sh for distribution
+├── scripts/
+│   ├── bump-version.sh       # Update version in all 3 places atomically
+│   ├── sync-client.sh        # Copy client/ → ha-addon/client/
+│   ├── install-hooks.sh      # Configure git to use .githooks/
+│   └── ...
+├── .githooks/pre-push        # Runs tests + mypy before every push
+├── .github/workflows/ci.yml  # GitHub Actions: tests + mypy on every push/PR
+├── package-client.sh         # Build + package client Docker image for distribution
 └── REQUIREMENTS.md           # Full design specification
 ```
 
 ## Versioning
 
-The version lives in three places that must stay in sync:
+The version lives in three places that must stay in sync — use `bash scripts/bump-version.sh X.Y.Z` to update all three atomically:
 
 1. `ha-addon/VERSION` — read by the server at runtime
-2. `ha-addon/config.yaml` — `version:` field
-3. `client/client.py` — `CLIENT_VERSION = "x.y.z"`
+2. `ha-addon/config.yaml` — required by the HA add-on manifest
+3. `client/client.py` — `CLIENT_VERSION` constant (checked against server on heartbeat)
 
-After changing any of these, sync `client/client.py` → `ha-addon/client/client.py` and rebuild the add-on in HA.
+## Platform Support
+
+Both the HA add-on (server) and standalone build clients support **x86-64 and ARM** architectures:
+
+- The HA add-on runs on `aarch64`, `amd64`, `armhf`, `armv7`, and `i386` (declared in `ha-addon/config.yaml`).
+- The build client Docker image is a standard Python image that builds natively for any architecture. On **Apple Silicon** (`linux/arm64`) builds run natively — no Rosetta emulation — which can be significantly faster than cross-compiling on an x86 machine.
+
+```bash
+# Build a native ARM64 client image (e.g. on Apple Silicon or Raspberry Pi 4)
+docker buildx build --platform linux/arm64 --load -t esphome-dist-client client/
+
+# Package and distribute an ARM64 client archive
+./package-client.sh http://your-ha-host:8765 your-token linux/arm64
+```

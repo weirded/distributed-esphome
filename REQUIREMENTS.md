@@ -223,41 +223,37 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - Static assets (`<script>`, `<link>`) also use relative paths — no absolute `/` paths anywhere in the frontend
 - No auth logic in the frontend — HA handles authentication upstream for Ingress traffic; Bearer tokens are only used by build clients hitting `/api/v1/*`
 
-**Sections:**
+**Layout:** Three-tab interface — Devices | Queue | Clients — replacing the two-column desktop-only grid. All tables scroll horizontally on mobile/small screens. The active tab persists across page refreshes via `sessionStorage`.
 
 **Header**
-- Shows the add-on version badge (e.g. `v0.0.6`) and an ESPHome version badge (e.g. `ESPHome 2024.6.0`)
+- Shows the add-on version badge (e.g. `v0.0.9`) and an ESPHome version badge (e.g. `ESPHome 2024.6.0`)
+- Tab bar below the header with live badge counts (e.g. `3/5 online`, `2 active`, `1/2 online`)
 
-**Clients Panel**
-- Table: `Hostname/Slot | Platform | Status | Current Job | Version | Actions`
-- One row per worker slot (`max_parallel_jobs` rows per client); slot suffix shown as `/1`, `/2` etc. when a client has > 1 slot
-- Each slot row shows the job currently running in that slot (target name + status text), or "Idle"
-- Version column shows client version; highlights in orange with an up-arrow if the client version is older than the server's current client version
-- Actions column (Disable/Enable) spans the first slot row only; disabled clients are shown at reduced opacity
-- Auto-refreshes every 5 seconds; also re-renders on each queue refresh (every 3s) to keep slot occupancy current
-
-**Devices Panel**
-- Table: `Device Name | IP | Online | Running Version | Server Version | Needs Update`
-- "Needs Update" = true when running version ≠ server ESPHome version, or when config has been modified since last compile (future: track config mtime)
-- "Force Upgrade" button per row — enqueues a single-target compile job regardless of version match
+**Devices tab**
+- Combines the former "Targets" and device-status columns into one view
+- Table: `[ ] | Device | Status | IP | Running | Update | Actions`
+- "Needs Update" = true when running version ≠ server ESPHome version
+- "Upgrade" button per row (green when update needed); "Edit" opens inline Monaco YAML editor
+- Buttons: `Upgrade All`, `Upgrade Selected`, `Upgrade Outdated`
+- Unmanaged devices (mDNS-discovered but no matching YAML) listed below managed rows
 - Auto-refreshes every 15 seconds
 
-**Targets Panel**
-- Lists all discovered YAML configs with their mapped device's online status and running version
-- Checkbox per config
-- Buttons: `Compile All`, `Compile Selected`, `Upgrade Outdated` (enqueues only targets where running version ≠ server version)
-- Disabled while a run is in progress
+**Queue tab**
+- Table columns: `[ ] | Target | State | Client | Duration | Actions`
+- Client column shows `hostname/worker_id` (e.g. `builder/2`) for multi-slot clients
+- State badge: pending=grey, running=blue, success=green, failed=red, timed_out=orange
+- OTA outcome reflected in badge: `Success` / `OTA Failed` / `Compiled` (no OTA yet)
+- `Cancel Selected`, `Retry Selected`, `Retry All Failed`, `Clear Succeeded`, `Clear Finished` buttons
+- Per-row `Retry` / `Cancel` / `Log` buttons
+- Triggering a new compile for a target removes any previous terminal jobs for that target
+- Auto-refreshes every 3 seconds; tab badge shows active/failed count
 
-**Queue Panel** (visible when a run is active or recent jobs exist)
-- Table columns: `[ ] | Target | State+OTA | Client | Duration | Actions`
-- Client column shows `hostname/worker_id` (e.g. `builder/2`) when the client has multiple slots, plain hostname for single-slot clients
-- State and OTA result are combined in a single badge column
-- Checkbox column for multi-select cancel
-- `Cancel Selected` button; `Retry All Failed` button in header; per-row `Retry` button on failed/timed_out jobs
-- State badge color-coding: pending=grey, running=blue, success=green, failed=red, timed_out=orange
-- Auto-refreshes every 3 seconds
-- Log viewer: click a completed job row to expand inline log output
-- Duration counter stops when job reaches a terminal state
+**Clients tab**
+- Table: `Hostname/Slot | Platform | Status | Current Job | Version | Actions`
+- One row per worker slot; slot suffix `/N` when client has > 1 slot
+- **"+ Connect Client"** button in panel header opens a modal with the pre-filled `docker run` command and a Copy button
+- Disabled clients shown at reduced opacity; Enable/Disable button per client
+- Auto-refreshes every 5 seconds
 
 **Internal UI API endpoints:**
 

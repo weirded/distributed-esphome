@@ -42,5 +42,8 @@ htmlcov/
 # HA add-on local build
 ha-addon/dist/
 
+# ha-addon/client/ is generated from client/ via scripts/sync-client.sh
+ha-addon/client/
+
 # Local deployment scripts
 push-to-hass-4.sh

@@ -1,25 +1,57 @@
 #!/usr/bin/env bash
-# Packages the build client into a self-contained distributable archive.
-# Usage: ./package-client.sh [SERVER_URL] [SERVER_TOKEN]
+# Package the build client into a self-contained distributable archive.
 #
-# Produces: dist/esphome-dist-client-<version>.tar.gz
+# Usage:
+#   ./package-client.sh [SERVER_URL] [SERVER_TOKEN] [PLATFORM]
+#
+#   PLATFORM defaults to the host architecture:
+#     linux/amd64   — x86-64 (Intel/AMD)
+#     linux/arm64   — 64-bit ARM (Apple Silicon, Raspberry Pi 4+, AWS Graviton)
+#     linux/arm/v7  — 32-bit ARM (Raspberry Pi 3 and older)
+#
+# Produces: dist/esphome-dist-client-<version>[-<arch>].tar.gz
 #   Contains:
-#     - esphome-dist-client.tar    (Docker image)
-#     - start.sh                   (load image + docker run; tails logs by default)
-#     - stop.sh                    (stop and remove the container)
-#     - uninstall.sh               (stop container + remove image)
+#     - esphome-dist-client.tar    Docker image
+#     - start.sh                   Load image + docker run
+#     - stop.sh                    Stop and remove container
+#     - uninstall.sh               Remove container, image, optional volume
 
 set -euo pipefail
 
 SERVER_URL="${1:-http://YOUR_HA_HOST:8765}"
 SERVER_TOKEN="${2:-YOUR_TOKEN}"
-IMAGE="esphome-dist-client"
-VERSION="$(cat "$(dirname "$0")/ha-addon/VERSION" 2>/dev/null || echo "0.0.1")"
-OUT_DIR="$(dirname "$0")/dist"
-ARCHIVE="$OUT_DIR/esphome-dist-client-${VERSION}.tar.gz"
 
-echo "==> Building Docker image $IMAGE:$VERSION ..."
-docker build -t "$IMAGE:$VERSION" -t "$IMAGE:latest" "$(dirname "$0")/client/"
+# Default platform: match host architecture
+_HOST_ARCH="$(uname -m)"
+case "$_HOST_ARCH" in
+  arm64|aarch64) _DEFAULT_PLATFORM="linux/arm64" ;;
+  armv7l)        _DEFAULT_PLATFORM="linux/arm/v7" ;;
+  *)             _DEFAULT_PLATFORM="linux/amd64" ;;
+esac
+PLATFORM="${3:-$_DEFAULT_PLATFORM}"
+
+IMAGE="esphome-dist-client"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+VERSION="$(cat "$REPO_ROOT/ha-addon/VERSION" 2>/dev/null || echo "0.0.1")"
+SCRIPTS_DIR="$REPO_ROOT/client/dist-scripts"
+
+# Arch suffix (omitted for amd64 to stay backward-compatible)
+case "$PLATFORM" in
+  linux/arm64|linux/aarch64) _ARCH_SUFFIX="-arm64" ;;
+  linux/arm/v7)              _ARCH_SUFFIX="-armv7" ;;
+  *)                          _ARCH_SUFFIX="" ;;
+esac
+
+OUT_DIR="$REPO_ROOT/dist"
+ARCHIVE="$OUT_DIR/esphome-dist-client-${VERSION}${_ARCH_SUFFIX}.tar.gz"
+
+echo "==> Building Docker image $IMAGE:$VERSION (platform: $PLATFORM) ..."
+docker buildx build \
+    --platform "$PLATFORM" \
+    --load \
+    -t "$IMAGE:$VERSION" \
+    -t "$IMAGE:latest" \
+    "$REPO_ROOT/client/"
 
 echo "==> Saving image to tar ..."
 mkdir -p "$OUT_DIR"
@@ -28,145 +60,18 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 docker save "$IMAGE:latest" -o "$TMP_DIR/esphome-dist-client.tar"
 
-# ---------------------------------------------------------------------------
-# start.sh
-# ---------------------------------------------------------------------------
-echo "==> Writing start.sh ..."
-cat > "$TMP_DIR/start.sh" << 'STARTEOF'
-#!/usr/bin/env bash
-# ESPHome Distributed Build Client — start script
-#
-# Usage:
-#   ./start.sh              Start and tail logs (foreground; Ctrl-C detaches, container keeps running)
-#   ./start.sh --background Start detached
-
-set -euo pipefail
-
-BACKGROUND=false
-for arg in "$@"; do
-    [ "$arg" = "--background" ] && BACKGROUND=true
+echo "==> Copying distribution scripts ..."
+for script in start.sh stop.sh uninstall.sh; do
+    cp "$SCRIPTS_DIR/$script" "$TMP_DIR/$script"
 done
+chmod +x "$TMP_DIR"/*.sh
 
-# Require SERVER_URL and SERVER_TOKEN
-if [ -z "${SERVER_URL:-}" ]; then
-    echo "ERROR: SERVER_URL is not set. Export it or edit this script." >&2
-    exit 1
-fi
-if [ -z "${SERVER_TOKEN:-}" ]; then
-    echo "ERROR: SERVER_TOKEN is not set. Export it or edit this script." >&2
-    exit 1
-fi
-
-IMAGE="esphome-dist-client"
-CONTAINER_NAME="esphome-dist-client"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# Load image if not already present
-if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
-    echo "Loading Docker image..."
-    docker load -i "$SCRIPT_DIR/esphome-dist-client.tar"
-fi
-
-# Remove existing container if any
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Removing existing container..."
-    docker rm -f "$CONTAINER_NAME"
-fi
-
-echo "Starting $CONTAINER_NAME ..."
-docker run -d \
-    --name "$CONTAINER_NAME" \
-    --restart unless-stopped \
-    --hostname "$(hostname)" \
-    -e SERVER_URL="$SERVER_URL" \
-    -e SERVER_TOKEN="$SERVER_TOKEN" \
-    ${MAX_PARALLEL_JOBS:+-e MAX_PARALLEL_JOBS="$MAX_PARALLEL_JOBS"} \
-    -v esphome-versions:/esphome-versions \
-    "$IMAGE"
-
-if [ "$BACKGROUND" = true ]; then
-    echo "Started in background. Logs: docker logs -f $CONTAINER_NAME"
-else
-    echo "Started. Tailing logs (Ctrl-C to detach — container keeps running)..."
-    docker logs -f "$CONTAINER_NAME"
-fi
-STARTEOF
-chmod +x "$TMP_DIR/start.sh"
-
-# Bake in default SERVER_URL and SERVER_TOKEN as comments so the user
-# knows what values were used when the package was built.
+# Bake build-time SERVER_URL and SERVER_TOKEN as a comment in start.sh
 sed -i.bak \
-    "s|# Require SERVER_URL and SERVER_TOKEN|# Built with SERVER_URL=$SERVER_URL  SERVER_TOKEN=$SERVER_TOKEN\n# Require SERVER_URL and SERVER_TOKEN|" \
+    "s|{{BUILD_INFO}}|Built with: SERVER_URL=$SERVER_URL  SERVER_TOKEN=$SERVER_TOKEN|" \
     "$TMP_DIR/start.sh"
 rm -f "$TMP_DIR/start.sh.bak"
 
-# ---------------------------------------------------------------------------
-# stop.sh
-# ---------------------------------------------------------------------------
-echo "==> Writing stop.sh ..."
-cat > "$TMP_DIR/stop.sh" << 'STOPEOF'
-#!/usr/bin/env bash
-# ESPHome Distributed Build Client — stop script
-set -euo pipefail
-
-CONTAINER_NAME="esphome-dist-client"
-
-if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Stopping $CONTAINER_NAME ..."
-    docker stop "$CONTAINER_NAME"
-fi
-
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Removing $CONTAINER_NAME ..."
-    docker rm "$CONTAINER_NAME"
-fi
-
-echo "Done."
-STOPEOF
-chmod +x "$TMP_DIR/stop.sh"
-
-# ---------------------------------------------------------------------------
-# uninstall.sh
-# ---------------------------------------------------------------------------
-echo "==> Writing uninstall.sh ..."
-cat > "$TMP_DIR/uninstall.sh" << 'UNINSTEOF'
-#!/usr/bin/env bash
-# ESPHome Distributed Build Client — uninstall script
-# Stops and removes the container, removes the Docker image, and optionally
-# removes the esphome-versions volume.
-set -euo pipefail
-
-CONTAINER_NAME="esphome-dist-client"
-IMAGE="esphome-dist-client"
-
-if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Stopping $CONTAINER_NAME ..."
-    docker stop "$CONTAINER_NAME"
-fi
-
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Removing container $CONTAINER_NAME ..."
-    docker rm "$CONTAINER_NAME"
-fi
-
-if docker image inspect "$IMAGE" > /dev/null 2>&1; then
-    echo "Removing image $IMAGE ..."
-    docker rmi "$IMAGE"
-fi
-
-echo ""
-read -r -p "Also remove the esphome-versions volume (cached ESPHome installs)? [y/N] " answer
-if [[ "$answer" =~ ^[Yy]$ ]]; then
-    docker volume rm esphome-versions 2>/dev/null && echo "Volume removed." || echo "Volume not found (already gone)."
-fi
-
-echo "Uninstall complete."
-UNINSTEOF
-chmod +x "$TMP_DIR/uninstall.sh"
-
-# ---------------------------------------------------------------------------
-# Archive
-# ---------------------------------------------------------------------------
 echo "==> Creating archive $ARCHIVE ..."
 tar -czf "$ARCHIVE" -C "$TMP_DIR" esphome-dist-client.tar start.sh stop.sh uninstall.sh
 
@@ -175,4 +80,4 @@ echo "Done: $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"
 echo ""
 echo "To deploy to another host:"
 echo "  scp $ARCHIVE user@host:/tmp/"
-echo "  ssh user@host 'cd /tmp && tar -xzf $(basename "$ARCHIVE") && SERVER_URL=http://ha:8765 SERVER_TOKEN=yourtoken ./start.sh'"
+echo "  ssh user@host 'cd /tmp && tar -xzf $(basename "$ARCHIVE") && SERVER_URL=$SERVER_URL SERVER_TOKEN=$SERVER_TOKEN ./start.sh'"

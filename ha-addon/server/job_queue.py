@@ -166,6 +166,9 @@ class JobQueue:
 
         Returns the new Job, or None if a job for this target is already
         pending/assigned/running (deduplication).
+
+        Any existing terminal (success/failed/timed_out) jobs for the same
+        target are removed so the queue stays tidy.
         """
         async with self._lock:
             # Deduplication: only one active job per target
@@ -177,6 +180,18 @@ class JobQueue:
                 ):
                     logger.debug("Skipping duplicate job for target %s", target)
                     return None
+
+            # Clear old terminal jobs for this target before adding the new one
+            stale = [
+                jid for jid, j in self._jobs.items()
+                if j.target == target and j.state in (
+                    JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT
+                )
+            ]
+            for jid in stale:
+                del self._jobs[jid]
+            if stale:
+                logger.debug("Removed %d stale job(s) for target %s", len(stale), target)
 
             job = Job(
                 id=str(uuid.uuid4()),
@@ -337,24 +352,38 @@ class JobQueue:
         run_id: str,
         timeout_seconds: int = 300,
     ) -> list["Job"]:
-        """Re-enqueue failed/timed_out jobs as new PENDING jobs. Returns new jobs."""
+        """Re-enqueue failed/timed_out jobs as new PENDING jobs. Returns new jobs.
+
+        The old job being retried is removed; any other terminal jobs for the
+        same target are also cleared (same semantics as enqueue).
+        """
         async with self._lock:
             new_jobs: list[Job] = []
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
                 if job is None or job.state not in (JobState.FAILED, JobState.TIMED_OUT):
                     continue
+                target = job.target
+                # Remove all terminal jobs for this target (including the one being retried)
+                stale = [
+                    jid for jid, j in self._jobs.items()
+                    if j.target == target and j.state in (
+                        JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT
+                    )
+                ]
+                for jid in stale:
+                    del self._jobs[jid]
                 new_job = Job(
                     id=str(uuid.uuid4()),
-                    target=job.target,
+                    target=target,
                     esphome_version=esphome_version,
                     state=JobState.PENDING,
                     run_id=run_id,
-                    timeout_seconds=job.timeout_seconds,
+                    timeout_seconds=timeout_seconds,
                 )
                 self._jobs[new_job.id] = new_job
                 new_jobs.append(new_job)
-                logger.info("Retrying job %s → new job %s for %s", job_id, new_job.id, job.target)
+                logger.info("Retrying → new job %s for %s", new_job.id, target)
             if new_jobs:
                 self._persist()
             return new_jobs
