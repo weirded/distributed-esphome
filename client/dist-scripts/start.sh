@@ -52,10 +52,8 @@ IMAGE="esphome-dist-client"
 CONTAINER_NAME="esphome-dist-client"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
-    echo "Loading Docker image..."
-    docker load -i "$SCRIPT_DIR/esphome-dist-client.tar"
-fi
+echo "Loading Docker image..."
+docker load -i "$SCRIPT_DIR/esphome-dist-client.tar"
 
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo "Removing existing container..."
