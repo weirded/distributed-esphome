@@ -259,7 +259,7 @@ distributed-esphome/
 │   ├── config.yaml           # HA add-on manifest (version: must match VERSION)
 │   ├── Dockerfile
 │   ├── VERSION               # Single source of truth for the version number
-│   ├── run.sh                # Add-on entrypoint
+│   ├── rootfs/               # s6-overlay service scripts
 │   ├── client/               # Generated — run scripts/sync-client.sh (gitignored)
 │   └── server/
 │       ├── main.py           # aiohttp app, middleware, background tasks

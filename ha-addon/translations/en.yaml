@@ -1,0 +1,18 @@
+configuration:
+  token:
+    name: Auth Token
+    description: >-
+      Shared secret for build client authentication. Leave empty to
+      auto-generate a random token on first start.
+  job_timeout:
+    name: Job Timeout
+    description: Maximum seconds for a compile job before it times out.
+  ota_timeout:
+    name: OTA Timeout
+    description: Maximum seconds for an OTA firmware upload before it times out.
+  client_offline_threshold:
+    name: Client Offline Threshold
+    description: Seconds without a heartbeat before a client is considered offline.
+  device_poll_interval:
+    name: Device Poll Interval
+    description: Seconds between polling ESPHome devices for their firmware version.

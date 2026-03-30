@@ -489,7 +489,7 @@ Both `ingress_port` and `ports:` point to 8765 — the same aiohttp process serv
 ha-addon/
 ├── config.yaml
 ├── Dockerfile
-├── run.sh
+├── rootfs/              # s6-overlay service scripts
 └── server/
     ├── main.py           # aiohttp app setup, middleware, startup/shutdown
     ├── api.py            # /api/v1/* handlers (client-facing, Bearer token auth)
@@ -561,7 +561,7 @@ distributed-esphome/
 ├── ha-addon/
 │   ├── config.yaml
 │   ├── Dockerfile
-│   ├── run.sh
+│   ├── rootfs/              # s6-overlay service scripts
 │   └── server/
 │       ├── main.py
 │       ├── api.py
@@ -732,7 +732,7 @@ This sets `core.hooksPath = .githooks` in the local git config.
 6. **`ui_api.py`** — `/ui/api/*` browser-facing JSON handlers
 7. **`static/index.html`** — Web UI (clients, devices, targets, queue panels)
 8. **`main.py`** — aiohttp app wiring, background tasks, add-on entrypoint
-9. **`ha-addon/` packaging** — Dockerfile, config.yaml, run.sh
+9. **`ha-addon/` packaging** — Dockerfile, config.yaml, s6-overlay service
 10. **`client/version_manager.py`** — ESPHome version install, LRU eviction
 11. **`client/client.py`** — main client loop, heartbeat thread, job runner
 12. **`client/Dockerfile`** — client Docker image

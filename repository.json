@@ -1,5 +1,6 @@
 {
   "name": "Distributed ESPHome",
   "url": "https://github.com/weirded/distributed-esphome",
-  "maintainer": "weirded"
+  "maintainer": "weirded",
+  "channel": "stable"
 }

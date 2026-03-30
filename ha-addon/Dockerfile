@@ -1,5 +1,15 @@
 ARG BUILD_FROM
+ARG BUILD_ARCH
+ARG BUILD_VERSION
+
 FROM $BUILD_FROM
+
+LABEL \
+    io.hass.name="ESPHome Distributed Build Server" \
+    io.hass.description="Distributed ESPHome compilation coordinator" \
+    io.hass.arch="${BUILD_ARCH}" \
+    io.hass.type="addon" \
+    io.hass.version="${BUILD_VERSION}"
 
 WORKDIR /app
 COPY server/requirements.txt .
@@ -10,7 +20,6 @@ COPY VERSION /app/VERSION
 # Bundle client code so the server can serve it to remote clients for auto-update
 COPY client/ /app/client/
 
-COPY run.sh /run.sh
-RUN chmod a+x /run.sh
-
-CMD ["/run.sh"]
+COPY rootfs /
+RUN chmod a+x /etc/services.d/esphome-dist-server/run \
+    && chmod a+x /etc/services.d/esphome-dist-server/finish

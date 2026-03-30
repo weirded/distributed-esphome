@@ -1,12 +1,16 @@
 name: "ESPHome Distributed Build Server"
-version: "0.0.22"
+version: "0.0.23"
 slug: "esphome_dist_server"
-description: "Distributed ESPHome compilation coordinator"
+description: "Offload ESPHome firmware compilation to remote machines with a web UI for job management and OTA updates"
 url: "https://github.com/weirded/distributed-esphome"
 arch: [aarch64, amd64, armhf, armv7, i386]
 startup: application
 boot: auto
 init: false
+stage: experimental
+homeassistant: "2024.1.0"
+codeowners:
+  - "@weirded"
 
 # Ingress: Web UI embedded in HA sidebar, authenticated by HA
 ingress: true
@@ -17,6 +21,11 @@ panel_title: "ESPH Distributed"
 # Direct port: build clients (Docker) connect here with Bearer token auth
 ports:
   8765/tcp: 8765
+ports_description:
+  8765/tcp: "Build client API & Web UI"
+
+# mDNS device discovery requires host networking
+host_network: true
 
 map:
   - config:rw
