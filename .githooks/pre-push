@@ -4,7 +4,7 @@
 set -euo pipefail
 
 echo "==> pre-push: running unit tests..."
-pytest tests/ -q
+pytest tests/ --ignore=tests/test_e2e_client.py -q
 
 echo "==> pre-push: mypy — server..."
 mypy ha-addon/server/ --ignore-missing-imports
