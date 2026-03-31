@@ -254,6 +254,34 @@ async def get_client_code(request: web.Request) -> web.Response:
     })
 
 
+@routes.post("/api/v1/jobs/{id}/log")
+async def append_job_log(request: web.Request) -> web.Response:
+    """Append streaming log lines from a build client (HTTP batched)."""
+    if not _check_auth(request):
+        return _unauthorized()
+    job_id = request.match_info["id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    lines = body.get("lines", "")
+    queue = request.app["queue"]
+    ok = await queue.append_log(job_id, lines)
+    if not ok:
+        return web.json_response({"error": "Job not found"}, status=404)
+
+    # Forward to any browser WebSocket subscribers
+    subscribers: dict = request.app.get("log_subscribers", {})
+    for sub_ws in list(subscribers.get(job_id, set())):
+        try:
+            await sub_ws.send_str(lines)
+        except Exception:
+            subscribers[job_id].discard(sub_ws)
+
+    return web.json_response({"ok": True})
+
+
 @routes.get("/api/v1/jobs/{id}/log/ws")
 async def ws_client_log(request: web.Request) -> web.WebSocketResponse:
     """WebSocket endpoint for build clients to stream log lines."""

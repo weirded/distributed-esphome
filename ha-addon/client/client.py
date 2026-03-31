@@ -20,11 +20,6 @@ from typing import Optional
 
 import requests
 
-try:
-    import websocket as ws_client
-    WS_AVAILABLE = True
-except ImportError:
-    WS_AVAILABLE = False
 
 from version_manager import VersionManager
 
@@ -716,20 +711,6 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                 _active_jobs -= 1
             return
 
-    # Open WebSocket for live log streaming (best-effort; failures are non-fatal)
-    log_ws = None
-    if WS_AVAILABLE:
-        try:
-            ws_url = SERVER_URL.replace("http://", "ws://").replace("https://", "wss://")
-            log_ws = ws_client.create_connection(
-                f"{ws_url}/api/v1/jobs/{job_id}/log/ws",
-                header=[f"Authorization: Bearer {SERVER_TOKEN}"],
-                timeout=10,
-            )
-            logger.debug("Opened log WebSocket for job %s", job_id)
-        except Exception as exc:
-            logger.debug("Could not open log WebSocket: %s", exc)
-
     tmp_dir = tempfile.mkdtemp(prefix="esphome-job-")
     try:
         # Extract bundle
@@ -755,7 +736,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             timeout=timeout_seconds,
             label="compile",
             env=subprocess_env,
-            log_ws=log_ws,
+            job_id=job_id,
         )
 
         if not compile_ok:
@@ -782,7 +763,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                 timeout=OTA_TIMEOUT,
                 label=f"OTA upload (attempt {attempt + 1})",
                 env=subprocess_env,
-                log_ws=log_ws,
+                job_id=job_id,
             )
             ota_logs.append(ota_log)
             if ota_ok:
@@ -804,11 +785,6 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         _log_context.current_target = None
         with _active_jobs_lock:
             _active_jobs -= 1
-        if log_ws is not None:
-            try:
-                log_ws.close()
-            except Exception:
-                pass
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             logger.debug("Cleaned up temp dir %s", tmp_dir)
@@ -822,7 +798,7 @@ def _run_subprocess(
     timeout: int,
     label: str,
     env: Optional[dict] = None,
-    log_ws=None,
+    job_id: Optional[str] = None,
 ) -> tuple[str, bool]:
     """
     Run a subprocess with a timeout, streaming output line-by-line.
@@ -830,13 +806,27 @@ def _run_subprocess(
     Returns (combined_log, success).
     On timeout, kills the process and returns (log + 'TIMED OUT', False).
     *env* is passed directly to Popen; defaults to inheriting the current env.
-    *log_ws* is an optional websocket-client connection; each line is sent
-    immediately as it is produced. WebSocket errors are silently ignored so
-    that a broken connection never blocks the build.
+    *job_id* enables live log streaming — lines are batched and POSTed to the
+    server every 2 seconds via ``/api/v1/jobs/{id}/log``.
     """
+    FLUSH_INTERVAL = 2.0
     log_lines: list[str] = []
+    flush_buffer: list[str] = []
+    last_flush = time.monotonic()
     timed_out = threading.Event()
     logger.info("Running %s: %s", label, " ".join(cmd))
+
+    def _flush_log():
+        nonlocal flush_buffer, last_flush
+        if not job_id or not flush_buffer:
+            return
+        text = "".join(flush_buffer)
+        flush_buffer = []
+        last_flush = time.monotonic()
+        try:
+            post(f"/api/v1/jobs/{job_id}/log", {"lines": text}, timeout=5)
+        except Exception:
+            pass  # non-critical
 
     try:
         proc = subprocess.Popen(
@@ -862,13 +852,11 @@ def _run_subprocess(
     try:
         for line in proc.stdout:  # type: ignore[union-attr]
             log_lines.append(line)
-            if log_ws is not None:
-                try:
-                    log_ws.send(line)
-                except Exception:
-                    # Broken WS connection — stop trying but continue building
-                    log_ws = None
+            flush_buffer.append(line)
+            if time.monotonic() - last_flush >= FLUSH_INTERVAL:
+                _flush_log()
         proc.wait()
+        _flush_log()  # final flush
     finally:
         timer.cancel()
 

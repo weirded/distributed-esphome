@@ -1,9 +1,12 @@
 # Changelog
 
 ## 0.0.40
-- Standalone Docker distribution for the server (no Home Assistant required)
-- GitHub Actions workflow to publish server image to GHCR on push
-- Pre-push hook validates changelog entry exists for current version
+- Fix live log streaming: replace websocket-client with HTTP POST batching
+  (client auto-update can't install new pip dependencies, so websocket-client
+  was never available on deployed clients)
+- Remove websocket-client dependency from client requirements
+- Add POST /api/v1/jobs/{id}/log endpoint for batched log streaming
+- Client streams lines every 2 seconds via HTTP POST using existing requests lib
 
 ## 0.0.39
 - HTTP polling fallback for live logs when WebSocket through HA Ingress fails
