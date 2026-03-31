@@ -62,6 +62,34 @@ ssh ha-host "cd /usr/share/hassio/addons/local && tar -xzf /tmp/distributed-esph
 Then in HA: **Settings → Add-ons → Local add-ons → ESPHome Distributed Build Server → Install**.
 </details>
 
+### Standalone Server (Docker)
+
+If you don't use Home Assistant, you can run the server as a standalone Docker container:
+
+```bash
+docker run -d \
+  --name distributed-esphome-server \
+  --network host \
+  -v /path/to/esphome/configs:/config/esphome \
+  -v esphome-dist-data:/data \
+  -e SERVER_TOKEN=your-secret-token \
+  ghcr.io/weirded/esphome-dist-server:latest
+```
+
+The web UI is available at `http://your-host:8765`.
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `ESPHOME_CONFIG_DIR` | `/config/esphome` | Path to ESPHome YAML configs inside the container |
+| `SERVER_TOKEN` | auto-generated | Shared secret for build client auth |
+| `PORT` | `8765` | HTTP port |
+| `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
+| `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
+| `CLIENT_OFFLINE_THRESHOLD` | `30` | Seconds before a client is considered offline |
+| `DEVICE_POLL_INTERVAL` | `60` | How often to poll device firmware versions (seconds) |
+
+> **Note:** `--network host` is required for mDNS device discovery. The `/data` volume persists the job queue and auto-generated auth token across restarts.
+
 ### 2. Configure the Add-on
 
 | Option | Default | Description |
@@ -222,8 +250,11 @@ SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python ha-addon/client/c
 ### Build Docker Images
 
 ```bash
-# Server image
+# Server image (HA add-on — requires BUILD_FROM arg)
 docker build -t esphome-dist-server ha-addon/
+
+# Server image (standalone)
+docker build -f ha-addon/Dockerfile.standalone -t esphome-dist-server ha-addon/
 
 # Client image (auto-detects host arch; pass explicit platform if needed)
 docker build -t esphome-dist-client ha-addon/client/
@@ -251,7 +282,8 @@ Updates `ha-addon/VERSION`, `ha-addon/config.yaml`, and `ha-addon/client/client.
 distributed-esphome/
 ├── ha-addon/
 │   ├── config.yaml           # HA add-on manifest (version: must match VERSION)
-│   ├── Dockerfile
+│   ├── Dockerfile            # HA add-on image (uses BUILD_FROM base)
+│   ├── Dockerfile.standalone # Standalone server image (python:3.11-slim base)
 │   ├── VERSION               # Single source of truth for the version number
 │   ├── DOCS.md               # Documentation tab in HA UI
 │   ├── CHANGELOG.md          # Changelog tab in HA UI
@@ -277,7 +309,9 @@ distributed-esphome/
 │   ├── install-hooks.sh      # Configure git to use .githooks/
 │   └── ...
 ├── .githooks/pre-push        # Runs tests + mypy before every push
-├── .github/workflows/ci.yml  # GitHub Actions: tests + mypy on every push/PR
+├── .github/workflows/ci.yml            # GitHub Actions: tests + mypy on every push/PR
+├── .github/workflows/publish-server.yml # Publish standalone server image to GHCR
+├── .github/workflows/publish-client.yml # Publish client image to GHCR
 ├── package-client.sh         # Build + package client Docker image for distribution
 └── REQUIREMENTS.md           # Full design specification
 ```

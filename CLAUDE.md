@@ -102,7 +102,7 @@ Client config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 
 Always bump the version number when pushing to GitHub, unless otherwise specified. Use `bash scripts/bump-version.sh X.Y.Z` to update all three places atomically.
 
-**Every version bump MUST include a `ha-addon/CHANGELOG.md` entry.** Add a new `## X.Y.Z` section at the top with a brief description of what changed. The changelog is in reverse-chronological order. Do not skip this step.
+**Every version bump MUST include a `ha-addon/CHANGELOG.md` entry.** Add a new `## X.Y.Z` section at the top with a brief description of what changed. If a section for the current version already exists, update it. The changelog is in reverse-chronological order. A pre-push hook enforces that a changelog entry exists for the current version.
 
 ## Design Specification
 

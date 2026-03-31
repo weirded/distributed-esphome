@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.40
+- Standalone Docker distribution for the server (no Home Assistant required)
+- GitHub Actions workflow to publish server image to GHCR on push
+- Pre-push hook validates changelog entry exists for current version
+
 ## 0.0.39
 - HTTP polling fallback for live logs when WebSocket through HA Ingress fails
 - Console debug logging for WebSocket connection troubleshooting
