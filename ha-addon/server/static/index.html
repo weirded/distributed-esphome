@@ -6,6 +6,7 @@
   <title>ESPHome Distributed Build</title>
   <link rel="icon" href="https://esphome.io/favicon.ico">
   <base href="./">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -599,8 +600,8 @@
       </div>
       <button class="modal-close" onclick="closeLogModal()">✕</button>
     </div>
-    <div class="modal-body">
-      <div class="log-content" id="modal-log"></div>
+    <div class="modal-body" style="padding:0">
+      <div id="xterm-container" style="width:100%;height:100%"></div>
     </div>
   </div>
 </div>
@@ -1035,10 +1036,15 @@ function renderQueue() {
 }
 
 // ============================================================
-// Log modal
+// Log modal (xterm.js terminal emulator)
 // ============================================================
 let logWs = null;
-let logAutoScroll = true;
+let logTerm = null;
+let logPollTimer = null;
+let logPollOffset = 0;
+let logPollJobId = null;
+let logModalJobId = null;
+let logHeaderTimer = null;
 
 function buildWsUrl(path) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1048,79 +1054,91 @@ function buildWsUrl(path) {
   return `${proto}//${location.host}${a.pathname}`;
 }
 
-// Strip ANSI escape codes and process \r (carriage return) for progress bars
-function processLogText(existing, newText) {
-  // Strip ANSI escape sequences: ESC[ ... letter, ESC[ ? ... letter, ESC( ...
-  const stripped = newText.replace(/\x1b\[[\?]?[0-9;]*[a-zA-Z]/g, '')
-                          .replace(/\x1b\([A-Z]/g, '')
-                          .replace(/\x1b[>=]/g, '');
+function initXterm() {
+  const container = document.getElementById('xterm-container');
+  container.innerHTML = '';
+  const term = new Terminal({
+    cursorBlink: false,
+    disableStdin: true,
+    scrollback: 50000,
+    fontSize: 12,
+    fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
+    theme: {
+      background: '#0d1117',
+      foreground: '#a3e635',
+      cursor: '#0d1117',
+    },
+    convertEol: true,
+  });
+  term.open(container);
+  // Fit to container — retry a few times as the modal animates open
+  const fit = () => {
+    try {
+      const core = term._core;
+      const cellW = core._renderService.dimensions?.css?.cell?.width;
+      const cellH = core._renderService.dimensions?.css?.cell?.height;
+      if (cellW > 0 && cellH > 0) {
+        const dims = container.getBoundingClientRect();
+        const cols = Math.max(40, Math.floor(dims.width / cellW));
+        const rows = Math.max(10, Math.floor(dims.height / cellH));
+        term.resize(cols, rows);
+      }
+    } catch(e) {}
+  };
+  requestAnimationFrame(fit);
+  setTimeout(fit, 100);
+  setTimeout(fit, 300);
+  return term;
+}
 
-  // Split on \r to handle carriage returns (progress bar overwrites)
-  const parts = stripped.split('\r');
-  let result = existing;
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) {
-      // \r: go back to start of current line
-      const lastNl = result.lastIndexOf('\n');
-      result = lastNl >= 0 ? result.substring(0, lastNl + 1) : '';
-    }
-    result += parts[i];
-  }
-  return result;
+function updateLogModalHeader() {
+  if (!logModalJobId) return;
+  const job = queueData.find(j => j.id === logModalJobId);
+  if (!job) return;
+  const clientName = job.assigned_hostname
+    || (job.assigned_client_id ? (clientsData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)) : null);
+  const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
+  const meta = [clientName, dur ? dur + ' duration' : null].filter(Boolean).join(' · ');
+  document.getElementById('modal-state').innerHTML = `<span class="badge badge-${job.state}">${job.state}</span>`;
+  document.getElementById('modal-meta').textContent = meta;
 }
 
 function openLogModal(jobId) {
   const job = queueData.find(j => j.id === jobId);
   if (!job) return;
-  const clientName = job.assigned_client_id
-    ? clientsData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)
-    : null;
-  const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
-  const meta = [clientName, dur ? dur + ' duration' : null].filter(Boolean).join(' · ');
+  logModalJobId = jobId;
+
   document.getElementById('modal-title').textContent = job.target;
-  document.getElementById('modal-state').innerHTML = `<span class="badge badge-${job.state}">${job.state}</span>`;
-  document.getElementById('modal-meta').textContent = meta;
+  updateLogModalHeader();
 
-  const logEl = document.getElementById('modal-log');
-  const isLive = ['assigned', 'running'].includes(job.state);
+  // Start periodic header updates
+  if (logHeaderTimer) clearInterval(logHeaderTimer);
+  logHeaderTimer = setInterval(updateLogModalHeader, 1000);
 
+  document.getElementById('log-modal').classList.add('open');
+
+  // Initialize xterm.js
+  if (logTerm) { logTerm.dispose(); logTerm = null; }
+  logTerm = initXterm();
+
+  const isLive = ['assigned', 'running', 'pending'].includes(job.state);
 
   if (isLive) {
-    logEl.textContent = 'Connecting to live log...\n';
     if (logWs) { try { logWs.close(); } catch(e) {} logWs = null; }
     if (logPollTimer) { clearTimeout(logPollTimer); logPollTimer = null; }
     try {
       const wsUrl = buildWsUrl(`ui/api/jobs/${jobId}/log/ws`);
-      console.log('Opening log WebSocket:', wsUrl);
       logWs = new WebSocket(wsUrl);
-      logWs.onopen = () => {
-        logEl.textContent = '';
-        console.log('Log WebSocket connected');
-      };
-      logWs.onmessage = (e) => {
-        logEl.textContent = processLogText(logEl.textContent, e.data);
-        logEl.scrollTop = logEl.scrollHeight;
-      };
-      logWs.onerror = (err) => {
-        console.warn('Log WebSocket error, falling back to polling', err);
-        logEl.textContent = '';
-        startLogPolling(jobId);
-      };
+      logWs.onmessage = (e) => { if (logTerm) logTerm.write(e.data); };
+      logWs.onerror = () => { startLogPolling(jobId); };
       logWs.onclose = () => { logWs = null; };
     } catch(e) {
-      console.warn('WebSocket failed, falling back to polling', e);
       startLogPolling(jobId);
     }
   } else {
-    logEl.textContent = processLogText('', job.log || '(no log)');
+    if (logTerm && job.log) logTerm.write(job.log);
   }
-
-  document.getElementById('log-modal').classList.add('open');
 }
-
-let logPollTimer = null;
-let logPollOffset = 0;
-let logPollJobId = null;
 
 function startLogPolling(jobId) {
   logPollOffset = 0;
@@ -1135,19 +1153,15 @@ async function pollLog() {
     const r = await apiFetch(`./ui/api/jobs/${logPollJobId}/log?offset=${logPollOffset}`);
     if (r.ok) {
       const data = await r.json();
-      if (data.log) {
-        const logEl = document.getElementById('modal-log');
-        logEl.textContent = processLogText(logEl.textContent, data.log);
-        logEl.scrollTop = logEl.scrollHeight;
-      }
+      if (data.log && logTerm) logTerm.write(data.log);
       logPollOffset = data.offset;
       if (!data.finished) {
-        logPollTimer = setTimeout(pollLog, 1000);
+        logPollTimer = setTimeout(pollLog, 500);
         return;
       }
     }
   } catch(e) {}
-  logPollTimer = setTimeout(pollLog, 1000);
+  logPollTimer = setTimeout(pollLog, 500);
 }
 
 function closeLogModal(e) {
@@ -1155,7 +1169,10 @@ function closeLogModal(e) {
     document.getElementById('log-modal').classList.remove('open');
     if (logWs) { try { logWs.close(); } catch(ex) {} logWs = null; }
     if (logPollTimer) { clearTimeout(logPollTimer); logPollTimer = null; }
+    if (logHeaderTimer) { clearInterval(logHeaderTimer); logHeaderTimer = null; }
+    if (logTerm) { logTerm.dispose(); logTerm = null; }
     logPollJobId = null;
+    logModalJobId = null;
   }
 }
 
@@ -1547,5 +1564,6 @@ document.addEventListener('keydown', e => {
   }
 });
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
 </body>
 </html>

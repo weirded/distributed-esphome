@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.44"
+CLIENT_VERSION = "0.0.45"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -851,7 +851,7 @@ def _run_subprocess(
     try:
         # Read raw bytes in chunks to preserve \r for progress bars
         while True:
-            chunk = proc.stdout.read(4096)
+            chunk = proc.stdout.read(4096)  # type: ignore[union-attr]
             if not chunk:
                 break
             text = chunk.decode("utf-8", errors="replace")

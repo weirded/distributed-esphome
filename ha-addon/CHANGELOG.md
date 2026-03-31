@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.45
+- Replace custom log renderer with xterm.js terminal emulator
+  - Full ANSI escape code support (colors, cursor movement, \r progress bars)
+  - Progress bars update in place as intended
+  - Auto-scroll follows output
+- Log modal header updates live (state badge, duration) while open
+- Polling fallback interval reduced to 500ms
+
 ## 0.0.44
 - Fix progress bars: read raw bytes from subprocess (preserves \r carriage returns)
 - Always scroll to bottom on log updates (simple auto-tail)
