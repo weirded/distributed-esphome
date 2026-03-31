@@ -2,7 +2,7 @@
 
 ## Overview
 
-A system to distribute ESPHome firmware compilation across multiple machines. A Home Assistant add-on acts as the server/coordinator; lightweight Docker containers running on other hosts act as build workers (clients).
+A system to distribute ESPHome firmware compilation across multiple machines. A Home Assistant add-on acts as the server/coordinator; lightweight Docker containers running on other hosts act as build workers.
 
 ---
 
@@ -14,7 +14,7 @@ A system to distribute ESPHome firmware compilation across multiple machines. A 
 │  ┌───────────────────────────────────┐  │
 │  │   HA Add-on: esphome-dist-server  │  │
 │  │  - Web UI (job management)        │  │
-│  │  - REST API (for clients)         │  │
+│  │  - REST API (for workers)         │  │
 │  │  - Job queue                      │  │
 │  │  - ESPHome YAML scanner           │  │
 │  │  - Device status poller           │  │
@@ -24,7 +24,7 @@ A system to distribute ESPHome firmware compilation across multiple machines. A 
          │ HTTP poll    │ HTTP poll
          ▼              ▼
 ┌──────────────┐  ┌──────────────┐
-│ Build Client │  │ Build Client │  ...
+│ Build Worker │  │ Build Worker │  ...
 │ (Docker)     │  │ (Docker)     │
 │ - esphome    │  │ - esphome    │
 │ - OTA push   │  │ - OTA push   │
@@ -54,7 +54,7 @@ A system to distribute ESPHome firmware compilation across multiple machines. A 
 
 **Two access paths — same aiohttp process, same port:**
 - **Ingress (Web UI)**: HA proxies browser requests through `172.30.32.2` → add-on. HA handles authentication; add-on trusts all requests arriving from `172.30.32.2`. Appears as a sidebar panel in HA.
-- **Direct port (Client API)**: External Docker build clients connect to `http://ha-host:8765/api/v1/*` using `Authorization: Bearer <token>`. This port is also exposed in `config.yaml` under `ports:` for direct access.
+- **Direct port (Worker API)**: External Docker build workers connect to `http://ha-host:8765/api/v1/*` using `Authorization: Bearer <token>`. This port is also exposed in `config.yaml` under `ports:` for direct access.
 
 ### 1.2 ESPHome Config Discovery
 
@@ -82,46 +82,48 @@ Job {
 }
 ```
 
-Note: `yaml_bundle` is not stored in the job model — it is generated on demand when a client claims a job (avoids holding large blobs in memory for all pending jobs).
+Note: `yaml_bundle` is not stored in the job model — it is generated on demand when a worker claims a job (avoids holding large blobs in memory for all pending jobs).
 
 ### 1.4 Job Queue Behavior
 
 - Queue is in-memory; persisted to `/data/queue.json` on every state change
-- On server restart: jobs in state `pending` reload as `pending`; jobs in state `assigned`/`running` reset to `pending` (client may have missed the result); `success`/`failed` jobs are retained for display but not re-queued
+- On server restart: jobs in state `pending` reload as `pending`; jobs in state `assigned`/`running` reset to `pending` (worker may have missed the result); `success`/`failed` jobs are retained for display but not re-queued
 - A compile run is triggered manually from the UI (all configs, selected configs, or one config)
 - Each YAML file = one Job; jobs for a single run share a `run_id`
 - Job lifecycle:
-  - `pending` → client polls and claims → `assigned`
-  - Client begins work → `running` (client sends status update)
-  - Client returns result → `success` or `failed`
+  - `pending` → worker polls and claims → `assigned`
+  - Worker begins work → `running` (worker sends status update)
+  - Worker returns result → `success` or `failed`
   - Timeout elapses without result → `timed_out` → re-enqueued as `pending` (up to 3 retries, then permanent `failed`)
 - Only one job per target may be `pending`/`assigned`/`running` at a time (deduplicate on enqueue)
 - Jobs from completed runs are visible in the queue panel with their final state until a new run starts or they are cleared
 
 ### 1.5 YAML Bundle
 
-When a client claims a job, the server generates and returns a bundle containing:
+When a worker claims a job, the server generates and returns a bundle containing:
 - The entire `/config/esphome/` directory tree, **including** `secrets.yaml`
 - `secrets.yaml` is included because ESPHome requires it at compile time for any config using `!secret` references — without it, compilation fails. The bundle is transmitted over an authenticated connection on a trusted internal network.
 - If a subdirectory (e.g. `packages/`) contains its own `secrets.yaml`, that is included too
 - Bundle format: `tar.gz`, base64-encoded in the JSON job response
 
-### 1.6 REST API (consumed by clients)
+### 1.6 REST API (consumed by workers)
 
 All endpoints are under `/api/v1/`. Authentication: shared secret token in `Authorization: Bearer <token>` header. Token configured in add-on options.
 
+Both the new `/api/v1/workers/*` routes and the legacy `/api/v1/clients/*` routes are supported for backwards compatibility.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/clients/register` | Client announces itself; returns `client_id` |
-| `POST` | `/api/v1/clients/heartbeat` | Client signals it is alive; updates `last_seen` |
+| `POST` | `/api/v1/workers/register` | Worker announces itself; returns `client_id` |
+| `POST` | `/api/v1/workers/heartbeat` | Worker signals it is alive; updates `last_seen` |
 | `GET`  | `/api/v1/jobs/next` | Claim next pending job (atomic); returns job+bundle or 204 |
 | `POST` | `/api/v1/jobs/{id}/result` | Submit success/failure + log |
 | `POST` | `/api/v1/jobs/{id}/status` | Report in-progress status text |
 | `GET`  | `/api/v1/status` | Server health + ESPHome version info |
-| `GET`  | `/api/v1/client/version` | Returns current server-side client version |
-| `GET`  | `/api/v1/client/code` | Returns all `.py` files from the bundled client for self-update |
+| `GET`  | `/api/v1/client/version` | Returns current server-side worker version |
+| `GET`  | `/api/v1/client/code` | Returns all `.py` files from the bundled worker for self-update |
 
-**`POST /api/v1/clients/register`**
+**`POST /api/v1/workers/register`**
 ```json
 // Request
 {
@@ -141,9 +143,9 @@ All endpoints are under `/api/v1/`. Authentication: shared secret token in `Auth
 // Response
 { "client_id": "uuid" }
 ```
-`system_info` is optional — old clients that omit it are still accepted.
+`system_info` is optional — old workers that omit it are still accepted.
 
-**`POST /api/v1/clients/heartbeat`**
+**`POST /api/v1/workers/heartbeat`**
 ```json
 // Request
 { "client_id": "uuid", "system_info": { ... } }
@@ -151,7 +153,7 @@ All endpoints are under `/api/v1/`. Authentication: shared secret token in `Auth
 { "ok": true, "server_client_version": "0.0.1" }
 ```
 `system_info` in heartbeats keeps the `uptime` field current. The server updates the stored `system_info` if a non-null value is provided.
-The client compares `server_client_version` against its own `CLIENT_VERSION` constant. If they differ, the client triggers a self-update (see §2.6).
+The worker compares `server_client_version` against its own `CLIENT_VERSION` constant. If they differ, the worker triggers a self-update (see §2.6).
 
 **`GET /api/v1/jobs/next`**
 ```json
@@ -163,9 +165,9 @@ The client compares `server_client_version` against its own `CLIENT_VERSION` con
   "bundle_b64": "<base64 tar.gz>",
   "timeout_seconds": 600
 }
-// Response (204 — no jobs available, or client is disabled)
+// Response (204 — no jobs available, or worker is disabled)
 ```
-Disabled clients receive 204 without a job being dequeued.
+Disabled workers receive 204 without a job being dequeued.
 
 **`POST /api/v1/jobs/{id}/result`**
 ```json
@@ -189,12 +191,12 @@ Disabled clients receive 204 without a job being dequeued.
 }
 ```
 
-### 1.7 Client Registry
+### 1.7 Worker Registry
 
-- Clients register on connect; server tracks `{ client_id, hostname, platform, last_seen, current_job_id, disabled, client_version, max_parallel_jobs, system_info }`
-- A client is considered **online** if `last_seen` is within 30 seconds (configurable)
-- Heartbeat interval: 10 seconds (client side)
-- Clients can be **disabled** via `POST /ui/api/clients/{client_id}/disable`. Disabled clients still heartbeat and appear in the UI but will not be assigned new jobs (`GET /api/v1/jobs/next` returns 204 immediately)
+- Workers register on connect; server tracks `{ client_id, hostname, platform, last_seen, current_job_id, disabled, client_version, max_parallel_jobs, system_info }`
+- A worker is considered **online** if `last_seen` is within 30 seconds (configurable)
+- Heartbeat interval: 10 seconds (worker side)
+- Workers can be **disabled** via `POST /ui/api/workers/{client_id}/disable`. Disabled workers still heartbeat and appear in the UI but will not be assigned new jobs (`GET /api/v1/jobs/next` returns 204 immediately)
 
 ### 1.8 Device Status Polling
 
@@ -236,9 +238,9 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - The server reads the `X-Ingress-Path` header (injected by HA, e.g. `/api/hassio_ingress/esphome_dist_server/`) and injects it as `<base href="...">` when serving `index.html`
 - All JS `fetch()` calls use **relative paths** (e.g. `fetch('./ui/api/queue')`), resolving correctly through both Ingress and the direct port
 - Static assets (`<script>`, `<link>`) also use relative paths — no absolute `/` paths anywhere in the frontend
-- No auth logic in the frontend — HA handles authentication upstream for Ingress traffic; Bearer tokens are only used by build clients hitting `/api/v1/*`
+- No auth logic in the frontend — HA handles authentication upstream for Ingress traffic; Bearer tokens are only used by build workers hitting `/api/v1/*`
 
-**Layout:** Three-tab interface — Devices | Queue | Clients — replacing the two-column desktop-only grid. All tables scroll horizontally on mobile/small screens. The active tab persists across page refreshes via `sessionStorage`.
+**Layout:** Three-tab interface — Devices | Queue | Workers — replacing the two-column desktop-only grid. All tables scroll horizontally on mobile/small screens. The active tab persists across page refreshes via `sessionStorage`.
 
 **Header**
 - Shows the add-on version badge (e.g. `v0.0.11`) and an ESPHome version badge (e.g. `ESPHome 2024.6.0`)
@@ -255,8 +257,8 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - Auto-refreshes every 15 seconds; server re-scans config directory every 30s for new/changed files
 
 **Queue tab**
-- Table columns: `[ ] | Target | State | Client | Duration | Actions`
-- Client column shows `hostname/worker_id` (e.g. `builder/2`) for multi-slot clients
+- Table columns: `[ ] | Target | State | Worker | Duration | Actions`
+- Worker column shows `hostname/worker_id` (e.g. `builder/2`) for multi-slot workers
 - State badge: pending=grey, running=blue, success=green, failed=red, timed_out=orange
 - OTA outcome reflected in badge: `Success` (green) / `OTA Failed` (orange) / `OTA Pending` (blue, awaiting OTA result)
 - `Cancel Selected`, `Retry Selected`, `Retry All Failed` (includes OTA failures), `Clear Succeeded`, `Clear Finished` buttons
@@ -264,30 +266,32 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 - Triggering a new compile for a target removes any previous terminal jobs for that target
 - Auto-refreshes every 3 seconds; tab badge shows active/failed count
 
-**Clients tab**
+**Workers tab**
 - Table: `Hostname/Slot | Platform | Status | Current Job | Version | Actions`
-- One row per worker slot; slot suffix `/N` when client has > 1 slot
+- One row per worker slot; slot suffix `/N` when worker has > 1 slot
 - Hostname cell shows a subtitle line with `cpu_arch · cpu_cores cores · total_memory` from `system_info` (when available)
 - Platform cell shows OS version and CPU model as subtitle lines from `system_info` (when available)
-- Status cell shows client process uptime (e.g. `up 2h 15m`) from `system_info.uptime` (when available)
-- **"+ Connect Client"** button in panel header opens a modal with the pre-filled `docker run` command and a Copy button
-- Disabled clients shown at reduced opacity; Enable/Disable button per client; Remove button for offline clients
+- Status cell shows worker process uptime (e.g. `up 2h 15m`) from `system_info.uptime` (when available)
+- **"+ Connect Worker"** button in panel header opens a modal with the pre-filled `docker run` command and a Copy button
+- Disabled workers shown at reduced opacity; Enable/Disable button per worker; Remove button for offline workers
 - Auto-refreshes every 5 seconds
 
 **Internal UI API endpoints:**
 
+Both the new `/ui/api/workers/*` routes and the legacy `/ui/api/clients/*` routes are supported for backwards compatibility.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`  | `/ui/api/info` | Server info: ESPHome version, client version, online clients |
+| `GET`  | `/ui/api/info` | Server info: ESPHome version, worker version, online workers |
 | `GET`  | `/ui/api/targets` | List discovered YAML targets with device status |
 | `GET`  | `/ui/api/queue` | Current job queue state |
-| `GET`  | `/ui/api/clients` | Connected build clients |
+| `GET`  | `/ui/api/workers` | Connected build workers |
 | `GET`  | `/ui/api/devices` | Known ESPHome devices with version info |
 | `POST` | `/ui/api/compile` | Start a compile run `{ "targets": ["all" \| "outdated" \| ["file.yaml", ...]] }` |
 | `POST` | `/ui/api/cancel` | Cancel jobs `{ "job_ids": ["uuid", ...] }` |
 | `POST` | `/ui/api/retry` | Re-enqueue failed/timed_out/OTA-failed jobs `{ "job_ids": ["uuid", ...] \| "all_failed" }` |
-| `POST` | `/ui/api/clients/{client_id}/disable` | Enable/disable a client `{ "disabled": true \| false }` |
-| `DELETE` | `/ui/api/clients/{client_id}` | Remove an offline client from the registry (409 if online) |
+| `POST` | `/ui/api/workers/{client_id}/disable` | Enable/disable a worker `{ "disabled": true \| false }` |
+| `DELETE` | `/ui/api/workers/{client_id}` | Remove an offline worker from the registry (409 if online) |
 | `GET`  | `/ui/api/targets/{filename}/content` | Read YAML config file content |
 | `POST` | `/ui/api/targets/{filename}/content` | Write YAML config file content |
 
@@ -295,25 +299,25 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 
 **Target name display (three-tier):**
 - Row shows three tiers: (1) `friendly_name` from config (bold, primary); (2) the YAML filename stem without `.yaml` extension (always shown, secondary); (3) `comment` from `esphome.comment` field (smaller, muted, only if set)
-- All `.yaml` extensions are stripped from target/device names throughout the UI (devices panel, queue panel, clients panel)
+- All `.yaml` extensions are stripped from target/device names throughout the UI (devices panel, queue panel, workers panel)
 
-**Client hostname:**
+**Worker hostname:**
 - Docker run command shown in UI includes `--hostname $(hostname)` so the container adopts the Docker host's hostname
-- Client reads `HOSTNAME` env var set by `--hostname`; falls back to `socket.gethostname()`
+- Worker reads `HOSTNAME` env var set by `--hostname`; falls back to `socket.gethostname()`
 
 **ESPHome version pre-seeding:**
-- Docker run command includes `-e ESPHOME_SEED_VERSION=<current-server-version>` so new clients pre-download the required ESPHome version on startup, before any job arrives
-- Client reads `ESPHOME_SEED_VERSION` env var and calls `version_manager.ensure_version()` at startup
+- Docker run command includes `-e ESPHOME_SEED_VERSION=<current-server-version>` so new workers pre-download the required ESPHome version on startup, before any job arrives
+- Worker reads `ESPHOME_SEED_VERSION` env var and calls `version_manager.ensure_version()` at startup
 
 **Job status reporting:**
-- Clients report granular progress via `POST /api/v1/jobs/{id}/status { "status_text": "..." }`
+- Workers report granular progress via `POST /api/v1/jobs/{id}/status { "status_text": "..." }`
 - Status messages: `"Downloading ESPHome <version>"`, `"Compiling"`, `"OTA Upgrade"`
 - `status_text` field in Job model; shown below state badge in queue panel; transient (not persisted)
 
 **OTA result fix:**
 - `submit_result` allows updating `ota_result` on an already-SUCCESS job (OTA result is reported in a separate call after compile success is already submitted)
 
-**Clients panel — current job:**
+**Workers panel — current job:**
 - Shows the YAML target filename (without `.yaml`) for the current job, not the job UUID
 
 **Upgrade button coloring:**
@@ -336,7 +340,7 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 
 ---
 
-## Component 2: Build Client (Docker)
+## Component 2: Build Worker (Docker)
 
 ### 2.1 Runtime Environment
 
@@ -347,17 +351,17 @@ Single-page HTML served by the aiohttp server. Uses vanilla JS + CSS (no build s
 ### 2.2 ESPHome Version Management
 
 - Versions stored in `/esphome-versions/<version>/` (one virtualenv per version)
-- On job claim, client checks if required version is installed; if not, installs it via `pip install esphome==<version>` into a fresh venv
+- On job claim, worker checks if required version is installed; if not, installs it via `pip install esphome==<version>` into a fresh venv
 - Maintains at most **3 versions** on disk (configurable via `MAX_ESPHOME_VERSIONS`); evicts least-recently-used when limit exceeded
 - Version install happens before the job timeout timer starts
 
-### 2.3 Client Lifecycle
+### 2.3 Worker Lifecycle
 
 ```
 startup:
   register with server → get client_id
-  check for client update (synchronous heartbeat)
-  start heartbeat thread (POST /api/v1/clients/heartbeat every 10s)
+  check for worker update (synchronous heartbeat)
+  start heartbeat thread (POST /api/v1/workers/heartbeat every 10s)
   start N worker threads (N = MAX_PARALLEL_JOBS, default 2)
 
 per worker thread (loop):
@@ -406,19 +410,19 @@ other compiles the next job (CPU-bound), keeping utilization high.
 
 ### 2.5 Connectivity and Reconnection
 
-The client tracks server reachability and auth state with lightweight flags:
+The worker tracks server reachability and auth state with lightweight flags:
 - On connection error: log once (not on every poll); suppress repeated warnings until connectivity is restored
 - On auth failure (401): log once; suppress repeated warnings
 - On heartbeat 404 (server doesn't recognise `client_id`): set a re-registration flag; the main loop re-registers and restarts the heartbeat thread before the next poll
 
-### 2.6 Client Auto-Update
+### 2.6 Worker Auto-Update
 
-Clients self-update when the server is running a newer client version:
+Workers self-update when the server is running a newer worker version:
 - Every heartbeat response includes `server_client_version`
-- Client compares against its own `CLIENT_VERSION = "x.y.z"` constant
-- If versions differ, the client sets an internal `_update_available` event
+- Worker compares against its own `CLIENT_VERSION = "x.y.z"` constant
+- If versions differ, the worker sets an internal `_update_available` event
 - The main loop checks this event between jobs (never interrupts a running job)
-- On update: download all `.py` files from `GET /api/v1/client/code`, write them to the client directory, restart the process in-place via `os.execv(sys.executable, sys.argv)` — preserves env vars and Docker restart policy
+- On update: download all `.py` files from `GET /api/v1/client/code`, write them to the worker directory, restart the process in-place via `os.execv(sys.executable, sys.argv)` — preserves env vars and Docker restart policy
 - Circuit breaker: if the update fails or the process re-starts into the same version 3 times, no more updates are attempted until the container is restarted
 
 ### 2.7 Configuration (Environment Variables)
@@ -432,7 +436,7 @@ Clients self-update when the server is running a newer client version:
 | `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
 | `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
 | `MAX_ESPHOME_VERSIONS` | `3` | Max cached ESPHome versions on disk |
-| `MAX_PARALLEL_JOBS` | `2` | Number of concurrent build workers per client |
+| `MAX_PARALLEL_JOBS` | `2` | Number of concurrent build slots per worker |
 | `HOSTNAME` | `socket.gethostname()` | Worker name shown in UI |
 | `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup |
 | `ESPHOME_BIN` | — | Use this binary directly instead of version-manager venvs |
@@ -459,7 +463,7 @@ ingress_port: 8765
 panel_icon: mdi:progress-wrench
 panel_title: "ESPH Distributed"
 
-# Direct port: build clients (Docker) connect here with Bearer token auth
+# Direct port: build workers (Docker) connect here with Bearer token auth
 ports:
   8765/tcp: 8765
 
@@ -469,13 +473,13 @@ options:
   token: ""
   job_timeout: 600
   ota_timeout: 120
-  client_offline_threshold: 30
+  worker_offline_threshold: 30
   device_poll_interval: 60
 schema:
   token: password
   job_timeout: int
   ota_timeout: int
-  client_offline_threshold: int
+  worker_offline_threshold: int
   device_poll_interval: int
 ```
 
@@ -492,11 +496,11 @@ ha-addon/
 ├── rootfs/              # s6-overlay service scripts
 └── server/
     ├── main.py           # aiohttp app setup, middleware, startup/shutdown
-    ├── api.py            # /api/v1/* handlers (client-facing, Bearer token auth)
+    ├── api.py            # /api/v1/* handlers (worker-facing, Bearer token auth)
     ├── ui_api.py         # /ui/api/* handlers (browser-facing, Ingress auth)
     ├── queue.py          # job queue, state machine, persistence
     ├── scanner.py        # YAML discovery, bundle generation
-    ├── registry.py       # build client registry
+    ├── registry.py       # build worker registry
     ├── device_poller.py  # mDNS listener + aioesphomeapi queries
     ├── static/
     │   └── index.html    # single-file Web UI (all paths relative, base href injected)
@@ -505,7 +509,7 @@ ha-addon/
 
 ---
 
-## Component 4: Client Dockerfile
+## Component 4: Worker Dockerfile
 
 ```
 client/
@@ -522,9 +526,9 @@ client/
 
 ---
 
-## Component 4b: Client Distribution Package
+## Component 4b: Worker Distribution Package
 
-`package-client.sh` builds a self-contained archive for deploying the client to any Docker host without requiring this repo or a Docker registry.
+`package-client.sh` builds a self-contained archive for deploying the worker to any Docker host without requiring this repo or a Docker registry.
 
 **Usage:**
 ```bash
@@ -599,20 +603,20 @@ distributed-esphome/
 ### Server
 - [ ] Discovers all `.yaml` files in `/config/esphome/` on startup (excluding `secrets.yaml`)
 - [ ] Correctly reports installed ESPHome version via `importlib.metadata`
-- [ ] `/api/v1/jobs/next` is atomic: two simultaneous clients cannot claim the same job
-- [ ] Bundle sent to clients includes `secrets.yaml` and the full directory tree
+- [ ] `/api/v1/jobs/next` is atomic: two simultaneous workers cannot claim the same job
+- [ ] Bundle sent to workers includes `secrets.yaml` and the full directory tree
 - [ ] Timed-out jobs are re-enqueued and retried up to 3 times before marking permanently `failed`
 - [ ] Cancelled jobs transition to `failed` immediately regardless of current state
 - [ ] On restart, `assigned`/`running` jobs reset to `pending`; `pending` jobs restore as-is
 - [ ] Web UI loads without JavaScript errors in a modern browser
-- [ ] Web UI clients panel refreshes without page reload
+- [ ] Web UI workers panel refreshes without page reload
 - [ ] Web UI queue panel updates in real time while a run is active
 - [ ] Web UI devices panel shows online/offline status and running firmware version
 - [ ] "Needs Update" flag correctly identifies devices running an older ESPHome version
 - [ ] "Upgrade Outdated" button enqueues only targets where running version ≠ server version
 - [ ] "Force Upgrade" per device enqueues a single-target compile regardless of version match
 
-### Client
+### Worker
 - [ ] Registers with server on startup and appears in UI as online
 - [ ] Disappears from online list within 30s of shutdown
 - [ ] Installs the correct ESPHome version before compiling; timer starts after install
@@ -631,8 +635,8 @@ distributed-esphome/
 
 ### Integration
 - [ ] A compile triggered from UI results in firmware flashed on device via OTA
-- [ ] Two clients sharing a queue each receive unique jobs (no double-assignment)
-- [ ] Killing a client mid-job causes timeout and re-assignment to another client
+- [ ] Two workers sharing a queue each receive unique jobs (no double-assignment)
+- [ ] Killing a worker mid-job causes timeout and re-assignment to another worker
 - [ ] Selecting and cancelling jobs from the UI removes them from the queue
 - [ ] After OTA completes, device version in UI updates on next poll cycle
 
@@ -655,27 +659,27 @@ distributed-esphome/
 | YAML scanner discovery | `test_scanner.py` | Finds correct files, excludes `secrets.yaml` from target list |
 | Bundle creation | `test_scanner.py` | tar.gz includes `secrets.yaml` and full tree |
 | Version eviction | `test_client.py` | LRU eviction triggers at limit+1 |
-| Client timeout behavior | `test_client.py` | Job marked failed after timeout, temp dir cleaned |
-| Client registry — disable | `test_registry.py` | `set_disabled` blocks job assignment; `is_online` unaffected |
-| Client registry — versioning | `test_registry.py` | `client_version` stored on register |
+| Worker timeout behavior | `test_client.py` | Job marked failed after timeout, temp dir cleaned |
+| Worker registry — disable | `test_registry.py` | `set_disabled` blocks job assignment; `is_online` unaffected |
+| Worker registry — versioning | `test_registry.py` | `client_version` stored on register |
 | Device name → YAML mapping | `test_device_poller.py` | Correct match and unmanaged handling |
 
 ### Integration Tests (docker compose, mock ESPHome)
 
 Use a `docker-compose.test.yml` that:
 - Starts the server with a fixture config directory mounted at `/config/esphome/`
-- Starts 2 client containers
+- Starts 2 worker containers
 - Replaces the `esphome` binary with a mock shell script (sleeps briefly, exits 0)
 
 | Test | What it validates |
 |------|-------------------|
-| Client registration | Both clients appear in `/ui/api/clients` as online |
-| Job dispatch — 2 clients, 2 jobs | Each client gets exactly one unique job |
-| Job dispatch — 1 client, 3 jobs | Client processes jobs sequentially, all complete |
-| Timeout + reassignment | Client paused (SIGSTOP) mid-job; job times out; second client picks it up |
+| Worker registration | Both workers appear in `/ui/api/workers` as online |
+| Job dispatch — 2 workers, 2 jobs | Each worker gets exactly one unique job |
+| Job dispatch — 1 worker, 3 jobs | Worker processes jobs sequentially, all complete |
+| Timeout + reassignment | Worker paused (SIGSTOP) mid-job; job times out; second worker picks it up |
 | Cancel via UI API | `POST /ui/api/cancel` marks job as failed; no result accepted after cancel |
 | Queue persistence | Server restarted mid-queue; running jobs reset to pending; pending jobs restored |
-| Version install | Job specifies new ESPHome version; client installs before compiling |
+| Version install | Job specifies new ESPHome version; worker installs before compiling |
 | Version eviction | After 4 distinct versions, oldest venv is removed |
 
 ### Manual Acceptance Tests (real HA + real ESPHome device)

@@ -14,7 +14,7 @@ ESPHome compilation is CPU-intensive and slow on the Raspberry Pi or similar low
 │  ┌───────────────────────────────────┐  │
 │  │   HA Add-on: esphome-dist-server  │  │
 │  │  - Web UI (job management)        │  │
-│  │  - REST API (for clients)         │  │
+│  │  - REST API (for workers)         │  │
 │  │  - Job queue                      │  │
 │  │  - ESPHome YAML scanner           │  │
 │  │  - Device status poller           │  │
@@ -24,7 +24,7 @@ ESPHome compilation is CPU-intensive and slow on the Raspberry Pi or similar low
          │ HTTP poll    │ HTTP poll
          ▼              ▼
 ┌──────────────┐  ┌──────────────┐
-│ Build Client │  │ Build Client │  ...
+│ Build Worker │  │ Build Worker │  ...
 │ (Docker)     │  │ (Docker)     │
 │ - esphome    │  │ - esphome    │
 │ - OTA push   │  │ - OTA push   │
@@ -35,7 +35,7 @@ ESPHome compilation is CPU-intensive and slow on the Raspberry Pi or similar low
   [ESPHome devices on LAN]
 ```
 
-Add one or more remote build clients (Docker containers) to compile firmware and push it via OTA.
+Add one or more remote build workers (Docker containers) to compile firmware and push it via OTA.
 
 ## Installation
 
@@ -81,11 +81,11 @@ The web UI is available at `http://your-host:8765`.
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `ESPHOME_CONFIG_DIR` | `/config/esphome` | Path to ESPHome YAML configs inside the container |
-| `SERVER_TOKEN` | auto-generated | Shared secret for build client auth |
+| `SERVER_TOKEN` | auto-generated | Shared secret for build worker auth |
 | `PORT` | `8765` | HTTP port |
 | `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
 | `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
-| `CLIENT_OFFLINE_THRESHOLD` | `30` | Seconds before a client is considered offline |
+| `WORKER_OFFLINE_THRESHOLD` | `30` | Seconds before a worker is considered offline |
 | `DEVICE_POLL_INTERVAL` | `60` | How often to poll device firmware versions (seconds) |
 
 > **Note:** `--network host` is required for mDNS device discovery. The `/data` volume persists the job queue and auto-generated auth token across restarts.
@@ -94,13 +94,13 @@ The web UI is available at `http://your-host:8765`.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `token` | `""` | Shared secret for build client auth (leave empty to auto-generate) |
+| `token` | `""` | Shared secret for build worker auth (leave empty to auto-generate) |
 | `job_timeout` | `600` | Compile timeout in seconds |
 | `ota_timeout` | `120` | OTA upload timeout in seconds |
-| `client_offline_threshold` | `30` | Seconds before a client is considered offline |
+| `worker_offline_threshold` | `30` | Seconds before a worker is considered offline |
 | `device_poll_interval` | `60` | How often to poll device firmware versions (seconds) |
 
-### 3. Add Remote Build Clients (optional)
+### 3. Add Remote Build Workers (optional)
 
 The Web UI shows a **Docker run** command pre-filled with your server URL and token. You can copy it directly or use the packaging script to build a self-contained archive:
 
@@ -127,7 +127,7 @@ The archive contains three scripts:
 | `stop.sh` | Stops and removes the container. |
 | `uninstall.sh` | Stops container, removes image, optionally removes the `esphome-versions` volume. |
 
-> **Note:** Build clients must have network access to your ESP devices (same LAN or VLAN) to push firmware via OTA.
+> **Note:** Build workers must have network access to your ESP devices (same LAN or VLAN) to push firmware via OTA.
 
 ## Web UI
 
@@ -137,15 +137,15 @@ Three tabs — works on mobile and small laptop screens:
 
 - **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, running version); "config changed" indicator when the YAML has been modified since the last compile; compile individual, all, or only outdated ones; inline YAML editor
 - **Queue** — live job status with logs; retry failed jobs (including OTA failures), cancel in-progress jobs; badge shows active/failed count
-- **Clients** — connected build workers with online status, current job per slot, version, and system info (CPU arch, core count, memory, OS version, CPU model, uptime); enable/disable clients; remove offline clients; **+ Connect Client** button opens a pre-filled `docker run` command
+- **Workers** — connected build workers with online status, current job per slot, version, and system info (CPU arch, core count, memory, OS version, CPU model, uptime); enable/disable workers; remove offline workers; **+ Connect Worker** button opens a pre-filled `docker run` command
 
 ## How It Works
 
 1. The server scans `/config/esphome/*.yaml` on HA for compilable targets (re-scans every 30s for changes)
 2. When you trigger a compile, one job per YAML is added to the queue
-3. Build clients poll `GET /api/v1/jobs/next` every 5 seconds
-4. On claiming a job, the client receives the full ESPHome config directory as a `tar.gz` bundle (including `secrets.yaml`)
-5. The client ensures the required ESPHome version is installed (LRU cache, max 3 versions), compiles, then pushes firmware via OTA directly to the device
+3. Build workers poll `GET /api/v1/jobs/next` every 5 seconds
+4. On claiming a job, the worker receives the full ESPHome config directory as a `tar.gz` bundle (including `secrets.yaml`)
+5. The worker ensures the required ESPHome version is installed (LRU cache, max 3 versions), compiles, then pushes firmware via OTA directly to the device
 6. Results (compile log, OTA outcome) are posted back to the server
 7. The server's device poller picks up the new firmware version via mDNS + native API within the next poll cycle
 
@@ -157,25 +157,25 @@ PENDING → ASSIGNED → RUNNING → SUCCESS
                     ↖ TIMED_OUT (up to 3 retries, then permanent FAILED)
 ```
 
-- **PENDING** → **ASSIGNED**: a client worker claims the job
-- **ASSIGNED** → **RUNNING**: client starts the compile subprocess
+- **PENDING** → **ASSIGNED**: a build worker claims the job
+- **ASSIGNED** → **RUNNING**: worker starts the compile subprocess
 - **RUNNING** → **SUCCESS**: compile + OTA completed
 - **RUNNING/ASSIGNED** → **TIMED_OUT**: deadline exceeded; re-enqueued as PENDING (up to 3 retries, then permanent FAILED)
 - Any state → **FAILED**: compile error, OTA failure after retries, or user cancel
 
 On server restart, any `ASSIGNED`/`RUNNING` jobs reset to `PENDING`. Triggering a new compile for a target automatically removes any old terminal (success/failed) jobs for that target.
 
-### Client Auto-Update
+### Worker Auto-Update
 
-Clients check the server's `server_client_version` on every heartbeat. If the server is running a newer client version, the client downloads the updated code and restarts itself in-place (`os.execv`). Updates only apply when the client is idle (not mid-job). After 3 failed update attempts the circuit breaker trips and no more updates are tried until the container restarts.
+Workers check the server's `server_client_version` on every heartbeat. If the server is running a newer worker version, the worker downloads the updated code and restarts itself in-place (`os.execv`). Updates only apply when the worker is idle (not mid-job). After 3 failed update attempts the circuit breaker trips and no more updates are tried until the container restarts.
 
 ### ESPHome Version Management
 
-Each client maintains a cache of ESPHome virtualenvs under `/esphome-versions/<version>/`. At most 3 versions are kept on disk (LRU eviction). Mount `/esphome-versions` as a Docker volume to persist installs across container restarts.
+Each worker maintains a cache of ESPHome virtualenvs under `/esphome-versions/<version>/`. At most 3 versions are kept on disk (LRU eviction). Mount `/esphome-versions` as a Docker volume to persist installs across container restarts.
 
 `ESPHOME_SEED_VERSION` pre-installs a specific version at startup so the first job doesn't wait for a fresh install.
 
-## Client Configuration
+## Worker Configuration
 
 All configuration is via environment variables:
 
@@ -188,7 +188,7 @@ All configuration is via environment variables:
 | `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
 | `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
 | `MAX_ESPHOME_VERSIONS` | `3` | Max cached ESPHome versions on disk |
-| `MAX_PARALLEL_JOBS` | `2` | Concurrent build workers per client |
+| `MAX_PARALLEL_JOBS` | `2` | Concurrent build jobs per worker |
 | `HOSTNAME` | system hostname | Worker name shown in UI |
 | `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup |
 | `ESPHOME_BIN` | — | Use this binary instead of the version-manager venvs |
@@ -201,19 +201,19 @@ This add-on is designed for **trusted home networks** and makes deliberate trade
 
 ### Shared auth token
 
-A single Bearer token authenticates all build clients. The Web UI displays this token in the "Connect Client" modal so you can copy-paste it. Anyone with access to the HA UI (or the direct port) can see the token.
+A single Bearer token authenticates all build workers. The Web UI displays this token in the "Connect Worker" modal so you can copy-paste it. Anyone with access to the HA UI (or the direct port) can see the token.
 
 ### Plaintext HTTP
 
-All communication between the server and build clients is unencrypted HTTP. The auth token, ESPHome configs (including `secrets.yaml`), and firmware bundles are transmitted in the clear. On a typical home LAN this is acceptable; on a shared or untrusted network, consider tunnelling traffic through a VPN or reverse proxy with TLS.
+All communication between the server and build workers is unencrypted HTTP. The auth token, ESPHome configs (including `secrets.yaml`), and firmware bundles are transmitted in the clear. On a typical home LAN this is acceptable; on a shared or untrusted network, consider tunnelling traffic through a VPN or reverse proxy with TLS.
 
 ### secrets.yaml included in every build bundle
 
-When a client claims a job, it receives a tarball of the entire ESPHome config directory — including `secrets.yaml`. This is necessary because ESPHome compilation requires access to substituted secrets. Every build client you connect will have access to your Wi-Fi passwords, API keys, and OTA passwords.
+When a worker claims a job, it receives a tarball of the entire ESPHome config directory — including `secrets.yaml`. This is necessary because ESPHome compilation requires access to substituted secrets. Every build worker you connect will have access to your Wi-Fi passwords, API keys, and OTA passwords.
 
-### Client auto-update
+### Worker auto-update
 
-Build clients automatically download updated Python code from the server and restart themselves. This makes upgrades seamless but means a compromised server (or a man-in-the-middle on the HTTP connection) could push arbitrary code to all connected clients. The auto-update only runs when clients are idle.
+Build workers automatically download updated Python code from the server and restart themselves. This makes upgrades seamless but means a compromised server (or a man-in-the-middle on the HTTP connection) could push arbitrary code to all connected workers. The auto-update only runs when workers are idle.
 
 ### UI API relies on HA Ingress for authentication
 
@@ -221,7 +221,7 @@ The `/ui/api/*` endpoints have no built-in authentication — they trust that Ho
 
 ### Network access requirements
 
-Build clients need direct network access to your ESP devices (for OTA on ports 3232/8266). The server needs to be reachable by all clients. Ensure your firewall rules accommodate this.
+Build workers need direct network access to your ESP devices (for OTA on ports 3232/8266). The server needs to be reachable by all workers. Ensure your firewall rules accommodate this.
 
 For a detailed analysis, see [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 
@@ -241,7 +241,7 @@ ESPHOME_CONFIG_DIR=/path/to/esphome/configs PORT=8765 SERVER_TOKEN=dev-token \
   python ha-addon/server/main.py
 ```
 
-### Run a Client Locally
+### Run a Worker Locally
 
 ```bash
 SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python ha-addon/client/client.py
@@ -289,19 +289,19 @@ distributed-esphome/
 │   ├── CHANGELOG.md          # Changelog tab in HA UI
 │   ├── translations/en.yaml  # Config option labels for HA UI
 │   ├── build.yaml            # Multi-arch base image mapping
-│   ├── client/               # Build client code (also used for standalone Docker image)
+│   ├── client/               # Build worker code (also used for standalone Docker image)
 │   │   ├── Dockerfile
 │   │   ├── client.py         # Main loop, heartbeat, job runner, auto-update
 │   │   ├── version_manager.py # ESPHome version install/eviction (LRU)
 │   │   └── dist-scripts/     # start.sh / stop.sh / uninstall.sh + PowerShell variants
 │   └── server/
 │       ├── main.py           # aiohttp app, middleware, background tasks
-│       ├── api.py            # /api/v1/* — client REST API (Bearer token auth)
+│       ├── api.py            # /api/v1/* — worker REST API (Bearer token auth)
 │       ├── ui_api.py         # /ui/api/* — browser JSON API (Ingress auth)
 │       ├── app_config.py     # Centralised configuration (AppConfig dataclass)
 │       ├── job_queue.py      # Job state machine, persistence
 │       ├── scanner.py        # YAML discovery, bundle generation
-│       ├── registry.py       # Build client registry
+│       ├── registry.py       # Build worker registry
 │       ├── device_poller.py  # mDNS listener + aioesphomeapi polling
 │       └── static/index.html # Single-file Web UI (tab layout)
 ├── scripts/
@@ -311,7 +311,7 @@ distributed-esphome/
 ├── .githooks/pre-push        # Runs tests + mypy before every push
 ├── .github/workflows/ci.yml            # GitHub Actions: tests + mypy on every push/PR
 ├── .github/workflows/publish-server.yml # Publish standalone server image to GHCR
-├── .github/workflows/publish-client.yml # Publish client image to GHCR
+├── .github/workflows/publish-client.yml # Publish worker image to GHCR
 ├── package-client.sh         # Build + package client Docker image for distribution
 └── REQUIREMENTS.md           # Full design specification
 ```
@@ -326,15 +326,15 @@ The version lives in three places that must stay in sync — use `bash scripts/b
 
 ## Platform Support
 
-Both the HA add-on (server) and standalone build clients support **x86-64 and ARM** architectures:
+Both the HA add-on (server) and standalone build workers support **x86-64 and ARM** architectures:
 
 - The HA add-on runs on `aarch64`, `amd64`, `armhf`, `armv7`, and `i386` (declared in `ha-addon/config.yaml`).
-- The build client Docker image is a standard Python image that builds natively for any architecture. On **Apple Silicon** (`linux/arm64`) builds run natively — no Rosetta emulation — which can be significantly faster than cross-compiling on an x86 machine.
+- The build worker Docker image is a standard Python image that builds natively for any architecture. On **Apple Silicon** (`linux/arm64`) builds run natively — no Rosetta emulation — which can be significantly faster than cross-compiling on an x86 machine.
 
 ```bash
-# Build a native ARM64 client image (e.g. on Apple Silicon or Raspberry Pi 4)
+# Build a native ARM64 worker image (e.g. on Apple Silicon or Raspberry Pi 4)
 docker buildx build --platform linux/arm64 --load -t esphome-dist-client ha-addon/client/
 
-# Package and distribute an ARM64 client archive
+# Package and distribute an ARM64 worker archive
 ./package-client.sh http://your-ha-host:8765 your-token linux/arm64
 ```

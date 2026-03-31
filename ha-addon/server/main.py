@@ -13,7 +13,7 @@ import ui_api as ui_api_module
 from app_config import AppConfig
 from device_poller import DevicePoller
 from job_queue import JobQueue
-from registry import ClientRegistry
+from registry import WorkerRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -140,7 +140,7 @@ def create_app() -> web.Application:
     queue = JobQueue()
     queue.load()
 
-    registry = ClientRegistry()
+    registry = WorkerRegistry()
 
     device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
 

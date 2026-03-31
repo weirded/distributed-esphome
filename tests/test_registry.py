@@ -1,4 +1,4 @@
-"""Unit tests for ClientRegistry — register, heartbeat, disable, versioning."""
+"""Unit tests for WorkerRegistry — register, heartbeat, disable, versioning."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
 
-from registry import ClientRegistry  # noqa: E402
+from registry import WorkerRegistry  # noqa: E402
 
 
 @pytest.fixture
 def reg():
-    return ClientRegistry()
+    return WorkerRegistry()
 
 
 # ---------------------------------------------------------------------------
@@ -30,22 +30,22 @@ def test_register_returns_client_id(reg):
 
 def test_register_stores_client(reg):
     client_id = reg.register("host1", "linux/amd64")
-    client = reg.get(client_id)
-    assert client is not None
-    assert client.hostname == "host1"
-    assert client.platform == "linux/amd64"
+    worker = reg.get(client_id)
+    assert worker is not None
+    assert worker.hostname == "host1"
+    assert worker.platform == "linux/amd64"
 
 
 def test_register_stores_client_version(reg):
     client_id = reg.register("host1", "linux/amd64", client_version="0.0.1")
-    client = reg.get(client_id)
-    assert client.client_version == "0.0.1"
+    worker = reg.get(client_id)
+    assert worker.client_version == "0.0.1"
 
 
 def test_register_client_version_none_by_default(reg):
     client_id = reg.register("host1", "linux/amd64")
-    client = reg.get(client_id)
-    assert client.client_version is None
+    worker = reg.get(client_id)
+    assert worker.client_version is None
 
 
 def test_register_multiple_clients_unique_ids(reg):
@@ -57,8 +57,8 @@ def test_register_multiple_clients_unique_ids(reg):
 def test_get_all_returns_all_clients(reg):
     reg.register("host1", "linux/amd64")
     reg.register("host2", "linux/arm64")
-    clients = reg.get_all()
-    assert len(clients) == 2
+    workers = reg.get_all()
+    assert len(workers) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +85,10 @@ def test_is_online_unknown_client(reg):
 
 def test_is_online_respects_threshold(reg):
     client_id = reg.register("host1", "linux/amd64")
-    client = reg.get(client_id)
+    worker = reg.get(client_id)
     # Backdate last_seen far into the past
     from datetime import datetime, timedelta, timezone
-    client.last_seen = datetime.now(timezone.utc) - timedelta(seconds=60)
+    worker.last_seen = datetime.now(timezone.utc) - timedelta(seconds=60)
     assert reg.is_online(client_id, threshold_secs=30) is False
     assert reg.is_online(client_id, threshold_secs=120) is True
 
@@ -100,16 +100,16 @@ def test_is_online_respects_threshold(reg):
 def test_set_disabled_disables_client(reg):
     client_id = reg.register("host1", "linux/amd64")
     assert reg.set_disabled(client_id, True) is True
-    client = reg.get(client_id)
-    assert client.disabled is True
+    worker = reg.get(client_id)
+    assert worker.disabled is True
 
 
 def test_set_disabled_enables_client(reg):
     client_id = reg.register("host1", "linux/amd64")
     reg.set_disabled(client_id, True)
     reg.set_disabled(client_id, False)
-    client = reg.get(client_id)
-    assert client.disabled is False
+    worker = reg.get(client_id)
+    assert worker.disabled is False
 
 
 def test_set_disabled_returns_false_for_unknown(reg):
@@ -118,12 +118,12 @@ def test_set_disabled_returns_false_for_unknown(reg):
 
 def test_client_not_disabled_by_default(reg):
     client_id = reg.register("host1", "linux/amd64")
-    client = reg.get(client_id)
-    assert client.disabled is False
+    worker = reg.get(client_id)
+    assert worker.disabled is False
 
 
 def test_disable_does_not_affect_online_status(reg):
-    """Disabling a client should not change is_online — it only affects job assignment."""
+    """Disabling a worker should not change is_online — it only affects job assignment."""
     client_id = reg.register("host1", "linux/amd64")
     reg.set_disabled(client_id, True)
     assert reg.is_online(client_id, threshold_secs=30) is True

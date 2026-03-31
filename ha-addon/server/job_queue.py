@@ -49,7 +49,7 @@ class Job:
     state: JobState
     run_id: str
     assigned_client_id: Optional[str] = None
-    assigned_hostname: Optional[str] = None  # persisted so UI works after client deregisters
+    assigned_hostname: Optional[str] = None  # persisted so UI works after worker deregisters
     assigned_at: Optional[datetime] = None
     worker_id: Optional[int] = None
     timeout_seconds: int = 600
@@ -154,7 +154,7 @@ class JobQueue:
 
         for d in data:
             job = Job.from_dict(d)
-            # Restart recovery: working jobs reset to pending (client is gone)
+            # Restart recovery: working jobs reset to pending (worker is gone)
             if job.state == JobState.WORKING:
                 job.state = JobState.PENDING
                 job.assigned_client_id = None
@@ -228,7 +228,7 @@ class JobQueue:
             for job in self._jobs.values():
                 if job.state != JobState.PENDING:
                     continue
-                # Pinned jobs can only be claimed by the designated client
+                # Pinned jobs can only be claimed by the designated worker
                 if job.pinned_client_id and job.pinned_client_id != client_id:
                     continue
                 job.state = JobState.WORKING
@@ -277,7 +277,7 @@ class JobQueue:
                 )
                 return False
             job.state = JobState.SUCCESS if status == "success" else JobState.FAILED
-            # Use the streamed log if the client didn't send a final log
+            # Use the streamed log if the worker didn't send a final log
             job.log = log if log is not None else (job._streaming_log or None)
             job._streaming_log = ""  # free memory
             job.status_text = None
@@ -372,7 +372,7 @@ class JobQueue:
                 if not (is_failed or is_ota_failed):
                     continue
                 target = job.target
-                # Pin OTA retries to the client that compiled the firmware
+                # Pin OTA retries to the worker that compiled the firmware
                 pin_to = job.assigned_client_id if is_ota_failed else None
                 # Remove all terminal jobs for this target (including the one being retried)
                 stale = [

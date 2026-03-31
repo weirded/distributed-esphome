@@ -157,23 +157,34 @@ async def ws_browser_log(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-@routes.get("/ui/api/clients")
-async def get_clients(request: web.Request) -> web.Response:
-    """Return list of registered build clients with online status."""
+async def _get_workers_response(request: web.Request) -> web.Response:
+    """Return list of registered build workers with online status."""
     registry = request.app["registry"]
     queue = request.app["queue"]
     cfg = _cfg(request)
 
     result = []
-    for client in registry.get_all():
-        d = client.to_dict()
-        d["online"] = registry.is_online(client.client_id, cfg.client_offline_threshold)
+    for worker in registry.get_all():
+        d = worker.to_dict()
+        d["online"] = registry.is_online(worker.client_id, cfg.worker_offline_threshold)
         if d.get("current_job_id"):
             job = queue.get(d["current_job_id"])
             if job:
                 d["current_job_target"] = job.target
         result.append(d)
     return web.json_response(result)
+
+
+@routes.get("/ui/api/workers")
+async def get_workers(request: web.Request) -> web.Response:
+    """Return list of registered build workers with online status."""
+    return await _get_workers_response(request)
+
+
+@routes.get("/ui/api/clients")
+async def get_clients(request: web.Request) -> web.Response:
+    """Legacy alias for /ui/api/workers — kept for backwards compatibility."""
+    return await _get_workers_response(request)
 
 
 @routes.get("/ui/api/devices")
@@ -340,24 +351,20 @@ async def retry_jobs(request: web.Request) -> web.Response:
     return web.json_response({"retried": len(new_jobs)})
 
 
-@routes.delete("/ui/api/clients/{client_id}")
-async def remove_client(request: web.Request) -> web.Response:
-    """Remove an offline client from the registry."""
-    client_id = request.match_info["client_id"]
+async def _remove_worker_handler(request: web.Request, client_id: str) -> web.Response:
+    """Remove an offline worker from the registry."""
     registry = request.app["registry"]
     cfg = _cfg(request)
 
-    if registry.is_online(client_id, cfg.client_offline_threshold):
-        return web.json_response({"error": "Cannot remove an online client"}, status=409)
+    if registry.is_online(client_id, cfg.worker_offline_threshold):
+        return web.json_response({"error": "Cannot remove an online worker"}, status=409)
     if not registry.remove(client_id):
         return web.json_response({"error": "Unknown client_id"}, status=404)
     return web.json_response({"ok": True})
 
 
-@routes.post("/ui/api/clients/{client_id}/disable")
-async def set_client_disabled(request: web.Request) -> web.Response:
-    """Enable or disable a client."""
-    client_id = request.match_info["client_id"]
+async def _set_disabled_handler(request: web.Request, client_id: str) -> web.Response:
+    """Enable or disable a worker."""
     try:
         body = await request.json()
     except Exception:
@@ -368,6 +375,34 @@ async def set_client_disabled(request: web.Request) -> web.Response:
     if not registry.set_disabled(client_id, disabled):
         return web.json_response({"error": "Unknown client_id"}, status=404)
     return web.json_response({"ok": True, "disabled": disabled})
+
+
+# New worker routes
+
+@routes.delete("/ui/api/workers/{client_id}")
+async def remove_worker(request: web.Request) -> web.Response:
+    """Remove an offline worker from the registry."""
+    return await _remove_worker_handler(request, request.match_info["client_id"])
+
+
+@routes.post("/ui/api/workers/{client_id}/disable")
+async def set_worker_disabled(request: web.Request) -> web.Response:
+    """Enable or disable a worker."""
+    return await _set_disabled_handler(request, request.match_info["client_id"])
+
+
+# Legacy client routes — kept for backwards compatibility
+
+@routes.delete("/ui/api/clients/{client_id}")
+async def remove_client(request: web.Request) -> web.Response:
+    """Legacy alias for DELETE /ui/api/workers/{client_id}."""
+    return await _remove_worker_handler(request, request.match_info["client_id"])
+
+
+@routes.post("/ui/api/clients/{client_id}/disable")
+async def set_client_disabled(request: web.Request) -> web.Response:
+    """Legacy alias for POST /ui/api/workers/{client_id}/disable."""
+    return await _set_disabled_handler(request, request.match_info["client_id"])
 
 
 @routes.post("/ui/api/queue/clear")

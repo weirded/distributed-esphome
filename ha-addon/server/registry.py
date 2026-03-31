@@ -1,4 +1,4 @@
-"""Build client registry — in-memory, no persistence needed."""
+"""Build worker registry — in-memory, no persistence needed."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _utcnow() -> datetime:
 
 
 @dataclass
-class Client:
+class Worker:
     client_id: str
     hostname: str
     platform: str
@@ -41,11 +41,11 @@ class Client:
         }
 
 
-class ClientRegistry:
-    """Tracks connected build clients."""
+class WorkerRegistry:
+    """Tracks connected build workers."""
 
     def __init__(self) -> None:
-        self._clients: dict[str, Client] = {}
+        self._workers: dict[str, Worker] = {}
 
     def register(
         self,
@@ -56,29 +56,29 @@ class ClientRegistry:
         max_parallel_jobs: int = 1,
         system_info: Optional[dict] = None,
     ) -> str:
-        """Register a client. Returns client_id.
+        """Register a worker. Returns client_id.
 
-        If *existing_client_id* is provided and that client is still in the
+        If *existing_client_id* is provided and that worker is still in the
         registry, update it in place (preserves the entry across auto-updates).
         Otherwise create a new entry.
         """
-        if existing_client_id and existing_client_id in self._clients:
-            client = self._clients[existing_client_id]
-            client.hostname = hostname
-            client.platform = platform
-            client.client_version = client_version
-            client.max_parallel_jobs = max_parallel_jobs
-            client.last_seen = _utcnow()
+        if existing_client_id and existing_client_id in self._workers:
+            worker = self._workers[existing_client_id]
+            worker.hostname = hostname
+            worker.platform = platform
+            worker.client_version = client_version
+            worker.max_parallel_jobs = max_parallel_jobs
+            worker.last_seen = _utcnow()
             if system_info is not None:
-                client.system_info = system_info
+                worker.system_info = system_info
             logger.info(
-                "Re-registered client %s (%s / %s / v%s / %d slots)",
+                "Re-registered worker %s (%s / %s / v%s / %d slots)",
                 existing_client_id, hostname, platform, client_version or "?", max_parallel_jobs,
             )
             return existing_client_id
 
         client_id = str(uuid.uuid4())
-        client = Client(
+        worker = Worker(
             client_id=client_id,
             hostname=hostname,
             platform=platform,
@@ -86,57 +86,61 @@ class ClientRegistry:
             max_parallel_jobs=max_parallel_jobs,
             system_info=system_info,
         )
-        self._clients[client_id] = client
+        self._workers[client_id] = worker
         logger.info(
-            "Registered client %s (%s / %s / v%s / %d slots)",
+            "Registered worker %s (%s / %s / v%s / %d slots)",
             client_id, hostname, platform, client_version or "?", max_parallel_jobs,
         )
         return client_id
 
     def heartbeat(self, client_id: str, system_info: Optional[dict] = None) -> bool:
         """Update last_seen for *client_id*. Returns False if unknown."""
-        client = self._clients.get(client_id)
-        if client is None:
+        worker = self._workers.get(client_id)
+        if worker is None:
             return False
-        client.last_seen = _utcnow()
+        worker.last_seen = _utcnow()
         if system_info is not None:
-            client.system_info = system_info
+            worker.system_info = system_info
         return True
 
     def set_job(self, client_id: str, job_id: Optional[str]) -> bool:
-        """Set the current job for a client. Returns False if unknown."""
-        client = self._clients.get(client_id)
-        if client is None:
+        """Set the current job for a worker. Returns False if unknown."""
+        worker = self._workers.get(client_id)
+        if worker is None:
             return False
-        client.current_job_id = job_id
+        worker.current_job_id = job_id
         return True
 
-    def get_all(self) -> list[Client]:
-        return list(self._clients.values())
+    def get_all(self) -> list[Worker]:
+        return list(self._workers.values())
 
     def is_online(self, client_id: str, threshold_secs: int = 30) -> bool:
-        client = self._clients.get(client_id)
-        if client is None:
+        worker = self._workers.get(client_id)
+        if worker is None:
             return False
-        elapsed = (_utcnow() - client.last_seen).total_seconds()
+        elapsed = (_utcnow() - worker.last_seen).total_seconds()
         return elapsed <= threshold_secs
 
     def set_disabled(self, client_id: str, disabled: bool) -> bool:
-        """Enable or disable a client. Returns False if unknown."""
-        client = self._clients.get(client_id)
-        if client is None:
+        """Enable or disable a worker. Returns False if unknown."""
+        worker = self._workers.get(client_id)
+        if worker is None:
             return False
-        client.disabled = disabled
-        logger.info("Client %s (%s) %s", client_id, client.hostname, "disabled" if disabled else "enabled")
+        worker.disabled = disabled
+        logger.info("Worker %s (%s) %s", client_id, worker.hostname, "disabled" if disabled else "enabled")
         return True
 
     def remove(self, client_id: str) -> bool:
-        """Remove a client from the registry. Returns False if unknown."""
-        client = self._clients.pop(client_id, None)
-        if client is None:
+        """Remove a worker from the registry. Returns False if unknown."""
+        worker = self._workers.pop(client_id, None)
+        if worker is None:
             return False
-        logger.info("Removed client %s (%s)", client_id, client.hostname)
+        logger.info("Removed worker %s (%s)", client_id, worker.hostname)
         return True
 
-    def get(self, client_id: str) -> Optional[Client]:
-        return self._clients.get(client_id)
+    def get(self, client_id: str) -> Optional[Worker]:
+        return self._workers.get(client_id)
+
+
+# Backwards-compatible alias — keeps any code that imports ClientRegistry working
+ClientRegistry = WorkerRegistry

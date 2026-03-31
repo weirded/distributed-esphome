@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.51
+- Rename "Client" to "Worker" throughout: UI labels, API routes, config keys, docs
+  - New API routes `/api/v1/workers/*` and `/ui/api/workers/*` (old `/clients/*` routes kept for backward compatibility)
+  - Config option `client_offline_threshold` → `worker_offline_threshold` (old key still accepted)
+  - Workers tab, "+ Connect Worker" button, "Build Workers" heading in the web UI
+  - `ClientRegistry` → `WorkerRegistry` in server code (alias retained for compat)
+- Remove "Linux" from platform column (always said Linux in Docker; now shows OS + CPU only)
+- Exclude macOS resource fork files (`._*`, `.DS_Store`) from all tarballs
+
 ## 0.0.50
 - Fix e2e tests: FakeServer __init__ was broken by misplaced property
 - All 111 tests passing (95 unit + 16 e2e)

@@ -45,7 +45,7 @@ class AppConfig:
     token: str = ""
     job_timeout: int = 600
     ota_timeout: int = 120
-    client_offline_threshold: int = 30
+    worker_offline_threshold: int = 30
     device_poll_interval: int = 60
     config_dir: str = "/config/esphome"
     port: int = 8765
@@ -72,11 +72,22 @@ class AppConfig:
         raw_token = file_opts.get("token", "") or os.environ.get("SERVER_TOKEN", "")
         token = _get_or_create_token(raw_token)
 
+        # Support both old key (client_offline_threshold) and new key (worker_offline_threshold)
+        # in options.json for backwards compatibility during upgrades.
+        threshold_default = cls.worker_offline_threshold
+        if "worker_offline_threshold" in file_opts:
+            threshold = int(file_opts["worker_offline_threshold"])
+        elif "client_offline_threshold" in file_opts:
+            threshold = int(file_opts["client_offline_threshold"])
+        else:
+            env = os.environ.get("WORKER_OFFLINE_THRESHOLD") or os.environ.get("CLIENT_OFFLINE_THRESHOLD")
+            threshold = int(env) if env is not None else threshold_default
+
         return cls(
             token=token,
             job_timeout=_val("job_timeout", "JOB_TIMEOUT", cls.job_timeout),
             ota_timeout=_val("ota_timeout", "OTA_TIMEOUT", cls.ota_timeout),
-            client_offline_threshold=_val("client_offline_threshold", "CLIENT_OFFLINE_THRESHOLD", cls.client_offline_threshold),
+            worker_offline_threshold=threshold,
             device_poll_interval=_val("device_poll_interval", "DEVICE_POLL_INTERVAL", cls.device_poll_interval),
             config_dir=os.environ.get("ESPHOME_CONFIG_DIR", cls.config_dir),
             port=int(os.environ.get("PORT", str(cls.port))),

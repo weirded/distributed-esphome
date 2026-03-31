@@ -341,7 +341,7 @@
     .modal-body { flex: 1; overflow: auto; }
     .modal-body .log-content { max-height: none; padding: 16px 18px; }
 
-    /* ---- Connect client modal ---- */
+    /* ---- Connect worker modal ---- */
     #connect-modal .modal { max-width: 720px; }
     .docker-cmd-wrap { position: relative; }
     #docker-cmd {
@@ -452,8 +452,8 @@
   <button class="tab" id="tab-btn-queue" onclick="switchTab('queue')">
     Queue <span class="tab-count" id="tab-count-queue"></span>
   </button>
-  <button class="tab" id="tab-btn-clients" onclick="switchTab('clients')">
-    Clients <span class="tab-count" id="tab-count-clients"></span>
+  <button class="tab" id="tab-btn-workers" onclick="switchTab('workers')">
+    Workers <span class="tab-count" id="tab-count-workers"></span>
   </button>
 </nav>
 
@@ -513,7 +513,7 @@
               <th><input type="checkbox" id="queue-select-all" onchange="toggleSelectAll(this)"></th>
               <th>Device</th>
               <th>State</th>
-              <th>Client</th>
+              <th>Worker</th>
               <th>Duration</th>
               <th>Actions</th>
             </tr>
@@ -526,14 +526,14 @@
     </div>
   </div>
 
-  <!-- ---- Clients tab ---- -->
-  <div class="tab-panel" id="tab-clients">
+  <!-- ---- Workers tab ---- -->
+  <div class="tab-panel" id="tab-workers">
     <div class="panel">
       <div class="panel-header">
-        <h2>Build Clients</h2>
+        <h2>Build Workers</h2>
         <div class="actions">
-          <span id="clients-count" style="font-size:12px;color:var(--text-muted)"></span>
-          <button class="btn-primary btn-sm" onclick="openConnectModal()">+ Connect Client</button>
+          <span id="workers-count" style="font-size:12px;color:var(--text-muted)"></span>
+          <button class="btn-primary btn-sm" onclick="openConnectModal()">+ Connect Worker</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -548,8 +548,8 @@
               <th></th>
             </tr>
           </thead>
-          <tbody id="clients-tbody">
-            <tr class="empty-row"><td colspan="6">No clients registered</td></tr>
+          <tbody id="workers-tbody">
+            <tr class="empty-row"><td colspan="6">No workers registered</td></tr>
           </tbody>
         </table>
       </div>
@@ -561,13 +561,13 @@
 <div id="toast-container"></div>
 
 <!-- ================================================================
-     Connect Client modal
+     Connect Worker modal
 ================================================================ -->
 <div id="connect-modal" class="modal-overlay" onclick="closeConnectModal(event)">
   <div class="modal" style="max-width:720px">
     <div class="modal-header">
       <div class="modal-header-left">
-        <h3>Connect a Build Client</h3>
+        <h3>Connect a Build Worker</h3>
       </div>
       <button class="modal-close" onclick="closeConnectModal()">✕</button>
     </div>
@@ -580,7 +580,7 @@
         <button class="btn-secondary btn-sm" id="docker-cmd-copy" onclick="copyDockerCmd()">Copy</button>
       </div>
       <p style="color:var(--text-muted);font-size:12px;margin-top:12px;">
-        The client must be able to reach your ESP devices on the LAN (port 3232 for OTA).
+        The worker must be able to reach your ESP devices on the LAN (port 3232 for OTA).
       </p>
     </div>
   </div>
@@ -627,7 +627,7 @@ let serverVersion = '?';
 let targetsData = [];
 let devicesData = [];
 let queueData = [];
-let clientsData = [];
+let workersData = [];
 let serverInfo = { token: '', port: 8765 };
 let expandedJobs = new Set();
 let activeRun = false;
@@ -733,10 +733,10 @@ function copyDockerCmd() {
 
 async function refreshStatus() {
   try {
-    const r = await apiFetch('./ui/api/clients');
+    const r = await apiFetch('./ui/api/workers');
     if (r.ok) {
-      clientsData = await r.json();
-      renderClients();
+      workersData = await r.json();
+      renderWorkers();
     }
   } catch(e) { /* ignore */ }
 }
@@ -771,9 +771,9 @@ async function refreshQueue() {
 }
 
 // ============================================================
-// Render: Clients
+// Render: Workers
 // ============================================================
-function clientSystemInfoHtml(c) {
+function workerSystemInfoHtml(c) {
   const si = c.system_info;
   if (!si) return '';
   const parts = [];
@@ -784,40 +784,39 @@ function clientSystemInfoHtml(c) {
   return `<br><span style="font-size:10px;color:var(--text-muted)">${parts.join(' · ')}</span>`;
 }
 
-function clientPlatformHtml(c) {
+function workerPlatformHtml(c) {
   const si = c.system_info;
-  const platformText = escapeHtml(c.platform);
-  if (!si) return `<span style="color:var(--text-muted)">${platformText}</span>`;
-  const lines = [`<span style="color:var(--text-muted)">${platformText}</span>`];
+  if (!si) return '';
+  const lines = [];
   if (si.os_version) {
-    lines.push(`<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.os_version)}</span>`);
+    lines.push(`<span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.os_version)}</span>`);
   }
   if (si.cpu_model) {
-    lines.push(`<br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.cpu_model)}</span>`);
+    lines.push(`<span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.cpu_model)}</span>`);
   }
-  return lines.join('');
+  return lines.join('<br>');
 }
 
-function clientUptimeHtml(c) {
+function workerUptimeHtml(c) {
   const si = c.system_info;
   if (!si || !si.uptime) return '';
-  return `<br><span style="font-size:10px;color:var(--text-muted)" title="Client process uptime">up ${escapeHtml(si.uptime)}</span>`;
+  return `<br><span style="font-size:10px;color:var(--text-muted)" title="Worker process uptime">up ${escapeHtml(si.uptime)}</span>`;
 }
 
-function renderClients() {
-  const tbody = document.getElementById('clients-tbody');
-  const online = clientsData.filter(c => c.online).length;
-  const countText = online + '/' + clientsData.length + ' online';
-  document.getElementById('clients-count').textContent = countText;
-  document.getElementById('tab-count-clients').textContent = online + '/' + clientsData.length;
+function renderWorkers() {
+  const tbody = document.getElementById('workers-tbody');
+  const online = workersData.filter(c => c.online).length;
+  const countText = online + '/' + workersData.length + ' online';
+  document.getElementById('workers-count').textContent = countText;
+  document.getElementById('tab-count-workers').textContent = online + '/' + workersData.length;
 
-  if (!clientsData.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No clients registered — click "+ Connect Client" to add one</td></tr>';
+  if (!workersData.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No workers registered — click "+ Connect Worker" to add one</td></tr>';
     return;
   }
 
   const rows = [];
-  for (const c of clientsData) {
+  for (const c of workersData) {
     const slots = c.max_parallel_jobs || 1;
     const statusHtml = c.disabled
       ? '<span class="dot dot-offline"></span><span style="color:var(--text-muted)">Disabled</span>'
@@ -848,14 +847,14 @@ function renderClients() {
 
       if (slot === 1) {
         rows.push(`<tr${rowAttr}>
-          <td>${slotName}${clientSystemInfoHtml(c)}</td>
-          <td>${clientPlatformHtml(c)}</td>
-          <td>${statusHtml}${clientUptimeHtml(c)}</td>
+          <td>${slotName}${workerSystemInfoHtml(c)}</td>
+          <td>${workerPlatformHtml(c)}</td>
+          <td>${statusHtml}${workerUptimeHtml(c)}</td>
           <td>${jobHtml}</td>
           <td>${clientVersionHtml(c.client_version)}</td>
           <td><div style="display:flex;gap:4px;">
-            <button class="${disableBtnCls}" onclick="toggleClientDisabled('${escapeHtml(c.client_id)}',${!c.disabled})">${disableBtnLabel}</button>
-            ${!c.online ? `<button class="btn-danger btn-sm" onclick="removeClient('${escapeHtml(c.client_id)}')">Remove</button>` : ''}
+            <button class="${disableBtnCls}" onclick="toggleWorkerDisabled('${escapeHtml(c.client_id)}',${!c.disabled})">${disableBtnLabel}</button>
+            ${!c.online ? `<button class="btn-danger btn-sm" onclick="removeWorker('${escapeHtml(c.client_id)}')">Remove</button>` : ''}
           </div></td>
         </tr>`);
       } else {
@@ -951,7 +950,7 @@ function renderQueue() {
 
   if (!queueData.length) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No jobs in queue</td></tr>';
-    renderClients();
+    renderWorkers();
     return;
   }
 
@@ -969,12 +968,12 @@ function renderQueue() {
   const rows = [];
   for (const job of sorted) {
     const assignedClient = job.assigned_client_id
-      ? clientsData.find(c => c.client_id === job.assigned_client_id)
+      ? workersData.find(c => c.client_id === job.assigned_client_id)
       : null;
     const pinnedClient = job.pinned_client_id
-      ? clientsData.find(c => c.client_id === job.pinned_client_id)
+      ? workersData.find(c => c.client_id === job.pinned_client_id)
       : null;
-    // Prefer the persisted hostname (survives client deregistration), fall back to live lookup
+    // Prefer the persisted hostname (survives worker deregistration), fall back to live lookup
     const baseHostname = job.assigned_hostname || assignedClient?.hostname || null;
     const showSlot = baseHostname && job.worker_id != null && (assignedClient?.max_parallel_jobs || 1) > 1;
     const clientName = baseHostname
@@ -1031,7 +1030,7 @@ function renderQueue() {
   }
 
   tbody.innerHTML = rows.join('');
-  renderClients();
+  renderWorkers();
 }
 
 // ============================================================
@@ -1095,7 +1094,7 @@ function updateLogModalHeader() {
   const job = queueData.find(j => j.id === logModalJobId);
   if (!job) return;
   const clientName = job.assigned_hostname
-    || (job.assigned_client_id ? (clientsData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)) : null);
+    || (job.assigned_client_id ? (workersData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)) : null);
   const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
   const meta = [clientName, dur ? dur + ' duration' : null].filter(Boolean).join(' · ');
   let modalBadgeLabel, modalBadgeCls;
@@ -1198,7 +1197,7 @@ function closeLogModal(e) {
 }
 
 // ============================================================
-// Connect client modal
+// Connect worker modal
 // ============================================================
 function openConnectModal() {
   renderDockerCmd();
@@ -1329,32 +1328,32 @@ async function retrySelected() {
   await retryJobs(ids);
 }
 
-async function toggleClientDisabled(clientId, disabled) {
+async function toggleWorkerDisabled(clientId, disabled) {
   try {
-    const r = await apiFetch(`./ui/api/clients/${clientId}/disable`, {
+    const r = await apiFetch(`./ui/api/workers/${clientId}/disable`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ disabled }),
     });
     if (r.ok) {
-      toast(disabled ? 'Client disabled' : 'Client enabled', 'success');
-      const cr = await apiFetch('./ui/api/clients');
-      if (cr.ok) { clientsData = await cr.json(); renderClients(); }
+      toast(disabled ? 'Worker disabled' : 'Worker enabled', 'success');
+      const cr = await apiFetch('./ui/api/workers');
+      if (cr.ok) { workersData = await cr.json(); renderWorkers(); }
     } else {
-      toast('Error toggling client', 'error');
+      toast('Error toggling worker', 'error');
     }
   } catch(e) {
     toast('Network error: ' + e.message, 'error');
   }
 }
 
-async function removeClient(clientId) {
+async function removeWorker(clientId) {
   try {
-    const r = await apiFetch(`./ui/api/clients/${clientId}`, { method: 'DELETE' });
+    const r = await apiFetch(`./ui/api/workers/${clientId}`, { method: 'DELETE' });
     if (r.ok) {
-      toast('Client removed', 'success');
-      const cr = await apiFetch('./ui/api/clients');
-      if (cr.ok) { clientsData = await cr.json(); renderClients(); }
+      toast('Worker removed', 'success');
+      const cr = await apiFetch('./ui/api/workers');
+      if (cr.ok) { workersData = await cr.json(); renderWorkers(); }
     } else {
       const data = await r.json().catch(() => ({}));
       toast('Error: ' + (data.error || r.status), 'error');
@@ -1523,11 +1522,11 @@ function closeEditorModal(e) {
 // Auto-refresh polling
 // ============================================================
 function startPolling() {
-  // Clients: every 5s
+  // Workers: every 5s
   setInterval(async () => {
     try {
-      const r = await apiFetch('./ui/api/clients');
-      if (r.ok) { clientsData = await r.json(); renderClients(); }
+      const r = await apiFetch('./ui/api/workers');
+      if (r.ok) { workersData = await r.json(); renderWorkers(); }
     } catch(e) {}
   }, 5000);
 

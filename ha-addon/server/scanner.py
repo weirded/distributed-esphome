@@ -48,6 +48,10 @@ def create_bundle(config_dir: str) -> bytes:
         for path in sorted(base.rglob("*")):
             if not path.is_file():
                 continue
+            # Skip macOS resource fork files and metadata noise
+            if path.name.startswith("._") or path.name == ".DS_Store":
+                logger.debug("Skipping resource fork file: %s", path)
+                continue
             arcname = str(path.relative_to(base))
             tar.add(str(path), arcname=arcname)
             logger.debug("Added %s to bundle", arcname)

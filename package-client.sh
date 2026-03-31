@@ -87,7 +87,7 @@ sed -i.bak \
 rm -f "$TMP_DIR/start.ps1.bak"
 
 echo "==> Creating archive $ARCHIVE ..."
-tar -czf "$ARCHIVE" -C "$TMP_DIR" VERSION esphome-dist-client.tar \
+tar -czf "$ARCHIVE" --exclude='._*' --exclude='.DS_Store' -C "$TMP_DIR" VERSION esphome-dist-client.tar \
     start.sh stop.sh uninstall.sh \
     start.ps1 stop.ps1 uninstall.ps1 \
     build-proxmox-template.sh

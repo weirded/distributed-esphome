@@ -1,4 +1,4 @@
-"""REST API handlers for build clients (/api/v1/*)."""
+"""REST API handlers for build workers (/api/v1/*)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app_config import AppConfig
 from job_queue import JobState
 from scanner import create_bundle, get_esphome_version
 
-# Client code bundled inside this container
+# Worker code bundled inside this container
 _CLIENT_CODE_DIR = Path("/app/client")
 _VERSION_FILE = Path("/app/VERSION")
 
@@ -55,8 +55,7 @@ def _unauthorized() -> web.Response:
     return web.json_response({"error": "Unauthorized"}, status=401)
 
 
-@routes.post("/api/v1/clients/register")
-async def register_client(request: web.Request) -> web.Response:
+async def _register_worker_handler(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return _unauthorized()
     try:
@@ -77,8 +76,7 @@ async def register_client(request: web.Request) -> web.Response:
     return web.json_response({"client_id": client_id})
 
 
-@routes.post("/api/v1/clients/heartbeat")
-async def client_heartbeat(request: web.Request) -> web.Response:
+async def _heartbeat_handler(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return _unauthorized()
     try:
@@ -93,7 +91,7 @@ async def client_heartbeat(request: web.Request) -> web.Response:
     system_info = body.get("system_info") if isinstance(body.get("system_info"), dict) else None
     registry = request.app["registry"]
     if not registry.heartbeat(client_id, system_info):
-        # Unknown client — let it re-register
+        # Unknown worker — let it re-register
         return web.json_response({"error": "Unknown client_id"}, status=404)
     return web.json_response({
         "ok": True,
@@ -101,9 +99,8 @@ async def client_heartbeat(request: web.Request) -> web.Response:
     })
 
 
-@routes.post("/api/v1/clients/deregister")
-async def deregister_client(request: web.Request) -> web.Response:
-    """Remove a client from the registry on clean shutdown."""
+async def _deregister_handler(request: web.Request) -> web.Response:
+    """Remove a worker from the registry on clean shutdown."""
     if not _check_auth(request):
         return _unauthorized()
     try:
@@ -117,10 +114,53 @@ async def deregister_client(request: web.Request) -> web.Response:
 
     registry = request.app["registry"]
     if registry.remove(client_id):
-        logger.info("Client %s deregistered (clean shutdown)", client_id)
+        logger.info("Worker %s deregistered (clean shutdown)", client_id)
         return web.json_response({"ok": True})
     return web.json_response({"error": "Unknown client_id"}, status=404)
 
+
+# ---------------------------------------------------------------------------
+# New worker routes (preferred)
+# ---------------------------------------------------------------------------
+
+@routes.post("/api/v1/workers/register")
+async def register_worker(request: web.Request) -> web.Response:
+    return await _register_worker_handler(request)
+
+
+@routes.post("/api/v1/workers/heartbeat")
+async def worker_heartbeat(request: web.Request) -> web.Response:
+    return await _heartbeat_handler(request)
+
+
+@routes.post("/api/v1/workers/deregister")
+async def deregister_worker(request: web.Request) -> web.Response:
+    return await _deregister_handler(request)
+
+
+# ---------------------------------------------------------------------------
+# Legacy client routes — kept for backwards compatibility with deployed workers
+# that haven't updated yet. These call the same handlers.
+# ---------------------------------------------------------------------------
+
+@routes.post("/api/v1/clients/register")
+async def register_client(request: web.Request) -> web.Response:
+    return await _register_worker_handler(request)
+
+
+@routes.post("/api/v1/clients/heartbeat")
+async def client_heartbeat(request: web.Request) -> web.Response:
+    return await _heartbeat_handler(request)
+
+
+@routes.post("/api/v1/clients/deregister")
+async def deregister_client(request: web.Request) -> web.Response:
+    return await _deregister_handler(request)
+
+
+# ---------------------------------------------------------------------------
+# Job routes
+# ---------------------------------------------------------------------------
 
 @routes.get("/api/v1/jobs/next")
 async def get_next_job(request: web.Request) -> web.Response:
@@ -135,9 +175,9 @@ async def get_next_job(request: web.Request) -> web.Response:
     registry = request.app["registry"]
     cfg = _cfg(request)
 
-    # Don't assign new jobs to disabled clients
-    client = registry.get(client_id)
-    if client and client.disabled:
+    # Don't assign new jobs to disabled workers
+    worker = registry.get(client_id)
+    if worker and worker.disabled:
         return web.Response(status=204)
 
     worker_id_str = request.headers.get("X-Worker-Id", "1")
@@ -146,7 +186,7 @@ async def get_next_job(request: web.Request) -> web.Response:
     except ValueError:
         worker_id = 1
 
-    hostname = client.hostname if client else None
+    hostname = worker.hostname if worker else None
     job = await queue.claim_next(client_id, worker_id, hostname=hostname)
     if job is None:
         return web.Response(status=204)
@@ -196,7 +236,7 @@ async def submit_job_result(request: web.Request) -> web.Response:
     queue = request.app["queue"]
     registry = request.app["registry"]
 
-    # Find the client that owns this job and update registry
+    # Find the worker that owns this job and update registry
     job = queue.get(job_id)
     if job and job.assigned_client_id:
         registry.set_job(job.assigned_client_id, None)
@@ -236,7 +276,7 @@ async def get_client_version(request: web.Request) -> web.Response:
 
 @routes.get("/api/v1/client/code")
 async def get_client_code(request: web.Request) -> web.Response:
-    """Return all .py files from the bundled client directory."""
+    """Return all .py files from the bundled worker directory."""
     if not _check_auth(request):
         return _unauthorized()
     base = _CLIENT_CODE_DIR if _CLIENT_CODE_DIR.exists() else Path(__file__).parent
@@ -247,7 +287,7 @@ async def get_client_code(request: web.Request) -> web.Response:
         try:
             files[path.name] = path.read_text(encoding="utf-8")
         except Exception:
-            logger.exception("Failed to read client file %s", path.name)
+            logger.exception("Failed to read worker file %s", path.name)
     return web.json_response({
         "version": _get_server_client_version(),
         "files": files,
@@ -256,7 +296,7 @@ async def get_client_code(request: web.Request) -> web.Response:
 
 @routes.post("/api/v1/jobs/{id}/log")
 async def append_job_log(request: web.Request) -> web.Response:
-    """Append streaming log lines from a build client (HTTP batched)."""
+    """Append streaming log lines from a build worker (HTTP batched)."""
     if not _check_auth(request):
         return _unauthorized()
     job_id = request.match_info["id"]
@@ -283,8 +323,8 @@ async def append_job_log(request: web.Request) -> web.Response:
 
 
 @routes.get("/api/v1/jobs/{id}/log/ws")
-async def ws_client_log(request: web.Request) -> web.WebSocketResponse:
-    """WebSocket endpoint for build clients to stream log lines."""
+async def ws_worker_log(request: web.Request) -> web.WebSocketResponse:
+    """WebSocket endpoint for build workers to stream log lines."""
     if not _check_auth(request):
         return _unauthorized()  # type: ignore[return-value]
 
@@ -298,7 +338,7 @@ async def ws_client_log(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
 
     subscribers: dict = request.app.setdefault("log_subscribers", {})
-    # The client WS is a producer; it is not added to subscribers
+    # The worker WS is a producer; it is not added to subscribers
 
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -323,14 +363,15 @@ async def get_status(request: web.Request) -> web.Response:
     registry = request.app["registry"]
     queue = request.app["queue"]
 
-    online_clients = sum(
-        1 for c in registry.get_all() if registry.is_online(c.client_id, cfg.client_offline_threshold)
+    online_workers = sum(
+        1 for w in registry.get_all() if registry.is_online(w.client_id, cfg.worker_offline_threshold)
     )
 
     return web.json_response(
         {
             "esphome_version": get_esphome_version(),
-            "online_clients": online_clients,
+            "online_clients": online_workers,  # kept for backwards compatibility
+            "online_workers": online_workers,
             "queue_size": queue.queue_size(),
         }
     )

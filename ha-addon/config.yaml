@@ -1,5 +1,5 @@
 name: "ESPHome Distributed Build Server"
-version: "0.0.50"
+version: "0.0.51"
 slug: "esphome_dist_server"
 description: "Offload ESPHome firmware compilation to remote machines with a web UI for job management and OTA updates"
 url: "https://github.com/weirded/distributed-esphome"
@@ -18,11 +18,11 @@ ingress_port: 8765
 panel_icon: mdi:progress-wrench
 panel_title: "ESPH Distributed"
 
-# Direct port: build clients (Docker) connect here with Bearer token auth
+# Direct port: build workers (Docker) connect here with Bearer token auth
 ports:
   8765/tcp: 8765
 ports_description:
-  8765/tcp: "Build client API & Web UI"
+  8765/tcp: "Build worker API & Web UI"
 
 # mDNS device discovery requires host networking
 host_network: true
@@ -33,11 +33,11 @@ options:
   token: ""
   job_timeout: 600
   ota_timeout: 120
-  client_offline_threshold: 30
+  worker_offline_threshold: 30
   device_poll_interval: 60
 schema:
   token: password
   job_timeout: int
   ota_timeout: int
-  client_offline_threshold: int
+  worker_offline_threshold: int
   device_poll_interval: int

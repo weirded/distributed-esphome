@@ -1,4 +1,4 @@
-"""ESPHome distributed build client — polling loop, heartbeat, job runner."""
+"""ESPHome distributed build worker — polling loop, heartbeat, job runner."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.50"
+CLIENT_VERSION = "0.0.51"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -372,11 +372,11 @@ def _clear_client_id() -> None:
 
 
 def deregister(client_id: str) -> None:
-    """Tell the server to remove this client (best-effort on shutdown)."""
+    """Tell the server to remove this worker (best-effort on shutdown)."""
     try:
-        resp = post("/api/v1/clients/deregister", {"client_id": client_id})
+        resp = post("/api/v1/workers/deregister", {"client_id": client_id})
         if resp.ok:
-            logger.info("Deregistered client %s", client_id)
+            logger.info("Deregistered worker %s", client_id)
             _clear_client_id()
         else:
             logger.debug("Deregister returned %s", resp.status_code)
@@ -402,11 +402,11 @@ def register() -> str:
             }
             if existing_id:
                 payload["client_id"] = existing_id
-            resp = post("/api/v1/clients/register", payload)
+            resp = post("/api/v1/workers/register", payload)
             resp.raise_for_status()
             client_id = resp.json()["client_id"]
             _save_client_id(client_id)
-            logger.info("Registered as client %s (version %s)", client_id, CLIENT_VERSION)
+            logger.info("Registered as worker %s (version %s)", client_id, CLIENT_VERSION)
             logger.info(
                 "System: %s | %s | %s cores | %s | %s",
                 sysinfo.get("os_version", "?"),
@@ -429,7 +429,7 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
     while not stop_event.is_set():
         try:
-            resp = post("/api/v1/clients/heartbeat", {
+            resp = post("/api/v1/workers/heartbeat", {
                 "client_id": client_id,
                 "system_info": collect_system_info(),
             })
@@ -448,7 +448,7 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                 sv = data.get("server_client_version")
                 if sv and sv != CLIENT_VERSION:
                     logger.info(
-                        "Client update available: local=%s server=%s", CLIENT_VERSION, sv
+                        "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
                     )
                     _update_available.set()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
@@ -479,7 +479,7 @@ _MAX_UPDATE_ATTEMPTS: int = 3
 
 
 def _apply_update(current_client_id: str) -> None:
-    """Download updated client code from server and restart the process.
+    """Download updated worker code from server and restart the process.
 
     Stashes *current_client_id* in the environment so the restarted process
     can re-register in place (keeping the same entry in the server's registry).
@@ -492,7 +492,7 @@ def _apply_update(current_client_id: str) -> None:
             "Update failed %d times; giving up until restart", _MAX_UPDATE_ATTEMPTS
         )
         return
-    logger.info("Downloading client update from server...")
+    logger.info("Downloading worker update from server...")
     try:
         resp = get("/api/v1/client/code", timeout=60)
         resp.raise_for_status()
@@ -512,11 +512,11 @@ def _apply_update(current_client_id: str) -> None:
                 continue
             target.write_text(content, encoding="utf-8")
             logger.info("Updated %s", filename)
-        logger.info("Client updated to %s — restarting", new_version)
+        logger.info("Worker updated to %s — restarting", new_version)
         os.environ["DISTRIBUTED_ESPHOME_CLIENT_ID"] = current_client_id
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as exc:
-        logger.warning("Client update failed: %s", exc)
+        logger.warning("Worker update failed: %s", exc)
 
 
 def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
@@ -645,7 +645,7 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
         sock.connect((device_addr, 80))
         our_ip = sock.getsockname()[0]
         sock.close()
-        lines.append(f"Client IP: {our_ip} (source for reaching {device_addr})")
+        lines.append(f"Worker IP: {our_ip} (source for reaching {device_addr})")
     except Exception:
         pass
 
@@ -1001,11 +1001,11 @@ def worker_loop(
 def _initial_version_check(client_id: str) -> None:
     """Do one synchronous heartbeat immediately after registration.
 
-    If the server has a newer client version, sets _update_available so the
+    If the server has a newer worker version, sets _update_available so the
     main loop applies the update before picking up any jobs.
     """
     try:
-        resp = post("/api/v1/clients/heartbeat", {
+        resp = post("/api/v1/workers/heartbeat", {
             "client_id": client_id,
             "system_info": collect_system_info(),
         }, timeout=10)
@@ -1051,7 +1051,7 @@ def main() -> None:
     import signal  # noqa: PLC0415
 
     logger.info(
-        "ESPHome Build Client starting (hostname=%s, workers=%d)",
+        "ESPHome Build Worker starting (hostname=%s, workers=%d)",
         HOSTNAME, MAX_PARALLEL_JOBS,
     )
 
