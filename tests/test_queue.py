@@ -95,26 +95,17 @@ def test_deduplication_after_finish(queue):
 # Job lifecycle transitions
 # ---------------------------------------------------------------------------
 
-def test_claim_transitions_to_assigned(queue):
+def test_claim_transitions_to_working(queue):
     run(_enqueue(queue, "device1.yaml"))
     job = run(queue.claim_next("client-A"))
-    assert job.state == JobState.ASSIGNED
+    assert job.state == JobState.WORKING
     assert job.assigned_client_id == "client-A"
     assert job.assigned_at is not None
-
-
-def test_update_to_running(queue):
-    run(_enqueue(queue, "device1.yaml"))
-    job = run(queue.claim_next("client-A"))
-    ok = run(queue.update_to_running(job.id, "client-A"))
-    assert ok
-    assert queue.get(job.id).state == JobState.RUNNING
 
 
 def test_submit_result_success(queue):
     run(_enqueue(queue, "device1.yaml"))
     job = run(queue.claim_next("client-A"))
-    run(queue.update_to_running(job.id, "client-A"))
     run(queue.submit_result(job.id, "success", log="built ok", ota_result="success"))
 
     stored = queue.get(job.id)
@@ -172,9 +163,10 @@ def test_cancel_pending_job(queue):
     assert queue.get(job.id).state == JobState.FAILED
 
 
-def test_cancel_assigned_job(queue):
+def test_cancel_working_job(queue):
     run(_enqueue(queue, "device1.yaml"))
     job = run(queue.claim_next("client-A"))
+    assert job.state == JobState.WORKING
     n = run(queue.cancel([job.id]))
     assert n == 1
     assert queue.get(job.id).state == JobState.FAILED
@@ -265,10 +257,11 @@ def test_persistence_pending_jobs_reload(tmp_queue_file):
     assert all(j.state == JobState.PENDING for j in jobs)
 
 
-def test_persistence_assigned_resets_to_pending(tmp_queue_file):
+def test_persistence_working_resets_to_pending(tmp_queue_file):
     q1 = JobQueue(queue_file=tmp_queue_file)
     run(_enqueue(q1, "device1.yaml"))
-    run(q1.claim_next("client-A"))  # assigned
+    job = run(q1.claim_next("client-A"))
+    assert job.state == JobState.WORKING
 
     # Simulate restart
     q2 = JobQueue(queue_file=tmp_queue_file)
@@ -280,18 +273,63 @@ def test_persistence_assigned_resets_to_pending(tmp_queue_file):
     assert jobs[0].assigned_client_id is None
 
 
-def test_persistence_running_resets_to_pending(tmp_queue_file):
-    q1 = JobQueue(queue_file=tmp_queue_file)
-    run(_enqueue(q1, "device1.yaml"))
-    job = run(q1.claim_next("client-A"))
-    run(q1.update_to_running(job.id, "client-A"))
+def test_persistence_backwards_compat_old_states(tmp_queue_file):
+    """Old queue.json with 'assigned'/'running' state values load as WORKING then reset to PENDING."""
+    import json
+    old_data = [
+        {
+            "id": "aaaa-1111",
+            "target": "device1.yaml",
+            "esphome_version": "2024.3.1",
+            "state": "assigned",
+            "run_id": "run1",
+            "assigned_client_id": "client-A",
+            "assigned_hostname": "myhost",
+            "assigned_at": "2024-01-01T00:00:00+00:00",
+            "worker_id": 1,
+            "timeout_seconds": 600,
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "finished_at": None,
+            "retry_count": 0,
+            "log": None,
+            "ota_result": None,
+            "ota_only": False,
+            "pinned_client_id": None,
+            "status_text": None,
+            "duration_seconds": None,
+        },
+        {
+            "id": "bbbb-2222",
+            "target": "device2.yaml",
+            "esphome_version": "2024.3.1",
+            "state": "running",
+            "run_id": "run1",
+            "assigned_client_id": "client-B",
+            "assigned_hostname": "myhost2",
+            "assigned_at": "2024-01-01T00:00:00+00:00",
+            "worker_id": 1,
+            "timeout_seconds": 600,
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "finished_at": None,
+            "retry_count": 0,
+            "log": None,
+            "ota_result": None,
+            "ota_only": False,
+            "pinned_client_id": None,
+            "status_text": None,
+            "duration_seconds": None,
+        },
+    ]
+    tmp_queue_file.write_text(json.dumps(old_data))
 
-    # Simulate restart
-    q2 = JobQueue(queue_file=tmp_queue_file)
-    q2.load()
+    q = JobQueue(queue_file=tmp_queue_file)
+    q.load()
 
-    jobs = q2.get_all()
-    assert jobs[0].state == JobState.PENDING
+    jobs = {j.id: j for j in q.get_all()}
+    assert jobs["aaaa-1111"].state == JobState.PENDING
+    assert jobs["aaaa-1111"].assigned_client_id is None
+    assert jobs["bbbb-2222"].state == JobState.PENDING
+    assert jobs["bbbb-2222"].assigned_client_id is None
 
 
 def test_persistence_success_retained(tmp_queue_file):
@@ -392,10 +430,10 @@ def test_retry_timed_out_job_creates_pending(tmp_queue_file):
 
 def test_retry_ignores_non_terminal_jobs(queue):
     job = run(_enqueue(queue, "device1.yaml"))
-    run(queue.claim_next("client-A"))  # now ASSIGNED
+    run(queue.claim_next("client-A"))  # now WORKING
 
     new_jobs = run(queue.retry([job.id], "2024.3.1", "run2", 300))
-    assert new_jobs == []  # ASSIGNED job is not retryable
+    assert new_jobs == []  # WORKING job is not retryable
 
 
 def test_retry_ignores_success_jobs(queue):

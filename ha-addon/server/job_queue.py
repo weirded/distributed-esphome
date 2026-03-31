@@ -21,8 +21,7 @@ MAX_RETRIES = 3
 
 class JobState(str, Enum):
     PENDING = "pending"
-    ASSIGNED = "assigned"
-    RUNNING = "running"
+    WORKING = "working"
     SUCCESS = "success"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
@@ -89,11 +88,15 @@ class Job:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Job":
+        # Backwards compatibility: old "assigned"/"running" states map to WORKING
+        raw_state = d["state"]
+        if raw_state in ("assigned", "running"):
+            raw_state = "working"
         return cls(
             id=d["id"],
             target=d["target"],
             esphome_version=d["esphome_version"],
-            state=JobState(d["state"]),
+            state=JobState(raw_state),
             run_id=d.get("run_id", ""),
             assigned_client_id=d.get("assigned_client_id"),
             assigned_hostname=d.get("assigned_hostname"),
@@ -151,8 +154,8 @@ class JobQueue:
 
         for d in data:
             job = Job.from_dict(d)
-            # Restart recovery: assigned/running reset to pending
-            if job.state in (JobState.ASSIGNED, JobState.RUNNING):
+            # Restart recovery: working jobs reset to pending (client is gone)
+            if job.state == JobState.WORKING:
                 job.state = JobState.PENDING
                 job.assigned_client_id = None
                 job.assigned_at = None
@@ -185,8 +188,7 @@ class JobQueue:
             for job in self._jobs.values():
                 if job.target == target and job.state in (
                     JobState.PENDING,
-                    JobState.ASSIGNED,
-                    JobState.RUNNING,
+                    JobState.WORKING,
                 ):
                     logger.debug("Skipping duplicate job for target %s", target)
                     return None
@@ -229,33 +231,15 @@ class JobQueue:
                 # Pinned jobs can only be claimed by the designated client
                 if job.pinned_client_id and job.pinned_client_id != client_id:
                     continue
-                job.state = JobState.ASSIGNED
+                job.state = JobState.WORKING
                 job.assigned_client_id = client_id
                 job.assigned_hostname = hostname
                 job.assigned_at = _utcnow()
                 job.worker_id = worker_id
                 self._persist()
-                logger.info("Job %s assigned to client %s worker %d", job.id, client_id, worker_id)
+                logger.info("Job %s claimed by client %s worker %d", job.id, client_id, worker_id)
                 return job
             return None
-
-    async def update_to_running(self, job_id: str, client_id: str) -> bool:
-        """Transition an ASSIGNED job to RUNNING."""
-        async with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                return False
-            if job.state != JobState.ASSIGNED or job.assigned_client_id != client_id:
-                logger.warning(
-                    "update_to_running: job %s not in expected state (state=%s, client=%s)",
-                    job_id,
-                    job.state,
-                    job.assigned_client_id,
-                )
-                return False
-            job.state = JobState.RUNNING
-            self._persist()
-            return True
 
     async def submit_result(
         self,
@@ -287,7 +271,7 @@ class JobQueue:
                 logger.info("Job %s OTA result: %s", job_id, ota_result)
                 return True
 
-            if job.state not in (JobState.ASSIGNED, JobState.RUNNING):
+            if job.state != JobState.WORKING:
                 logger.warning(
                     "submit_result: job %s in unexpected state %s", job_id, job.state
                 )
@@ -323,7 +307,7 @@ class JobQueue:
 
     async def check_timeouts(self) -> list[Job]:
         """
-        Find timed-out jobs (ASSIGNED/RUNNING past deadline).
+        Find timed-out jobs (WORKING past deadline).
 
         Re-enqueues as PENDING if retry_count < MAX_RETRIES, otherwise
         marks FAILED permanently.  Returns the list of affected jobs.
@@ -332,7 +316,7 @@ class JobQueue:
             now = _utcnow()
             affected: list[Job] = []
             for job in self._jobs.values():
-                if job.state not in (JobState.ASSIGNED, JobState.RUNNING):
+                if job.state != JobState.WORKING:
                     continue
                 if job.assigned_at is None:
                     continue
@@ -445,11 +429,11 @@ class JobQueue:
         return self._jobs.get(job_id)
 
     def queue_size(self) -> int:
-        """Return number of pending/assigned/running jobs."""
+        """Return number of pending/working jobs."""
         return sum(
             1
             for j in self._jobs.values()
-            if j.state in (JobState.PENDING, JobState.ASSIGNED, JobState.RUNNING)
+            if j.state in (JobState.PENDING, JobState.WORKING)
         )
 
     async def clear(self, states: list[str], require_ota_success: bool = False) -> int:

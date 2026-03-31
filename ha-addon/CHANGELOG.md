@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.48
+- Simplify job state machine: replace ASSIGNED + RUNNING with a single WORKING state
+  - PENDING → WORKING → SUCCESS/FAILED (RUNNING was unused in production)
+  - Backwards compatible: old queue.json with "assigned"/"running" values load as WORKING
+  - Log modal header badge now matches queue table badge exactly (shows status_text or "Working")
+
 ## 0.0.47
 - Unify log storage: streaming log IS the authoritative log
   - Client no longer sends full log on completion (server uses streamed buffer)

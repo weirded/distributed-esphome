@@ -204,8 +204,7 @@
       text-transform: uppercase;
     }
     .badge-pending   { background: #374151; color: #9ca3af; }
-    .badge-assigned  { background: #1e3a5f; color: #60a5fa; }
-    .badge-running   { background: #1e3a5f; color: #60a5fa; }
+    .badge-working   { background: #1e3a5f; color: #60a5fa; }
     .badge-success   { background: #14532d; color: #4ade80; }
     .badge-failed    { background: #450a0a; color: #f87171; }
     .badge-timed_out { background: #431407; color: #fb923c; }
@@ -766,7 +765,7 @@ async function refreshQueue() {
     const r = await apiFetch('./ui/api/queue');
     if (!r.ok) return;
     queueData = await r.json();
-    activeRun = queueData.some(j => ['pending','assigned','running'].includes(j.state));
+    activeRun = queueData.some(j => ['pending','working'].includes(j.state));
     renderQueue();
   } catch(e) { /* ignore */ }
 }
@@ -833,7 +832,7 @@ function renderClients() {
       const slotJob = queueData.find(j =>
         j.assigned_client_id === c.client_id &&
         (j.worker_id === slot || (slot === 1 && j.worker_id == null)) &&
-        ['assigned', 'running'].includes(j.state)
+        j.state === 'working'
       );
       const slotName = slots > 1
         ? `${escapeHtml(c.hostname)}<span style="color:var(--text-muted);font-size:11px">/${slot}</span>`
@@ -942,7 +941,7 @@ function renderDevices() {
 function renderQueue() {
   const tbody = document.getElementById('queue-tbody');
 
-  const active = queueData.filter(j => ['pending','assigned','running'].includes(j.state)).length;
+  const active = queueData.filter(j => ['pending','working'].includes(j.state)).length;
   const failed = queueData.filter(j => ['failed','timed_out'].includes(j.state)).length;
   let countText = '';
   if (active) countText = active + ' active';
@@ -956,7 +955,7 @@ function renderQueue() {
     return;
   }
 
-  const stateOrder = { running:0, assigned:1, pending:2, timed_out:3, failed:4, success:5 };
+  const stateOrder = { working:0, pending:1, timed_out:2, failed:3, success:4 };
   const sorted = [...queueData].sort((a, b) => {
     const so = (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9);
     if (so !== 0) return so;
@@ -985,7 +984,7 @@ function renderQueue() {
     const pinnedHtml = (pinnedHostname && job.pinned_client_id && job.state === 'pending')
       ? `<br><span style="font-size:10px;color:var(--text-muted)">→ ${escapeHtml(pinnedHostname)}</span>`
       : '';
-    const isActive = ['pending', 'assigned', 'running'].includes(job.state);
+    const isActive = ['pending', 'working'].includes(job.state);
     const dur = job.duration_seconds != null
       ? fmtDuration(job.duration_seconds)
       : (isActive && job.assigned_at ? fmtDuration((Date.now() - new Date(job.assigned_at)) / 1000) : '—');
@@ -995,8 +994,8 @@ function renderQueue() {
       badgeLabel = 'OTA Retry'; badgeCls = 'badge badge-timed_out';
     } else if (job.state === 'pending') {
       badgeLabel = 'Pending'; badgeCls = 'badge badge-pending';
-    } else if (job.state === 'assigned' || job.state === 'running') {
-      badgeLabel = job.status_text || 'Working'; badgeCls = 'badge badge-running';
+    } else if (job.state === 'working') {
+      badgeLabel = job.status_text || 'Working'; badgeCls = 'badge badge-working';
     } else if (job.state === 'failed') {
       badgeLabel = 'Failed'; badgeCls = 'badge badge-failed';
     } else if (job.state === 'success') {
@@ -1005,7 +1004,7 @@ function renderQueue() {
       } else if (job.ota_result === 'failed') {
         badgeLabel = 'OTA Failed'; badgeCls = 'badge badge-timed_out';
       } else {
-        badgeLabel = 'OTA Pending'; badgeCls = 'badge badge-assigned';
+        badgeLabel = 'OTA Pending'; badgeCls = 'badge badge-working';
       }
     } else if (job.state === 'timed_out') {
       badgeLabel = 'Timed Out'; badgeCls = 'badge badge-timed_out';
@@ -1013,7 +1012,7 @@ function renderQueue() {
       badgeLabel = job.state; badgeCls = 'badge badge-' + job.state;
     }
 
-    const hasLog = job.log || ['assigned','running'].includes(job.state);
+    const hasLog = job.log || job.state === 'working';
     const canRetry = ['failed','timed_out'].includes(job.state)
       || (job.state === 'success' && job.ota_result === 'failed');
 
@@ -1099,7 +1098,29 @@ function updateLogModalHeader() {
     || (job.assigned_client_id ? (clientsData.find(c => c.client_id === job.assigned_client_id)?.hostname || job.assigned_client_id.slice(0,8)) : null);
   const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
   const meta = [clientName, dur ? dur + ' duration' : null].filter(Boolean).join(' · ');
-  document.getElementById('modal-state').innerHTML = `<span class="badge badge-${job.state}">${job.state}</span>`;
+  let modalBadgeLabel, modalBadgeCls;
+  if (job.state === 'pending' && job.ota_only) {
+    modalBadgeLabel = 'OTA Retry'; modalBadgeCls = 'badge badge-timed_out';
+  } else if (job.state === 'pending') {
+    modalBadgeLabel = 'Pending'; modalBadgeCls = 'badge badge-pending';
+  } else if (job.state === 'working') {
+    modalBadgeLabel = job.status_text || 'Working'; modalBadgeCls = 'badge badge-working';
+  } else if (job.state === 'failed') {
+    modalBadgeLabel = 'Failed'; modalBadgeCls = 'badge badge-failed';
+  } else if (job.state === 'success') {
+    if (job.ota_result === 'success') {
+      modalBadgeLabel = 'Success'; modalBadgeCls = 'badge badge-success';
+    } else if (job.ota_result === 'failed') {
+      modalBadgeLabel = 'OTA Failed'; modalBadgeCls = 'badge badge-timed_out';
+    } else {
+      modalBadgeLabel = 'OTA Pending'; modalBadgeCls = 'badge badge-working';
+    }
+  } else if (job.state === 'timed_out') {
+    modalBadgeLabel = 'Timed Out'; modalBadgeCls = 'badge badge-timed_out';
+  } else {
+    modalBadgeLabel = job.state; modalBadgeCls = 'badge badge-' + job.state;
+  }
+  document.getElementById('modal-state').innerHTML = `<span class="${modalBadgeCls}">${escapeHtml(modalBadgeLabel)}</span>`;
   document.getElementById('modal-meta').textContent = meta;
 }
 
@@ -1121,7 +1142,7 @@ function openLogModal(jobId) {
   if (logTerm) { logTerm.dispose(); logTerm = null; }
   logTerm = initXterm();
 
-  const isLive = ['assigned', 'running', 'pending'].includes(job.state);
+  const isLive = ['working', 'pending'].includes(job.state);
 
   if (isLive) {
     if (logWs) { try { logWs.close(); } catch(e) {} logWs = null; }
@@ -1536,7 +1557,7 @@ function startPolling() {
       const r = await apiFetch('./ui/api/queue');
       if (r.ok) {
         queueData = await r.json();
-        activeRun = queueData.some(j => ['pending','assigned','running'].includes(j.state));
+        activeRun = queueData.some(j => ['pending','working'].includes(j.state));
         renderQueue();
       }
     } catch(e) {}

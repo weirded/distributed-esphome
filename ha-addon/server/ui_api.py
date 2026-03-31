@@ -101,7 +101,7 @@ async def get_queue(request: web.Request) -> web.Response:
         d = job.to_dict()
         # Don't send full log in poll response for active jobs — browser fetches
         # live logs via WebSocket instead
-        if d["state"] in ("pending", "assigned", "running"):
+        if d["state"] in ("pending", "working"):
             d["log"] = None
         jobs.append(d)
     return web.json_response(jobs)

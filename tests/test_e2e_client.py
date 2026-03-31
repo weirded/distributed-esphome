@@ -99,6 +99,13 @@ class _Handler(BaseHTTPRequestHandler):
             srv.result_calls.append(body)
             self._respond(200, {"ok": True})
 
+        elif self.path.startswith("/api/v1/jobs/") and self.path.endswith("/log"):
+            srv.log_lines.append(body.get("lines", ""))
+            self._respond(200, {"ok": True})
+
+        elif self.path.startswith("/api/v1/jobs/") and self.path.endswith("/status"):
+            self._respond(200, {"ok": True})
+
         else:
             self._respond(404, {"error": "not found"})
 
@@ -121,8 +128,14 @@ class FakeServer:
         self.register_calls: list[dict] = []
         self.heartbeat_calls: list[dict] = []
         self.result_calls: list[dict] = []
+        self.log_lines: list[str] = []
         self._jobs: list[dict] = []
         self._lock = threading.Lock()
+
+    @property
+    def streamed_log(self) -> str:
+        """Return all streamed log lines concatenated."""
+        return "".join(self.log_lines)
 
         self._httpd = HTTPServer(("127.0.0.1", 0), _Handler)
         self._httpd._fake = self  # type: ignore[attr-defined]
@@ -297,7 +310,8 @@ class TestCompileFailure:
         with _patched(fake_server):
             client_mod.run_job(fake_server.client_id, job, FakeVersionManager(esphome_compile_fail))
 
-        assert "compile failed" in fake_server.result_calls[0]["log"]
+        # Log is streamed via /log endpoint, not in the result body
+        assert "compile failed" in fake_server.streamed_log
 
 
 class TestOtaFailure:
@@ -466,5 +480,5 @@ class TestRealEspHomeCompile:
         with _patched(fake_server), patch.object(client_mod, "OTA_TIMEOUT", 10):
             client_mod.run_job(fake_server.client_id, job, real_version_manager)
 
-        log = fake_server.result_calls[0].get("log", "")
-        assert len(log) > 0, "Expected non-empty compile log"
+        # Log is streamed via /log endpoint, not in the result body
+        assert len(fake_server.streamed_log) > 0, "Expected non-empty streamed compile log"
