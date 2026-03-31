@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.43"
+CLIENT_VERSION = "0.0.44"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -809,8 +809,8 @@ def _run_subprocess(
     *job_id* enables live log streaming — lines are batched and POSTed to the
     server every 2 seconds via ``/api/v1/jobs/{id}/log``.
     """
-    FLUSH_INTERVAL = 2.0
-    log_lines: list[str] = []
+    FLUSH_INTERVAL = 0.5
+    log_chunks: list[str] = []
     flush_buffer: list[str] = []
     last_flush = time.monotonic()
     timed_out = threading.Event()
@@ -834,7 +834,6 @@ def _run_subprocess(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd,
-            text=True,
             env=env,
         )
     except Exception as exc:
@@ -850,9 +849,14 @@ def _run_subprocess(
     timer = threading.Timer(timeout, _kill_on_timeout)
     timer.start()
     try:
-        for line in proc.stdout:  # type: ignore[union-attr]
-            log_lines.append(line)
-            flush_buffer.append(line)
+        # Read raw bytes in chunks to preserve \r for progress bars
+        while True:
+            chunk = proc.stdout.read(4096)
+            if not chunk:
+                break
+            text = chunk.decode("utf-8", errors="replace")
+            log_chunks.append(text)
+            flush_buffer.append(text)
             if time.monotonic() - last_flush >= FLUSH_INTERVAL:
                 _flush_log()
         proc.wait()
@@ -861,12 +865,12 @@ def _run_subprocess(
         timer.cancel()
 
     if timed_out.is_set():
-        log = "".join(log_lines) + f"\n\nTIMED OUT after {timeout}s"
+        log = "".join(log_chunks) + f"\n\nTIMED OUT after {timeout}s"
         logger.warning("%s timed out after %ds", label, timeout)
         return log, False
 
     success = proc.returncode == 0
-    log = "".join(log_lines)
+    log = "".join(log_chunks)
     logger.info("%s finished: returncode=%d", label, proc.returncode)
     return log, success
 

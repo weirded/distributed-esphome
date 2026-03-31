@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.44
+- Fix progress bars: read raw bytes from subprocess (preserves \r carriage returns)
+- Always scroll to bottom on log updates (simple auto-tail)
+- Reduce flush interval from 2s to 500ms for more responsive live logs
+
 ## 0.0.43
 - Fix ANSI stripping: handle `[?25l` cursor-hide and other `?`-prefixed escapes
 - Fix \r handling: split on \r correctly for progress bar overwrites

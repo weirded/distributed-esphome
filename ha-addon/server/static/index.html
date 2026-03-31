@@ -1084,20 +1084,6 @@ function openLogModal(jobId) {
   const logEl = document.getElementById('modal-log');
   const isLive = ['assigned', 'running'].includes(job.state);
 
-  // Track scroll position for auto-tail
-  logAutoScroll = true;
-  let _programmaticScroll = false;
-  logEl.onscroll = () => {
-    if (_programmaticScroll) return;
-    const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 50;
-    logAutoScroll = atBottom;
-  };
-  // Helper to scroll without triggering the onscroll check
-  window._logScrollToBottom = () => {
-    _programmaticScroll = true;
-    logEl.scrollTop = logEl.scrollHeight;
-    requestAnimationFrame(() => { _programmaticScroll = false; });
-  };
 
   if (isLive) {
     logEl.textContent = 'Connecting to live log...\n';
@@ -1113,7 +1099,7 @@ function openLogModal(jobId) {
       };
       logWs.onmessage = (e) => {
         logEl.textContent = processLogText(logEl.textContent, e.data);
-        if (logAutoScroll && window._logScrollToBottom) window._logScrollToBottom();
+        logEl.scrollTop = logEl.scrollHeight;
       };
       logWs.onerror = (err) => {
         console.warn('Log WebSocket error, falling back to polling', err);
@@ -1152,7 +1138,7 @@ async function pollLog() {
       if (data.log) {
         const logEl = document.getElementById('modal-log');
         logEl.textContent = processLogText(logEl.textContent, data.log);
-        if (logAutoScroll && window._logScrollToBottom) window._logScrollToBottom();
+        logEl.scrollTop = logEl.scrollHeight;
       }
       logPollOffset = data.offset;
       if (!data.finished) {
