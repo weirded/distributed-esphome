@@ -20,6 +20,12 @@ from typing import Optional
 
 import requests
 
+try:
+    import websocket as ws_client
+    WS_AVAILABLE = True
+except ImportError:
+    WS_AVAILABLE = False
+
 from version_manager import VersionManager
 
 # ---------------------------------------------------------------------------
@@ -28,7 +34,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.37"
+CLIENT_VERSION = "0.0.38"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -710,6 +716,20 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                 _active_jobs -= 1
             return
 
+    # Open WebSocket for live log streaming (best-effort; failures are non-fatal)
+    log_ws = None
+    if WS_AVAILABLE:
+        try:
+            ws_url = SERVER_URL.replace("http://", "ws://").replace("https://", "wss://")
+            log_ws = ws_client.create_connection(
+                f"{ws_url}/api/v1/jobs/{job_id}/log/ws",
+                header=[f"Authorization: Bearer {SERVER_TOKEN}"],
+                timeout=10,
+            )
+            logger.debug("Opened log WebSocket for job %s", job_id)
+        except Exception as exc:
+            logger.debug("Could not open log WebSocket: %s", exc)
+
     tmp_dir = tempfile.mkdtemp(prefix="esphome-job-")
     try:
         # Extract bundle
@@ -735,6 +755,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             timeout=timeout_seconds,
             label="compile",
             env=subprocess_env,
+            log_ws=log_ws,
         )
 
         if not compile_ok:
@@ -761,6 +782,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                 timeout=OTA_TIMEOUT,
                 label=f"OTA upload (attempt {attempt + 1})",
                 env=subprocess_env,
+                log_ws=log_ws,
             )
             ota_logs.append(ota_log)
             if ota_ok:
@@ -782,6 +804,11 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         _log_context.current_target = None
         with _active_jobs_lock:
             _active_jobs -= 1
+        if log_ws is not None:
+            try:
+                log_ws.close()
+            except Exception:
+                pass
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             logger.debug("Cleaned up temp dir %s", tmp_dir)
@@ -795,15 +822,20 @@ def _run_subprocess(
     timeout: int,
     label: str,
     env: Optional[dict] = None,
+    log_ws=None,
 ) -> tuple[str, bool]:
     """
-    Run a subprocess with a timeout.
+    Run a subprocess with a timeout, streaming output line-by-line.
 
     Returns (combined_log, success).
     On timeout, kills the process and returns (log + 'TIMED OUT', False).
     *env* is passed directly to Popen; defaults to inheriting the current env.
+    *log_ws* is an optional websocket-client connection; each line is sent
+    immediately as it is produced. WebSocket errors are silently ignored so
+    that a broken connection never blocks the build.
     """
     log_lines: list[str] = []
+    timed_out = threading.Event()
     logger.info("Running %s: %s", label, " ".join(cmd))
 
     try:
@@ -818,28 +850,37 @@ def _run_subprocess(
     except Exception as exc:
         return f"Failed to start process: {exc}", False
 
-    try:
-        stdout, _ = proc.communicate(timeout=timeout)
-        if stdout:
-            log_lines.append(stdout)
-        success = proc.returncode == 0
-        log = "".join(log_lines)
-        logger.info("%s finished: returncode=%d", label, proc.returncode)
-        return log, success
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        remaining, _ = proc.communicate()
-        if remaining:
-            log_lines.append(remaining)
-        log = "".join(log_lines) + f"\n\nTIMED OUT after {timeout}s"
-        logger.warning("%s timed out after %ds", label, timeout)
-        return log, False
-    except Exception as exc:
+    def _kill_on_timeout():
+        timed_out.set()
         try:
             proc.kill()
         except Exception:
             pass
-        return f"Unexpected error: {exc}", False
+
+    timer = threading.Timer(timeout, _kill_on_timeout)
+    timer.start()
+    try:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            log_lines.append(line)
+            if log_ws is not None:
+                try:
+                    log_ws.send(line)
+                except Exception:
+                    # Broken WS connection — stop trying but continue building
+                    log_ws = None
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    if timed_out.is_set():
+        log = "".join(log_lines) + f"\n\nTIMED OUT after {timeout}s"
+        logger.warning("%s timed out after %ds", label, timeout)
+        return log, False
+
+    success = proc.returncode == 0
+    log = "".join(log_lines)
+    logger.info("%s finished: returncode=%d", label, proc.returncode)
+    return log, success
 
 
 def _report_status(job_id: str, status_text: str) -> None:

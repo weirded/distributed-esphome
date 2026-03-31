@@ -6,6 +6,7 @@ import logging
 import uuid
 from pathlib import Path
 
+import aiohttp
 from aiohttp import web
 
 from app_config import AppConfig
@@ -95,8 +96,48 @@ async def get_targets(request: web.Request) -> web.Response:
 async def get_queue(request: web.Request) -> web.Response:
     """Return current job queue state."""
     queue = request.app["queue"]
-    jobs = [job.to_dict() for job in queue.get_all()]
+    jobs = []
+    for job in queue.get_all():
+        d = job.to_dict()
+        # Don't send full log in poll response for active jobs — browser fetches
+        # live logs via WebSocket instead
+        if d["state"] in ("pending", "assigned", "running"):
+            d["log"] = None
+        jobs.append(d)
     return web.json_response(jobs)
+
+
+@routes.get("/ui/api/jobs/{id}/log/ws")
+async def ws_browser_log(request: web.Request) -> web.WebSocketResponse:
+    """WebSocket endpoint for browser live log tailing."""
+    job_id = request.match_info["id"]
+    queue = request.app["queue"]
+
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    # Send any log content already buffered (streaming or persisted)
+    job = queue.get(job_id)
+    if job:
+        existing = job._streaming_log or job.log or ""
+        if existing:
+            await ws.send_str(existing)
+
+    # Subscribe for new lines produced while we are connected
+    subscribers: dict = request.app.setdefault("log_subscribers", {})
+    subscribers.setdefault(job_id, set()).add(ws)
+
+    try:
+        async for msg in ws:
+            if msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
+                break
+            # Browser may send a keep-alive ping; all other messages are ignored
+    finally:
+        subscribers.get(job_id, set()).discard(ws)
+        if job_id in subscribers and not subscribers[job_id]:
+            del subscribers[job_id]
+
+    return ws
 
 
 @routes.get("/ui/api/clients")

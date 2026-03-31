@@ -150,6 +150,7 @@ def create_app() -> web.Application:
     app["registry"] = registry
     app["scanner_config_dir"] = cfg.config_dir
     app["device_poller"] = device_poller
+    app["log_subscribers"] = {}
 
     # Register routes
     app.router.add_routes(api_module.routes)

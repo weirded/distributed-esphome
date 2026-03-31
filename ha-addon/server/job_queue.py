@@ -62,6 +62,7 @@ class Job:
     ota_only: bool = False  # skip compile, just re-run OTA upload
     pinned_client_id: Optional[str] = None  # only this client can claim the job
     status_text: Optional[str] = None  # transient; not persisted
+    _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
     def to_dict(self) -> dict:
         return {
@@ -420,6 +421,15 @@ class JobQueue:
             if job is None:
                 return False
             job.status_text = status_text
+            return True
+
+    async def append_log(self, job_id: str, text: str) -> bool:
+        """Append streaming log text to a running job (transient; not persisted)."""
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            job._streaming_log += text
             return True
 
     def get_all(self) -> list[Job]:

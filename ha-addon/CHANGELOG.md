@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.0.38
+- WebSocket-based live log streaming: build client streams subprocess output line-by-line to the server; browser tails job logs in real-time via a WebSocket in the log modal
+
 ## 0.0.37
 - Backfill missing changelog entries
 - Strengthen CLAUDE.md release process instructions

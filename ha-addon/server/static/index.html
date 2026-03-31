@@ -1012,7 +1012,7 @@ function renderQueue() {
       badgeLabel = job.state; badgeCls = 'badge badge-' + job.state;
     }
 
-    const hasLog = job.log && ['success','failed','timed_out'].includes(job.state);
+    const hasLog = job.log || ['assigned','running'].includes(job.state);
     const canRetry = ['failed','timed_out'].includes(job.state)
       || (job.state === 'success' && job.ota_result === 'failed');
 
@@ -1037,6 +1037,17 @@ function renderQueue() {
 // ============================================================
 // Log modal
 // ============================================================
+let logWs = null;
+
+function buildWsUrl(path) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const base = document.querySelector('base')?.getAttribute('href') || '/';
+  // Resolve relative path against base href (handles HA Ingress prefix)
+  const a = document.createElement('a');
+  a.href = base + path;
+  return `${proto}//${location.host}${a.pathname}`;
+}
+
 function openLogModal(jobId) {
   const job = queueData.find(j => j.id === jobId);
   if (!job) return;
@@ -1048,13 +1059,40 @@ function openLogModal(jobId) {
   document.getElementById('modal-title').textContent = job.target;
   document.getElementById('modal-state').innerHTML = `<span class="badge badge-${job.state}">${job.state}</span>`;
   document.getElementById('modal-meta').textContent = meta;
-  document.getElementById('modal-log').textContent = job.log || '(no log)';
+
+  const logEl = document.getElementById('modal-log');
+  const isLive = ['assigned', 'running'].includes(job.state);
+
+  if (isLive) {
+    logEl.textContent = '';
+    // Close any previous WebSocket before opening a new one
+    if (logWs) { try { logWs.close(); } catch(e) {} logWs = null; }
+    try {
+      logWs = new WebSocket(buildWsUrl(`ui/api/jobs/${jobId}/log/ws`));
+      logWs.onmessage = (e) => {
+        logEl.textContent += e.data;
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+      logWs.onerror = () => {
+        logEl.textContent += '\n[WebSocket error — log updates paused]';
+      };
+      logWs.onclose = () => {
+        logWs = null;
+      };
+    } catch(e) {
+      logEl.textContent = '(Could not open live log connection)';
+    }
+  } else {
+    logEl.textContent = job.log || '(no log)';
+  }
+
   document.getElementById('log-modal').classList.add('open');
 }
 
 function closeLogModal(e) {
   if (!e || e.target === document.getElementById('log-modal')) {
     document.getElementById('log-modal').classList.remove('open');
+    if (logWs) { try { logWs.close(); } catch(ex) {} logWs = null; }
   }
 }
 

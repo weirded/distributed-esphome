@@ -7,6 +7,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
+import aiohttp
 from aiohttp import web
 
 from app_config import AppConfig
@@ -251,6 +252,38 @@ async def get_client_code(request: web.Request) -> web.Response:
         "version": _get_server_client_version(),
         "files": files,
     })
+
+
+@routes.get("/api/v1/jobs/{id}/log/ws")
+async def ws_client_log(request: web.Request) -> web.WebSocketResponse:
+    """WebSocket endpoint for build clients to stream log lines."""
+    if not _check_auth(request):
+        return _unauthorized()  # type: ignore[return-value]
+
+    job_id = request.match_info["id"]
+    queue = request.app["queue"]
+    job = queue.get(job_id)
+    if not job:
+        return web.json_response({"error": "Job not found"}, status=404)  # type: ignore[return-value]
+
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    subscribers: dict = request.app.setdefault("log_subscribers", {})
+    # The client WS is a producer; it is not added to subscribers
+
+    async for msg in ws:
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            await queue.append_log(job_id, msg.data)
+            for sub_ws in list(subscribers.get(job_id, set())):
+                try:
+                    await sub_ws.send_str(msg.data)
+                except Exception:
+                    subscribers[job_id].discard(sub_ws)
+        elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
+            break
+
+    return ws
 
 
 @routes.get("/api/v1/status")
