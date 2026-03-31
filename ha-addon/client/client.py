@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.46"
+CLIENT_VERSION = "0.0.47"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -740,11 +740,12 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         )
 
         if not compile_ok:
-            _submit_result(job_id, "failed", log=compile_log, ota_result=None)
+            # log=None tells the server to use the streamed log
+            _submit_result(job_id, "failed", log=None, ota_result=None)
             return
 
         # Compile succeeded — report success first
-        _submit_result(job_id, "success", log=compile_log, ota_result=None)
+        _submit_result(job_id, "success", log=None, ota_result=None)
 
         # ---------------------------------------------------------------
         # OTA phase (with one retry on failure)
@@ -779,7 +780,8 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                 ota_logs.append("\n--- Network Diagnostics ---\n" + diag)
 
         logger.info("OTA result for job %s: %s", job_id, ota_result)
-        _submit_ota_result(job_id, ota_result, "\n".join(ota_logs))
+        # log=None tells the server to use the streamed log for the OTA phase
+        _submit_ota_result(job_id, ota_result, None)
 
     finally:
         _log_context.current_target = None
@@ -915,7 +917,7 @@ def _submit_result(
                 time.sleep(2)
 
 
-def _submit_ota_result(job_id: str, ota_result: str, ota_log: str) -> None:
+def _submit_ota_result(job_id: str, ota_result: str, ota_log: Optional[str]) -> None:
     """POST OTA result (and log) update to server."""
     for attempt in range(3):
         try:

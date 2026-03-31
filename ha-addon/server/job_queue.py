@@ -277,8 +277,11 @@ class JobQueue:
             # OTA update on an already-finished job (ota_result required; log is appended if provided)
             if job.state in (JobState.SUCCESS, JobState.FAILED) and ota_result is not None:
                 job.ota_result = ota_result
-                if log is not None:
-                    job.log = (job.log or "") + "\n" + log
+                # Append OTA log from streaming buffer or explicit log
+                ota_log = log if log is not None else (job._streaming_log or None)
+                if ota_log:
+                    job.log = (job.log or "") + "\n" + ota_log
+                job._streaming_log = ""
                 job.status_text = None
                 self._persist()
                 logger.info("Job %s OTA result: %s", job_id, ota_result)
@@ -290,7 +293,9 @@ class JobQueue:
                 )
                 return False
             job.state = JobState.SUCCESS if status == "success" else JobState.FAILED
-            job.log = log
+            # Use the streamed log if the client didn't send a final log
+            job.log = log if log is not None else (job._streaming_log or None)
+            job._streaming_log = ""  # free memory
             job.status_text = None
             if ota_result is not None:
                 job.ota_result = ota_result

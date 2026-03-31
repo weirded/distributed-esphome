@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.47
+- Unify log storage: streaming log IS the authoritative log
+  - Client no longer sends full log on completion (server uses streamed buffer)
+  - Server persists streamed log on job completion
+  - Both live and finished logs render through xterm.js
+
 ## 0.0.46
 - Fix log streaming latency: use read1() for non-blocking pipe reads
   (returns available bytes immediately instead of waiting to fill 4KB buffer)
