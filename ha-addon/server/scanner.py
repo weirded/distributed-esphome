@@ -10,6 +10,40 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Module-level selected version; set at startup and via POST /ui/api/esphome-version.
+# None means "fall back to the installed package version".
+_selected_esphome_version: Optional[str] = None
+
+
+def set_esphome_version(version: str) -> None:
+    """Set the active ESPHome version used for new compile jobs."""
+    global _selected_esphome_version
+    _selected_esphome_version = version
+    logger.info("ESPHome version set to %s", version)
+
+
+def get_esphome_version() -> str:
+    """Return the active ESPHome version.
+
+    Priority:
+    1. Explicitly set version (via ``set_esphome_version`` or the UI).
+    2. Installed ESPHome package (``importlib.metadata``).
+    3. Fallback: ``"unknown"``.
+    """
+    if _selected_esphome_version:
+        return _selected_esphome_version
+    return _get_installed_esphome_version()
+
+
+def _get_installed_esphome_version() -> str:
+    """Return the installed ESPHome package version, or 'unknown' on error."""
+    try:
+        from importlib.metadata import version  # noqa: PLC0415
+        return version("esphome")
+    except Exception:
+        logger.debug("Could not determine esphome version", exc_info=True)
+        return "unknown"
+
 
 def scan_configs(config_dir: str) -> list[str]:
     """
@@ -148,11 +182,3 @@ def build_name_to_target_map(config_dir: str, targets: list[str]) -> dict[str, s
     return name_map
 
 
-def get_esphome_version() -> str:
-    """Return the installed ESPHome package version, or 'unknown' on error."""
-    try:
-        from importlib.metadata import version  # noqa: PLC0415
-        return version("esphome")
-    except Exception:
-        logger.debug("Could not determine esphome version", exc_info=True)
-        return "unknown"

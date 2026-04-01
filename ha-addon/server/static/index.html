@@ -61,6 +61,76 @@
       white-space: nowrap;
     }
 
+    /* ESPHome version dropdown in header */
+    .esphome-version-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .esphome-version-wrap .version-badge {
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .esphome-version-wrap .version-badge:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+    .esphome-version-caret {
+      font-size: 8px;
+      opacity: 0.6;
+    }
+    .esphome-version-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      z-index: 300;
+      min-width: 180px;
+      overflow: hidden;
+    }
+    .esphome-version-dropdown.open { display: block; }
+    .esphome-version-dropdown .vd-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 12px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .esphome-version-dropdown .vd-item:hover { background: var(--border); }
+    .esphome-version-dropdown .vd-item.active { color: var(--accent); font-weight: 600; }
+    .esphome-version-dropdown .vd-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .esphome-version-dropdown .vd-header {
+      padding: 5px 12px 4px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      cursor: default;
+    }
+    .esphome-version-dropdown .vd-loading {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
     header .spacer { flex: 1; }
 
     header .status-dot {
@@ -463,7 +533,17 @@
   <img src="https://media.esphome.io/logo/logo-text-on-dark.svg" alt="ESPHome" height="26" style="display:block;flex-shrink:0">
   <span style="font-size:14px;font-weight:500;color:var(--text-muted);white-space:nowrap">Distributed Build</span>
   <span class="version-badge" id="server-version">v?</span>
-  <span class="version-badge" id="esphome-version">ESPHome v?</span>
+  <div class="esphome-version-wrap" id="esphome-version-wrap">
+    <span class="version-badge" id="esphome-version" onclick="toggleEsphomeVersionDropdown(event)" title="Click to change ESPHome version">
+      ESPHome v?
+      <span class="esphome-version-caret">&#9660;</span>
+    </span>
+    <div class="esphome-version-dropdown" id="esphome-version-dropdown">
+      <div class="vd-header">ESPHome Version</div>
+      <div class="vd-loading" id="esphome-vd-loading">Loading...</div>
+      <div id="esphome-vd-items"></div>
+    </div>
+  </div>
   <span class="spacer"></span>
   <span class="status-dot" id="server-dot" title="Server online"></span>
 </header>
@@ -695,6 +775,7 @@ let serverInfo = { token: '', port: 8765 };
 let expandedJobs = new Set();
 let activeRun = false;
 let _initialAddonVersion = null;
+let esphomeVersionData = { selected: null, detected: null, available: [] };
 
 // ============================================================
 // Utility
@@ -766,6 +847,102 @@ async function refreshServerInfo() {
     }
   } catch(e) { /* ignore */ }
 }
+
+// ============================================================
+// ESPHome version dropdown
+// ============================================================
+async function refreshEsphomeVersions() {
+  try {
+    const r = await apiFetch('./ui/api/esphome-versions');
+    if (!r.ok) return;
+    esphomeVersionData = await r.json();
+    updateEsphomeVersionBadge();
+    renderEsphomeVersionDropdown();
+    // Keep the seed version field in the connect modal in sync
+    const seedField = document.getElementById('cw-seed-version');
+    if (seedField && !seedField._userEdited && esphomeVersionData.selected) {
+      seedField.value = esphomeVersionData.selected;
+      renderDockerCmd();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function updateEsphomeVersionBadge() {
+  const sel = esphomeVersionData.selected || '?';
+  // Update the badge text (keep caret span intact)
+  const badge = document.getElementById('esphome-version');
+  if (badge) {
+    badge.childNodes[0].textContent = 'ESPHome ' + sel + ' ';
+  }
+  // Keep legacy serverVersion in sync for backwards compat (connect modal seed)
+  if (sel && sel !== '?') serverVersion = sel;
+}
+
+function renderEsphomeVersionDropdown() {
+  const loading = document.getElementById('esphome-vd-loading');
+  const items = document.getElementById('esphome-vd-items');
+  if (!items) return;
+
+  const { selected, detected, available } = esphomeVersionData;
+  loading.style.display = 'none';
+
+  if (!available || available.length === 0) {
+    loading.textContent = 'No versions available';
+    loading.style.display = '';
+    return;
+  }
+
+  items.innerHTML = available.map(v => {
+    const isActive = v === selected;
+    const isDetected = v === detected;
+    const label = isDetected ? '(installed)' : '';
+    return `<div class="vd-item${isActive ? ' active' : ''}" onclick="selectEsphomeVersion('${escapeHtml(v)}')">
+      <span>${escapeHtml(v)}</span>
+      ${label ? `<span class="vd-label">${label}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function toggleEsphomeVersionDropdown(e) {
+  e.stopPropagation();
+  const dd = document.getElementById('esphome-version-dropdown');
+  const isOpen = dd.classList.contains('open');
+  // Close all other dropdowns
+  document.querySelectorAll('.esphome-version-dropdown.open').forEach(el => el.classList.remove('open'));
+  if (!isOpen) {
+    dd.classList.add('open');
+    // Refresh if we haven't loaded yet
+    if (esphomeVersionData.available.length === 0) refreshEsphomeVersions();
+  }
+}
+
+async function selectEsphomeVersion(version) {
+  try {
+    const r = await apiFetch('./ui/api/esphome-version', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version }),
+    });
+    if (r.ok) {
+      esphomeVersionData.selected = version;
+      serverVersion = version;
+      updateEsphomeVersionBadge();
+      renderEsphomeVersionDropdown();
+      toast('ESPHome version set to ' + version, 'success');
+    } else {
+      const data = await r.json().catch(() => ({}));
+      toast('Failed to set version: ' + (data.error || r.status), 'error');
+    }
+  } catch(e) {
+    toast('Network error: ' + e.message, 'error');
+  }
+  document.getElementById('esphome-version-dropdown').classList.remove('open');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', () => {
+  document.querySelectorAll('.esphome-version-dropdown.open').forEach(el => el.classList.remove('open'));
+});
 
 function clientVersionHtml(ver) {
   if (!ver) return '<span style="color:var(--text-muted)">—</span>';
@@ -843,9 +1020,10 @@ async function refreshDevices() {
     ]);
     if (tr.ok) {
       targetsData = await tr.json();
+      // server_version in targets reflects the active selected version; keep
+      // serverVersion in sync for uses like the connect-modal seed field.
       if (targetsData.length > 0 && targetsData[0].server_version) {
         serverVersion = targetsData[0].server_version;
-        document.getElementById('esphome-version').textContent = 'ESPHome ' + serverVersion;
         renderDockerCmd();
       }
     }
@@ -1677,6 +1855,9 @@ function startPolling() {
   // Server info: every 30s (detects version changes → auto-reload)
   setInterval(refreshServerInfo, 30000);
 
+  // ESPHome version list: every 15 minutes (PyPI is cached server-side for 1h)
+  setInterval(refreshEsphomeVersions, 15 * 60 * 1000);
+
   // Workers: every 5s
   setInterval(async () => {
     try {
@@ -1696,7 +1877,6 @@ function startPolling() {
         targetsData = await tr.json();
         if (targetsData.length && targetsData[0].server_version) {
           serverVersion = targetsData[0].server_version;
-          document.getElementById('esphome-version').textContent = 'ESPHome ' + serverVersion;
           renderDockerCmd();
         }
       }
@@ -1726,7 +1906,7 @@ async function init() {
   const savedTab = sessionStorage.getItem('activeTab') || 'devices';
   switchTab(savedTab);
 
-  await Promise.all([refreshServerInfo(), refreshStatus(), refreshDevices(), refreshQueue()]);
+  await Promise.all([refreshServerInfo(), refreshEsphomeVersions(), refreshStatus(), refreshDevices(), refreshQueue()]);
   startPolling();
 }
 

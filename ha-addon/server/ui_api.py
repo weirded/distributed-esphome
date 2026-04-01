@@ -12,7 +12,7 @@ from aiohttp import web
 from app_config import AppConfig
 from device_poller import Device
 from job_queue import JobState
-from scanner import scan_configs, get_esphome_version, get_device_metadata
+from scanner import scan_configs, get_esphome_version, set_esphome_version, get_device_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +240,45 @@ async def get_devices(request: web.Request) -> web.Response:
         result.append(d)
 
     return web.json_response(result)
+
+
+@routes.get("/ui/api/esphome-versions")
+async def get_esphome_versions(request: web.Request) -> web.Response:
+    """Return ESPHome version state: selected, detected, and available list."""
+    selected = get_esphome_version()
+    detected = request.app.get("esphome_detected_version")
+    available = request.app.get("esphome_available_versions", [])
+
+    # If PyPI list is empty, at least include the currently selected version so
+    # the UI has something to show.
+    if not available and selected and selected != "unknown":
+        available = [selected]
+
+    return web.json_response({
+        "selected": selected,
+        "detected": detected,
+        "available": available,
+    })
+
+
+@routes.post("/ui/api/esphome-version")
+async def set_esphome_version_handler(request: web.Request) -> web.Response:
+    """Set the active ESPHome version for new compile jobs.
+
+    Body: { "version": "2026.3.1" }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    version = body.get("version", "").strip()
+    if not version:
+        return web.json_response({"error": "version is required"}, status=400)
+
+    set_esphome_version(version)
+    logger.info("ESPHome version changed to %s via UI", version)
+    return web.json_response({"ok": True, "version": version})
 
 
 @routes.post("/ui/api/compile")

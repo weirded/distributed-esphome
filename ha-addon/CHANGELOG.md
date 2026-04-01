@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.63
+- ESPHome version is now detected from the HA Supervisor add-on API at startup
+  (falls back to installed package, then "unknown")
+- Available versions are fetched from PyPI on startup and refreshed hourly
+- Header ESPHome version badge replaced with a dropdown — click to select which
+  version workers compile with; selected version resets to detected on restart
+- New API endpoints: GET /ui/api/esphome-versions, POST /ui/api/esphome-version
+
 ## 0.0.62
 - Fix CPU usage reporting: use os.getloadavg() instead of /proc/stat sampling
   (works reliably in Docker on macOS, no 100ms sleep per heartbeat)

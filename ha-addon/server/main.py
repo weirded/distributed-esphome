@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
+from typing import Optional
 
+import aiohttp
 from aiohttp import web
 
 import api as api_module
@@ -103,6 +106,79 @@ async def config_scanner(app: web.Application) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ESPHome version detection and PyPI version list
+# ---------------------------------------------------------------------------
+
+_PYPI_CACHE_TTL = 3600  # seconds
+
+
+async def _fetch_ha_esphome_version(session: aiohttp.ClientSession) -> Optional[str]:
+    """Query the HA Supervisor for the installed ESPHome add-on version.
+
+    Returns the version string, or None if not running inside an HA add-on or
+    if the request fails for any reason.
+    """
+    import os  # noqa: PLC0415
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return None
+
+    for slug in ("5c53de3b_esphome", "core_esphome", "local_esphome"):
+        try:
+            async with session.get(
+                f"http://supervisor/addons/{slug}/info",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    version = data.get("data", {}).get("version")
+                    if version:
+                        logger.info("Detected HA ESPHome add-on version %s (slug: %s)", version, slug)
+                        return str(version)
+        except Exception:
+            logger.debug("Supervisor query failed for slug %s", slug, exc_info=True)
+
+    return None
+
+
+async def _fetch_pypi_versions(session: aiohttp.ClientSession, limit: int = 10) -> list[str]:
+    """Return recent ESPHome versions from PyPI, newest first."""
+    try:
+        async with session.get(
+            "https://pypi.org/pypi/esphome/json",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                releases = list(data.get("releases", {}).keys())
+
+                def _version_key(v: str) -> list[int]:
+                    return [int(x) for x in v.split(".") if x.isdigit()]
+
+                releases.sort(key=_version_key, reverse=True)
+                return releases[:limit]
+    except Exception:
+        logger.debug("Failed to fetch PyPI esphome versions", exc_info=True)
+    return []
+
+
+async def pypi_version_refresher(app: web.Application) -> None:
+    """Background task: refresh available ESPHome versions from PyPI every hour."""
+    while True:
+        await asyncio.sleep(_PYPI_CACHE_TTL)
+        try:
+            async with aiohttp.ClientSession() as session:
+                versions = await _fetch_pypi_versions(session)
+            if versions:
+                app["esphome_available_versions"] = versions
+                app["esphome_versions_fetched_at"] = time.monotonic()
+                logger.info("Refreshed PyPI ESPHome version list: %d versions", len(versions))
+        except Exception:
+            logger.exception("Error refreshing PyPI ESPHome versions")
+
+
+# ---------------------------------------------------------------------------
 # Static file serving with ingress path injection
 # ---------------------------------------------------------------------------
 
@@ -162,14 +238,38 @@ def create_app() -> web.Application:
     if STATIC_DIR.is_dir():
         app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
 
+    # ESPHome version state — populated during startup
+    app["esphome_detected_version"] = None   # version from HA Supervisor (or None)
+    app["esphome_available_versions"] = []   # list of versions from PyPI
+    app["esphome_versions_fetched_at"] = 0.0
+
     # Startup/shutdown hooks
     async def on_startup(app: web.Application) -> None:
         logger.info("Starting ESPHome Distributed Build Server")
         logger.info("Config dir: %s", cfg.config_dir)
         logger.info("Token configured: %s", bool(cfg.token))
 
+        # Detect ESPHome version: HA add-on → installed package → "unknown"
+        from scanner import (  # noqa: PLC0415
+            scan_configs, build_name_to_target_map,
+            set_esphome_version, _get_installed_esphome_version,
+        )
+
+        async with aiohttp.ClientSession() as session:
+            detected = await _fetch_ha_esphome_version(session)
+            available = await _fetch_pypi_versions(session)
+
+        app["esphome_detected_version"] = detected
+        if available:
+            app["esphome_available_versions"] = available
+            app["esphome_versions_fetched_at"] = time.monotonic()
+
+        # Select initial version: HA detected → installed package → "unknown"
+        selected = detected or _get_installed_esphome_version()
+        set_esphome_version(selected)
+        logger.info("Active ESPHome version: %s (detected: %s)", selected, detected)
+
         # Update device poller with known targets
-        from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
         targets = scan_configs(cfg.config_dir)
         name_map = build_name_to_target_map(cfg.config_dir, targets)
         device_poller.update_compile_targets(targets, name_map)
@@ -180,11 +280,12 @@ def create_app() -> web.Application:
         # Start background tasks
         app["timeout_checker_task"] = asyncio.create_task(timeout_checker(app))
         app["config_scanner_task"] = asyncio.create_task(config_scanner(app))
+        app["pypi_version_refresher_task"] = asyncio.create_task(pypi_version_refresher(app))
 
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down ESPHome Distributed Build Server")
 
-        for task_name in ("timeout_checker_task", "config_scanner_task"):
+        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task"):
             task = app.get(task_name)
             if task:
                 task.cancel()
