@@ -188,19 +188,27 @@ async def get_next_job(request: web.Request) -> web.Response:
 
     hostname = worker.hostname if worker else None
 
-    # Performance-based scheduling: if a faster idle worker exists,
+    # Performance-based scheduling: if a faster worker with free slots exists,
     # defer claiming recently-enqueued jobs so the faster worker gets them.
     faster_idle = False
     if worker and worker.system_info:
         my_score = worker.system_info.get("perf_score", 0)
         cfg_threshold = cfg.worker_offline_threshold
+        # Count active jobs per worker from the queue (authoritative)
+        active_jobs_by_worker: dict[str, int] = {}
+        for j in queue.get_all():
+            if j.state == JobState.WORKING and j.assigned_client_id:
+                active_jobs_by_worker[j.assigned_client_id] = \
+                    active_jobs_by_worker.get(j.assigned_client_id, 0) + 1
         for other in registry.get_all():
             if other.client_id == client_id:
                 continue
             if other.disabled or not registry.is_online(other.client_id, cfg_threshold):
                 continue
-            if other.current_job_id is not None:
-                continue  # other worker is busy
+            # Check if this worker has free slots
+            active = active_jobs_by_worker.get(other.client_id, 0)
+            if active >= other.max_parallel_jobs:
+                continue  # all slots busy
             other_score = (other.system_info or {}).get("perf_score", 0)
             if other_score > my_score:
                 faster_idle = True

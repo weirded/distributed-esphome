@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.58
+- Fix multi-slot scheduling: count actual WORKING jobs per worker (not just
+  current_job_id) so 2 jobs go to 2 different workers instead of both slots
+  on the fastest worker
+- Devices tab: show "last seen" time (e.g. "3m ago") below online/offline status
+
 ## 0.0.57
 - Auto-reload UI when server version changes (polls every 30s, shows toast, reloads after 1.5s)
 

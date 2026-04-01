@@ -116,6 +116,7 @@ async def get_targets(request: web.Request) -> web.Response:
                 else None
             ),
             "ip_address": dev.ip_address if dev else None,
+            "last_seen": dev.last_seen.isoformat() if dev and dev.last_seen else None,
             "server_version": server_version,
         }
         result.append(entry)

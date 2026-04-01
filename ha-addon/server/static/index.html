@@ -998,11 +998,17 @@ function renderDevices() {
   const sortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
 
   const managedRows = sortedTargets.map(t => {
+    let lastSeenHtml = '';
+    if (t.last_seen) {
+      const ago = Math.round((Date.now() - new Date(t.last_seen).getTime()) / 1000);
+      const agoText = ago < 60 ? ago + 's ago' : ago < 3600 ? Math.floor(ago/60) + 'm ago' : Math.floor(ago/3600) + 'h ago';
+      lastSeenHtml = `<div style="font-size:10px;color:var(--text-muted)">${agoText}</div>`;
+    }
     const statusHtml = t.online == null
       ? '<span class="dot dot-offline"></span><span style="color:var(--text-muted)">Unknown</span>'
       : t.online
-        ? '<span class="dot dot-online"></span>Online'
-        : '<span class="dot dot-offline"></span>Offline';
+        ? '<span class="dot dot-online"></span>Online' + lastSeenHtml
+        : '<span class="dot dot-offline"></span>Offline' + lastSeenHtml;
     const upgradeBtnCls = t.needs_update ? 'btn-success' : 'btn-secondary';
     const nameHtml = t.friendly_name
       ? `<span class="device-name">${escapeHtml(t.friendly_name)}</span>`
