@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.60"
+CLIENT_VERSION = "0.0.61"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -196,6 +196,35 @@ def _format_uptime(seconds: float) -> str:
     return f"{secs}s"
 
 
+def _get_cpu_usage() -> Optional[float]:
+    """Return CPU usage as a percentage (0-100) by sampling /proc/stat.
+
+    Returns None if /proc/stat is unavailable (non-Linux).
+    """
+    try:
+        def _read_cpu_times():
+            with open("/proc/stat", encoding="utf-8") as f:
+                line = f.readline()  # first line: "cpu  user nice system idle ..."
+            parts = line.split()
+            # user, nice, system, idle, iowait, irq, softirq, steal
+            times = [int(x) for x in parts[1:9]]
+            idle = times[3] + times[4]  # idle + iowait
+            total = sum(times)
+            return idle, total
+
+        idle1, total1 = _read_cpu_times()
+        time.sleep(0.1)
+        idle2, total2 = _read_cpu_times()
+
+        idle_delta = idle2 - idle1
+        total_delta = total2 - total1
+        if total_delta == 0:
+            return 0.0
+        return round((1.0 - idle_delta / total_delta) * 100, 1)
+    except Exception:
+        return None
+
+
 def collect_system_info() -> dict:
     """Gather hardware/OS details using stdlib only. All fields are best-effort.
 
@@ -216,6 +245,7 @@ def collect_system_info() -> dict:
         "total_memory": _format_memory(mem_bytes) if mem_bytes is not None else None,
         "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
         "perf_score": _CPU_PERF_SCORE,
+        "cpu_usage": _get_cpu_usage(),
     }
     return info
 

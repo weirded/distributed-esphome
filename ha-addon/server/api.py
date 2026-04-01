@@ -188,13 +188,17 @@ async def get_next_job(request: web.Request) -> web.Response:
 
     hostname = worker.hostname if worker else None
 
-    # Performance-based scheduling: spread jobs across workers, fastest first.
+    # Performance-based scheduling: spread jobs across workers, best-available first.
+    # Effective score = perf_score * (1 - cpu_usage/100) — factors in both speed and load.
     # Two rules:
     # 1. Defer if ANY online worker has fewer active jobs (spread evenly first)
-    # 2. Among workers with equal job counts, defer if a faster one has free slots
+    # 2. Among workers with equal job counts, defer if one with higher effective score has free slots
     should_defer = False
     if worker:
-        my_score = (worker.system_info or {}).get("perf_score", 0)
+        my_info = worker.system_info or {}
+        my_perf = my_info.get("perf_score", 0)
+        my_cpu = my_info.get("cpu_usage")
+        my_effective = my_perf * (1 - (my_cpu or 0) / 100)
         cfg_threshold = cfg.worker_offline_threshold
         # Count active jobs per worker from the queue
         active_jobs_by_worker: dict[str, int] = {}
@@ -209,7 +213,10 @@ async def get_next_job(request: web.Request) -> web.Response:
             if other.disabled or not registry.is_online(other.client_id, cfg_threshold):
                 continue
             other_active = active_jobs_by_worker.get(other.client_id, 0)
-            other_score = (other.system_info or {}).get("perf_score", 0)
+            other_info = other.system_info or {}
+            other_perf = other_info.get("perf_score", 0)
+            other_cpu = other_info.get("cpu_usage")
+            other_effective = other_perf * (1 - (other_cpu or 0) / 100)
             other_free = other_active < other.max_parallel_jobs
             if not other_free:
                 continue  # fully busy, ignore
@@ -217,8 +224,8 @@ async def get_next_job(request: web.Request) -> web.Response:
             if other_active < my_active:
                 should_defer = True
                 break
-            # Rule 2: same job count but faster — let them go first
-            if other_active == my_active and other_score > my_score:
+            # Rule 2: same job count but higher effective score — let them go first
+            if other_active == my_active and other_effective > my_effective:
                 should_defer = True
                 break
 

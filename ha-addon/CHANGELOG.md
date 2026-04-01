@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.61
+- Workers report CPU utilization on every heartbeat (sampled from /proc/stat)
+- Scheduling uses effective score = perf_score × (1 - cpu_usage/100)
+  so a busy fast machine defers to an idle slower one
+- Workers tab shows CPU usage alongside perf score
+
 ## 0.0.60
 - Fix job distribution: spread evenly across workers before filling slots
   - Rule 1: defer if ANY worker has fewer active jobs (spread first)

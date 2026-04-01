@@ -890,9 +890,12 @@ function workerPlatformHtml(c) {
   if (hwParts.length) {
     lines.push(`<span style="font-size:10px;color:var(--text-muted)">${hwParts.join(' · ')}</span>`);
   }
-  // Perf score badge
-  if (si.perf_score != null) {
-    lines.push(`<span style="font-size:10px;color:var(--text-muted)" title="CPU benchmark score (SHA256 ops/s / 1000)">Score: ${si.perf_score}</span>`);
+  // Perf score + CPU usage
+  const metrics = [];
+  if (si.perf_score != null) metrics.push(`Score: ${si.perf_score}`);
+  if (si.cpu_usage != null) metrics.push(`CPU: ${si.cpu_usage}%`);
+  if (metrics.length) {
+    lines.push(`<span style="font-size:10px;color:var(--text-muted)" title="Perf score (SHA256 benchmark) · CPU utilization">${metrics.join(' · ')}</span>`);
   }
   return lines.join('<br>');
 }
