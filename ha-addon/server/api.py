@@ -188,12 +188,13 @@ async def get_next_job(request: web.Request) -> web.Response:
 
     hostname = worker.hostname if worker else None
 
-    # Performance-based scheduling: prefer faster workers.
-    # Defer if a faster worker with equal-or-fewer active jobs exists.
-    # This ensures: single jobs → fastest worker; batch jobs → spread across workers.
-    faster_idle = False
-    if worker and worker.system_info:
-        my_score = worker.system_info.get("perf_score", 0)
+    # Performance-based scheduling: spread jobs across workers, fastest first.
+    # Two rules:
+    # 1. Defer if ANY online worker has fewer active jobs (spread evenly first)
+    # 2. Among workers with equal job counts, defer if a faster one has free slots
+    should_defer = False
+    if worker:
+        my_score = (worker.system_info or {}).get("perf_score", 0)
         cfg_threshold = cfg.worker_offline_threshold
         # Count active jobs per worker from the queue
         active_jobs_by_worker: dict[str, int] = {}
@@ -209,14 +210,20 @@ async def get_next_job(request: web.Request) -> web.Response:
                 continue
             other_active = active_jobs_by_worker.get(other.client_id, 0)
             other_score = (other.system_info or {}).get("perf_score", 0)
-            # Defer if a faster worker has equal or fewer active jobs AND has free slots
-            if other_score > my_score and other_active <= my_active \
-                    and other_active < other.max_parallel_jobs:
-                faster_idle = True
+            other_free = other_active < other.max_parallel_jobs
+            if not other_free:
+                continue  # fully busy, ignore
+            # Rule 1: another worker has fewer jobs — let them catch up
+            if other_active < my_active:
+                should_defer = True
+                break
+            # Rule 2: same job count but faster — let them go first
+            if other_active == my_active and other_score > my_score:
+                should_defer = True
                 break
 
     job = await queue.claim_next(client_id, worker_id, hostname=hostname,
-                                  faster_idle_worker_exists=faster_idle)
+                                  faster_idle_worker_exists=should_defer)
     if job is None:
         return web.Response(status=204)
 

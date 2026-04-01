@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.60
+- Fix job distribution: spread evenly across workers before filling slots
+  - Rule 1: defer if ANY worker has fewer active jobs (spread first)
+  - Rule 2: among equal job counts, defer if a faster worker has free slots
+  - 4 jobs across 4 workers → 1 each, not 2+2 on fastest two
+
 ## 0.0.59
 - Fix job scheduling: remove broken grace period approach, replace with
   simple rule: defer if a faster worker has equal-or-fewer jobs AND free slots
