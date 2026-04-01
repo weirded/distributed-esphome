@@ -356,7 +356,7 @@ class JobQueue:
         run_id: str,
         timeout_seconds: int,
     ) -> list["Job"]:
-        """Re-enqueue failed/timed_out jobs as new PENDING jobs. Returns new jobs.
+        """Re-enqueue failed/timed_out/success jobs as new PENDING jobs. Returns new jobs.
 
         The old job being retried is removed; any other terminal jobs for the
         same target are also cleared (same semantics as enqueue).
@@ -369,7 +369,8 @@ class JobQueue:
                     continue
                 is_failed = job.state in (JobState.FAILED, JobState.TIMED_OUT)
                 is_ota_failed = job.state == JobState.SUCCESS and job.ota_result == "failed"
-                if not (is_failed or is_ota_failed):
+                is_success = job.state == JobState.SUCCESS
+                if not (is_failed or is_ota_failed or is_success):
                     continue
                 target = job.target
                 # Pin OTA retries to the worker that compiled the firmware

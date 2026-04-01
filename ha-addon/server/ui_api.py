@@ -30,21 +30,39 @@ async def get_server_info(request: web.Request) -> web.Response:
     from api import _get_server_client_version  # noqa: PLC0415
     cfg = _cfg(request)
     addon_version = _get_server_client_version()
-    # Resolve the server's IP so the Connect Worker dialog uses an IP, not a hostname
+
+    # Collect all addresses the server is reachable on.
+    # Start with hostname, then enumerate all non-loopback IPv4 addresses.
+    addrs: list[str] = []
     try:
-        server_ip = socket.gethostbyname(socket.gethostname())
-        if server_ip.startswith("127."):
-            # Loopback — try to get the real IP via a UDP socket trick
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            server_ip = s.getsockname()[0]
-            s.close()
+        hostname = socket.gethostname()
+        addrs.append(hostname)
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            ip = str(info[4][0])
+            if ip not in addrs and not ip.startswith("127."):
+                addrs.append(ip)
     except Exception:
-        server_ip = None
+        pass
+    # Use a UDP connect trick to find the primary outbound IP (most useful for workers)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        primary_ip = s.getsockname()[0]
+        s.close()
+        if primary_ip not in addrs:
+            addrs.insert(0, primary_ip)
+    except Exception:
+        pass
+
+    # Backwards-compat: server_ip is the first IP address found (or None)
+    ip_addrs = [a for a in addrs if a.replace(".", "").isdigit()]
+    server_ip = ip_addrs[0] if ip_addrs else (addrs[0] if addrs else None)
+
     return web.json_response({
         "token": cfg.token,
         "port": cfg.port,
         "server_ip": server_ip,
+        "server_addresses": addrs,
         "server_client_version": addon_version,
         "addon_version": addon_version,
     })

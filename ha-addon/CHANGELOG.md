@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.55
+- Succeeded jobs can now be retried (individual Retry button + Retry Selected)
+- Connect Worker: server URL is now a dropdown with hostname + all known IPs
+- Checkboxes in Queue and Devices tabs retained across auto-refresh
+- Worker performance score: 1-second CPU benchmark (SHA256), shown in Workers tab
+- Workers tab: CPU arch, cores, memory moved from hostname to platform column
+
 ## 0.0.54
 - Log modal: Retry button in header for failed/OTA-failed jobs
 - Queue tab: Clear Succeeded button now green (btn-success)

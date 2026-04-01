@@ -436,13 +436,16 @@ def test_retry_ignores_non_terminal_jobs(queue):
     assert new_jobs == []  # WORKING job is not retryable
 
 
-def test_retry_ignores_success_jobs(queue):
+def test_retry_success_jobs(queue):
+    """Success jobs can be individually retried (e.g. config changed after build)."""
     job = run(_enqueue(queue, "device1.yaml"))
     claimed = run(queue.claim_next("client-A"))
     run(queue.submit_result(claimed.id, "success"))
 
     new_jobs = run(queue.retry([claimed.id], "2024.3.1", "run2", 300))
-    assert new_jobs == []  # SUCCESS is terminal, not retryable
+    assert len(new_jobs) == 1
+    assert new_jobs[0].target == "device1.yaml"
+    assert new_jobs[0].state.value == "pending"
 
 
 def test_retry_multiple_jobs(queue):

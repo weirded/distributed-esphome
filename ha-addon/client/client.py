@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "0.0.54"
+CLIENT_VERSION = "0.0.55"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -37,6 +37,22 @@ CLIENT_VERSION = "0.0.54"
 
 # Captured at process start so uptime can be computed on each heartbeat.
 _PROCESS_START_TIME: float = time.monotonic()
+
+
+def _benchmark_cpu() -> int:
+    """Run a quick CPU benchmark. Returns a relative performance score (SHA256 ops/sec / 1000)."""
+    import hashlib  # noqa: PLC0415
+    data = b"benchmark" * 1000
+    count = 0
+    deadline = time.monotonic() + 1.0  # run for 1 second
+    while time.monotonic() < deadline:
+        hashlib.sha256(data).digest()
+        count += 1
+    return count
+
+
+# Computed once at startup; included in every heartbeat as a relative CPU score.
+_CPU_PERF_SCORE: int = _benchmark_cpu()
 
 
 def _get_os_version() -> str:
@@ -199,6 +215,7 @@ def collect_system_info() -> dict:
         "cpu_model": _get_cpu_model(),
         "total_memory": _format_memory(mem_bytes) if mem_bytes is not None else None,
         "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
+        "perf_score": _CPU_PERF_SCORE,
     }
     return info
 

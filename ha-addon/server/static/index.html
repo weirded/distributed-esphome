@@ -601,7 +601,7 @@
       <div class="connect-form">
         <div>
           <label>Server URL</label>
-          <input type="text" id="cw-server-url" readonly />
+          <select id="cw-server-url" onchange="renderDockerCmd()"></select>
         </div>
         <div>
           <label>Server Token</label>
@@ -858,14 +858,8 @@ async function refreshQueue() {
 // Render: Workers
 // ============================================================
 function workerSystemInfoHtml(c) {
-  const si = c.system_info;
-  if (!si) return '';
-  const parts = [];
-  if (si.cpu_arch) parts.push(escapeHtml(si.cpu_arch));
-  if (si.cpu_cores) parts.push(si.cpu_cores + ' cores');
-  if (si.total_memory) parts.push(escapeHtml(si.total_memory));
-  if (!parts.length) return '';
-  return `<br><span style="font-size:10px;color:var(--text-muted)">${parts.join(' · ')}</span>`;
+  // Hostname column: just hostname (hardware details moved to platform column)
+  return '';
 }
 
 function workerPlatformHtml(c) {
@@ -877,6 +871,18 @@ function workerPlatformHtml(c) {
   }
   if (si.cpu_model) {
     lines.push(`<span style="font-size:10px;color:var(--text-muted)">${escapeHtml(si.cpu_model)}</span>`);
+  }
+  // CPU arch, cores, memory
+  const hwParts = [];
+  if (si.cpu_arch) hwParts.push(escapeHtml(si.cpu_arch));
+  if (si.cpu_cores) hwParts.push(si.cpu_cores + ' cores');
+  if (si.total_memory) hwParts.push(escapeHtml(si.total_memory));
+  if (hwParts.length) {
+    lines.push(`<span style="font-size:10px;color:var(--text-muted)">${hwParts.join(' · ')}</span>`);
+  }
+  // Perf score badge
+  if (si.perf_score != null) {
+    lines.push(`<span style="font-size:10px;color:var(--text-muted)" title="CPU benchmark score (SHA256 ops/s / 1000)">Score: ${si.perf_score}</span>`);
   }
   return lines.join('<br>');
 }
@@ -959,6 +965,14 @@ function renderWorkers() {
 // ============================================================
 function renderDevices() {
   const tbody = document.getElementById('devices-tbody');
+
+  // Preserve checked state across re-renders
+  const checkedTargets = new Set(
+    [...document.querySelectorAll('.target-cb:checked')].map(cb => cb.value)
+  );
+  const devSelectAll = document.getElementById('devices-select-all');
+  const devSelectAllChecked = devSelectAll ? devSelectAll.checked : false;
+
   const unmanaged = devicesData.filter(d => !d.compile_target);
   const totalOnline = targetsData.filter(t => t.online).length + unmanaged.filter(d => d.online).length;
   const totalKnown = targetsData.filter(t => t.online != null).length + unmanaged.length;
@@ -986,7 +1000,7 @@ function renderDevices() {
     const filenameHtml = `<div class="device-filename">${escapeHtml(stripYaml(t.target))}</div>`;
     const commentHtml = t.comment ? `<div class="device-comment">${escapeHtml(t.comment)}</div>` : '';
     return `<tr>
-      <td><input type="checkbox" class="target-cb" value="${escapeHtml(t.target)}"></td>
+      <td><input type="checkbox" class="target-cb" value="${escapeHtml(t.target)}"${checkedTargets.has(t.target) ? " checked" : ""}></td>
       <td>${nameHtml}${filenameHtml}${commentHtml}</td>
       <td>${statusHtml}</td>
       <td style="color:var(--text-muted);font-family:monospace;font-size:12px">${escapeHtml(t.ip_address || '—')}</td>
@@ -1016,6 +1030,8 @@ function renderDevices() {
   });
 
   tbody.innerHTML = [...managedRows, ...unmanagedRows].join('');
+  // Restore select-all checkbox state
+  if (devSelectAll) devSelectAll.checked = devSelectAllChecked;
 }
 
 // ============================================================
@@ -1023,6 +1039,13 @@ function renderDevices() {
 // ============================================================
 function renderQueue() {
   const tbody = document.getElementById('queue-tbody');
+
+  // Preserve checked state and select-all across re-renders
+  const checkedIds = new Set(
+    [...document.querySelectorAll('.queue-cb:checked')].map(cb => cb.value)
+  );
+  const queueSelectAll = document.getElementById('queue-select-all');
+  const queueSelectAllChecked = queueSelectAll ? queueSelectAll.checked : false;
 
   const active = queueData.filter(j => ['pending','working'].includes(j.state)).length;
   const failed = queueData.filter(j => ['failed','timed_out'].includes(j.state)).length;
@@ -1044,10 +1067,6 @@ function renderQueue() {
     if (so !== 0) return so;
     return new Date(b.created_at) - new Date(a.created_at);
   });
-
-  const checkedIds = new Set(
-    [...document.querySelectorAll('.queue-cb:checked')].map(cb => cb.value)
-  );
 
   const rows = [];
   for (const job of sorted) {
@@ -1096,8 +1115,7 @@ function renderQueue() {
     }
 
     const hasLog = job.log || job.state === 'working';
-    const canRetry = ['failed','timed_out'].includes(job.state)
-      || (job.state === 'success' && job.ota_result === 'failed');
+    const canRetry = ['failed','timed_out','success'].includes(job.state);
 
     rows.push(`<tr data-job="${job.id}">
       <td><input type="checkbox" class="queue-cb" value="${job.id}"${checkedIds.has(job.id) ? ' checked' : ''}></td>
@@ -1114,6 +1132,8 @@ function renderQueue() {
   }
 
   tbody.innerHTML = rows.join('');
+  // Restore select-all checkbox state
+  if (queueSelectAll) queueSelectAll.checked = queueSelectAllChecked;
   renderWorkers();
 }
 
@@ -1205,8 +1225,7 @@ function updateLogModalHeader() {
   }
   document.getElementById('modal-state').innerHTML = `<span class="${modalBadgeCls}">${escapeHtml(modalBadgeLabel)}</span>`;
   document.getElementById('modal-meta').textContent = meta;
-  const canRetry = ['failed','timed_out'].includes(job.state)
-    || (job.state === 'success' && job.ota_result === 'failed');
+  const canRetry = ['failed','timed_out','success'].includes(job.state);
   document.getElementById('modal-actions').innerHTML = canRetry
     ? `<button class="btn-warn btn-sm" onclick="retryJobs(['${job.id}']);closeLogModal();">Retry</button>`
     : '';
@@ -1289,14 +1308,28 @@ function closeLogModal(e) {
 // Connect worker modal
 // ============================================================
 function openConnectModal() {
-  // Pre-fill read-only fields from current server state
-  // Use the server's reported IP if available, fall back to the browser's hostname
-  const host = serverInfo.server_ip || window.location.hostname;
+  // Populate the server URL dropdown with all known addresses
   const port = serverInfo.port || 8765;
-  const urlField = document.getElementById('cw-server-url');
+  const urlSelect = document.getElementById('cw-server-url');
+  if (urlSelect) {
+    const addrs = serverInfo.server_addresses && serverInfo.server_addresses.length
+      ? serverInfo.server_addresses
+      : [serverInfo.server_ip || window.location.hostname];
+    // Remember the currently selected URL so we can restore it if still present
+    const prevUrl = urlSelect.value;
+    urlSelect.innerHTML = addrs
+      .map(addr => {
+        const url = `http://${addr}:${port}`;
+        return `<option value="${url}">${url}</option>`;
+      })
+      .join('');
+    // Restore previous selection if it still exists in the new list
+    if (prevUrl && [...urlSelect.options].some(o => o.value === prevUrl)) {
+      urlSelect.value = prevUrl;
+    }
+  }
   const tokenField = document.getElementById('cw-server-token');
   const seedField = document.getElementById('cw-seed-version');
-  if (urlField) urlField.value = `http://${host}:${port}`;
   if (tokenField) tokenField.value = serverInfo.token || '';
   if (seedField && !seedField._userEdited) {
     seedField.value = (serverVersion && serverVersion !== '?') ? serverVersion : '';
@@ -1422,10 +1455,9 @@ async function retrySelected() {
     .map(cb => cb.value)
     .filter(id => {
       const job = queueData.find(j => j.id === id);
-      return job && (['failed','timed_out'].includes(job.state)
-        || (job.state === 'success' && job.ota_result === 'failed'));
+      return job && ['failed','timed_out','success'].includes(job.state);
     });
-  if (!ids.length) { toast('No failed/timed-out jobs selected', 'error'); return; }
+  if (!ids.length) { toast('No retryable jobs selected', 'error'); return; }
   await retryJobs(ids);
 }
 
