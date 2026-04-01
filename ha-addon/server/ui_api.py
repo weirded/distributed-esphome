@@ -26,12 +26,25 @@ def _cfg(request: web.Request) -> AppConfig:
 @routes.get("/ui/api/server-info")
 async def get_server_info(request: web.Request) -> web.Response:
     """Return server configuration needed by the UI (token, port, versions)."""
+    import socket  # noqa: PLC0415
     from api import _get_server_client_version  # noqa: PLC0415
     cfg = _cfg(request)
     addon_version = _get_server_client_version()
+    # Resolve the server's IP so the Connect Worker dialog uses an IP, not a hostname
+    try:
+        server_ip = socket.gethostbyname(socket.gethostname())
+        if server_ip.startswith("127."):
+            # Loopback — try to get the real IP via a UDP socket trick
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            server_ip = s.getsockname()[0]
+            s.close()
+    except Exception:
+        server_ip = None
     return web.json_response({
         "token": cfg.token,
         "port": cfg.port,
+        "server_ip": server_ip,
         "server_client_version": addon_version,
         "addon_version": addon_version,
     })

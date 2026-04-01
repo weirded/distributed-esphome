@@ -528,7 +528,7 @@
           <button class="btn-warn btn-sm" onclick="retryAllFailed()">Retry All Failed</button>
           <button class="btn-warn btn-sm" onclick="retrySelected()">Retry Selected</button>
           <button class="btn-danger btn-sm" onclick="cancelSelected()">Cancel Selected</button>
-          <button class="btn-secondary btn-sm" onclick="clearSucceeded()">Clear Succeeded</button>
+          <button class="btn-success btn-sm" onclick="clearSucceeded()">Clear Succeeded</button>
           <button class="btn-secondary btn-sm" onclick="clearFinished()">Clear Finished</button>
         </div>
       </div>
@@ -658,6 +658,7 @@
         <h3 id="modal-title"></h3>
         <span id="modal-state"></span>
         <span id="modal-meta" style="font-size:12px;color:var(--text-muted)"></span>
+        <span id="modal-actions"></span>
       </div>
       <button class="modal-close" onclick="closeLogModal()">✕</button>
     </div>
@@ -1204,6 +1205,11 @@ function updateLogModalHeader() {
   }
   document.getElementById('modal-state').innerHTML = `<span class="${modalBadgeCls}">${escapeHtml(modalBadgeLabel)}</span>`;
   document.getElementById('modal-meta').textContent = meta;
+  const canRetry = ['failed','timed_out'].includes(job.state)
+    || (job.state === 'success' && job.ota_result === 'failed');
+  document.getElementById('modal-actions').innerHTML = canRetry
+    ? `<button class="btn-warn btn-sm" onclick="retryJobs(['${job.id}']);closeLogModal();">Retry</button>`
+    : '';
 }
 
 function openLogModal(jobId) {
@@ -1284,7 +1290,8 @@ function closeLogModal(e) {
 // ============================================================
 function openConnectModal() {
   // Pre-fill read-only fields from current server state
-  const host = window.location.hostname;
+  // Use the server's reported IP if available, fall back to the browser's hostname
+  const host = serverInfo.server_ip || window.location.hostname;
   const port = serverInfo.port || 8765;
   const urlField = document.getElementById('cw-server-url');
   const tokenField = document.getElementById('cw-server-token');

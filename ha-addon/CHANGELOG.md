@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.54
+- Log modal: Retry button in header for failed/OTA-failed jobs
+- Queue tab: Clear Succeeded button now green (btn-success)
+- Connect Worker dialog: uses server IP address instead of hostname/mDNS name
+- HOST_PLATFORM correctly omitted from docker command when empty (auto-detected by client)
+
 ## 0.0.53
 - Fix CI: exclude e2e tests (need ESPHome installed, take 3+ minutes)
 - Add 10-minute timeout and concurrency cancellation to CI workflow
