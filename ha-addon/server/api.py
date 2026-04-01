@@ -187,7 +187,27 @@ async def get_next_job(request: web.Request) -> web.Response:
         worker_id = 1
 
     hostname = worker.hostname if worker else None
-    job = await queue.claim_next(client_id, worker_id, hostname=hostname)
+
+    # Performance-based scheduling: if a faster idle worker exists,
+    # defer claiming recently-enqueued jobs so the faster worker gets them.
+    faster_idle = False
+    if worker and worker.system_info:
+        my_score = worker.system_info.get("perf_score", 0)
+        cfg_threshold = cfg.worker_offline_threshold
+        for other in registry.get_all():
+            if other.client_id == client_id:
+                continue
+            if other.disabled or not registry.is_online(other.client_id, cfg_threshold):
+                continue
+            if other.current_job_id is not None:
+                continue  # other worker is busy
+            other_score = (other.system_info or {}).get("perf_score", 0)
+            if other_score > my_score:
+                faster_idle = True
+                break
+
+    job = await queue.claim_next(client_id, worker_id, hostname=hostname,
+                                  faster_idle_worker_exists=faster_idle)
     if job is None:
         return web.Response(status=204)
 

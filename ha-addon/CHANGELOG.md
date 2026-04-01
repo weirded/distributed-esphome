@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.56
+- Performance-based job scheduling: faster workers claim jobs first
+  - If a faster idle worker exists, slower workers defer for 2 seconds
+  - After grace period, any idle worker can claim
+  - Single-job scenario: always runs on the fastest available worker
+
 ## 0.0.55
 - Succeeded jobs can now be retried (individual Retry button + Retry Selected)
 - Connect Worker: server URL is now a dropdown with hostname + all known IPs
