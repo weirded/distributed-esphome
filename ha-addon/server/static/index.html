@@ -343,6 +343,32 @@
 
     /* ---- Connect worker modal ---- */
     #connect-modal .modal { max-width: 720px; }
+    .connect-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-bottom: 16px; }
+    .connect-form .field-full { grid-column: 1 / -1; }
+    .connect-form label {
+      display: block;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .connect-form input, .connect-form select {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .connect-form input:focus, .connect-form select:focus { border-color: var(--accent); }
+    .connect-form input[readonly] { color: var(--text-muted); cursor: default; }
+    .connect-form select { cursor: pointer; }
+    .connect-form select option { background: var(--surface2); }
     .docker-cmd-wrap { position: relative; }
     #docker-cmd {
       background: #0d1117;
@@ -572,15 +598,51 @@
       <button class="modal-close" onclick="closeConnectModal()">✕</button>
     </div>
     <div class="modal-body" style="padding:18px">
-      <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px;">
-        Run this on any Docker host with network access to your ESP devices:
-      </p>
+      <div class="connect-form">
+        <div>
+          <label>Server URL</label>
+          <input type="text" id="cw-server-url" readonly />
+        </div>
+        <div>
+          <label>Server Token</label>
+          <input type="text" id="cw-server-token" readonly />
+        </div>
+        <div>
+          <label>Container Name</label>
+          <input type="text" id="cw-container-name" value="distributed-esphome-worker" oninput="renderDockerCmd()" />
+        </div>
+        <div>
+          <label>Hostname</label>
+          <input type="text" id="cw-hostname" placeholder="$(hostname)" oninput="renderDockerCmd()" />
+        </div>
+        <div>
+          <label>Max Parallel Jobs</label>
+          <input type="number" id="cw-max-jobs" value="2" min="1" max="8" oninput="renderDockerCmd()" />
+        </div>
+        <div>
+          <label>ESPHome Seed Version</label>
+          <input type="text" id="cw-seed-version" oninput="this._userEdited=true;renderDockerCmd()" />
+        </div>
+        <div>
+          <label>Host Platform <span style="color:var(--text-muted);font-weight:400;text-transform:none">(optional)</span></label>
+          <input type="text" id="cw-host-platform" placeholder="e.g. macOS 15.3 (Apple M1 Pro)" oninput="renderDockerCmd()" />
+        </div>
+        <div>
+          <label>Restart Policy</label>
+          <select id="cw-restart-policy" onchange="renderDockerCmd()">
+            <option value="unless-stopped" selected>unless-stopped</option>
+            <option value="always">always</option>
+            <option value="no">no</option>
+          </select>
+        </div>
+      </div>
       <div class="docker-cmd-wrap">
         <pre id="docker-cmd"></pre>
         <button class="btn-secondary btn-sm" id="docker-cmd-copy" onclick="copyDockerCmd()">Copy</button>
       </div>
       <p style="color:var(--text-muted);font-size:12px;margin-top:12px;">
-        The worker must be able to reach your ESP devices on the LAN (port 3232 for OTA).
+        Run this command on any Docker host that has network access to your ESP devices (port 3232 for OTA).
+        The worker will poll this server for build jobs, compile firmware, and push updates directly to your devices.
       </p>
     </div>
   </div>
@@ -704,15 +766,36 @@ function clientVersionHtml(ver) {
 }
 
 function renderDockerCmd() {
-  const host = window.location.hostname;
-  const port = serverInfo.port || 8765;
-  const token = serverInfo.token || '';
-  const serverUrl = `http://${host}:${port}`;
-  const seedLine = serverVersion && serverVersion !== '?'
-    ? ` \\\n  -e ESPHOME_SEED_VERSION=${serverVersion}` : '';
+  const containerName = (document.getElementById('cw-container-name')?.value || 'distributed-esphome-worker').trim();
+  const hostnameVal = (document.getElementById('cw-hostname')?.value || '').trim();
+  const hostname = hostnameVal || '$(hostname)';
+  const maxJobs = parseInt(document.getElementById('cw-max-jobs')?.value || '2', 10) || 2;
+  const seedVersion = (document.getElementById('cw-seed-version')?.value || '').trim();
+  const hostPlatform = (document.getElementById('cw-host-platform')?.value || '').trim();
+  const restartPolicy = document.getElementById('cw-restart-policy')?.value || 'unless-stopped';
+  const serverUrl = (document.getElementById('cw-server-url')?.value || '').trim();
+  const token = (document.getElementById('cw-server-token')?.value || '').trim();
   const clientTag = serverInfo.addon_version || 'latest';
-  const cmd = `docker run -d --restart unless-stopped \\\n  --name distributed-esphome-worker \\\n  --hostname $(hostname) \\\n  -e SERVER_URL=${serverUrl} \\\n  -e SERVER_TOKEN=${token}${seedLine} \\\n  -v esphome-versions:/esphome-versions \\\n  ghcr.io/weirded/esphome-dist-client:${clientTag}`;
-  document.getElementById('docker-cmd').textContent = cmd;
+
+  const lines = ['docker run -d \\'];
+  lines.push(`  --name ${containerName} \\`);
+  if (restartPolicy !== 'no') {
+    lines.push(`  --restart ${restartPolicy} \\`);
+  }
+  lines.push(`  --hostname ${hostname} \\`);
+  lines.push(`  -e SERVER_URL=${serverUrl} \\`);
+  lines.push(`  -e SERVER_TOKEN=${token} \\`);
+  lines.push(`  -e MAX_PARALLEL_JOBS=${maxJobs} \\`);
+  if (seedVersion) {
+    lines.push(`  -e ESPHOME_SEED_VERSION=${seedVersion} \\`);
+  }
+  if (hostPlatform) {
+    lines.push(`  -e HOST_PLATFORM=${JSON.stringify(hostPlatform)} \\`);
+  }
+  lines.push(`  -v esphome-versions:/esphome-versions \\`);
+  lines.push(`  ghcr.io/weirded/esphome-dist-client:${clientTag}`);
+
+  document.getElementById('docker-cmd').textContent = lines.join('\n');
 }
 
 function copyDockerCmd() {
@@ -1200,6 +1283,17 @@ function closeLogModal(e) {
 // Connect worker modal
 // ============================================================
 function openConnectModal() {
+  // Pre-fill read-only fields from current server state
+  const host = window.location.hostname;
+  const port = serverInfo.port || 8765;
+  const urlField = document.getElementById('cw-server-url');
+  const tokenField = document.getElementById('cw-server-token');
+  const seedField = document.getElementById('cw-seed-version');
+  if (urlField) urlField.value = `http://${host}:${port}`;
+  if (tokenField) tokenField.value = serverInfo.token || '';
+  if (seedField && !seedField._userEdited) {
+    seedField.value = (serverVersion && serverVersion !== '?') ? serverVersion : '';
+  }
   renderDockerCmd();
   document.getElementById('connect-modal').classList.add('open');
 }

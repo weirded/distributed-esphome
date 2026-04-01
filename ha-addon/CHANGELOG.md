@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.52
+- Redesigned Connect Worker modal with configurable form fields
+  (container name, hostname, parallel jobs, seed version, host platform, restart policy)
+- Docker command generates dynamically as options change, with Copy button
+- Removed package-client.sh, push-to-clients.sh, and all dist-scripts
+  (start.sh, stop.sh, uninstall.sh, PowerShell variants, Proxmox builder)
+  — GHCR image + docker run command is now the only distribution method
+
 ## 0.0.51
 - Rename "Client" to "Worker" throughout: UI labels, API routes, config keys, docs
   - New API routes `/api/v1/workers/*` and `/ui/api/workers/*` (old `/clients/*` routes kept for backward compatibility)
