@@ -161,18 +161,20 @@ def get_friendly_name(config_dir: str, target: str) -> Optional[str]:
 
 def build_name_to_target_map(
     config_dir: str, targets: list[str],
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """Build a mapping from ESPHome device name → YAML filename.
 
     For each target, resolve the full config (including packages) and extract
     ``esphome.name``.  Always also map the filename stem so filename-based
     matching works as a fallback.
 
-    Returns (name_map, encryption_keys) where encryption_keys maps
-    device names to base64-encoded noise PSK keys.
+    Returns (name_map, encryption_keys, address_overrides) where:
+    - encryption_keys maps device names to base64-encoded noise PSK keys
+    - address_overrides maps device names to wifi.use_address values
     """
     name_map: dict[str, str] = {}
     encryption_keys: dict[str, str] = {}
+    address_overrides: dict[str, str] = {}
     for target in targets:
         stem = Path(target).stem
         name_map[stem] = target  # fallback: filename stem
@@ -188,6 +190,8 @@ def build_name_to_target_map(
                 device_name = str(esph_name)
                 name_map[device_name] = target
 
+        key_name = device_name or stem
+
         # Extract API encryption key if present
         api_block = config.get("api") or {}
         if isinstance(api_block, dict):
@@ -195,8 +199,14 @@ def build_name_to_target_map(
             if isinstance(enc_block, dict):
                 key = enc_block.get("key")
                 if key:
-                    key_name = device_name or stem
                     encryption_keys[key_name] = str(key)
-    return name_map, encryption_keys
+
+        # Extract wifi.use_address override if present
+        wifi_block = config.get("wifi") or {}
+        if isinstance(wifi_block, dict):
+            use_addr = wifi_block.get("use_address")
+            if use_addr:
+                address_overrides[key_name] = str(use_addr)
+    return name_map, encryption_keys, address_overrides
 
 

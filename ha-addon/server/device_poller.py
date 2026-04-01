@@ -73,6 +73,7 @@ class DevicePoller:
         self._compile_targets: list[str] = []
         self._name_to_target: dict[str, str] = {}
         self._encryption_keys: dict[str, str] = {}  # device_name → noise_psk (base64)
+        self._address_overrides: dict[str, str] = {}  # device_name → use_address
         self._lock = asyncio.Lock()
         self._zeroconf: Optional[AsyncZeroconf] = None
         self._browser: Optional[ServiceBrowser] = None
@@ -203,8 +204,10 @@ class DevicePoller:
                 self._save_cache()
 
             # Trigger an immediate API query for the full version
-            if ip:
-                asyncio.ensure_future(self._query_device(device_name, ip))
+            # Prefer use_address from config over mDNS IP
+            query_addr = self._address_overrides.get(device_name) or ip
+            if query_addr:
+                asyncio.ensure_future(self._query_device(device_name, query_addr))
 
         except Exception:
             logger.exception("Error handling mDNS service change for %s", name)
@@ -223,8 +226,10 @@ class DevicePoller:
                 snapshot = dict(self._devices)
 
             for name, dev in snapshot.items():
-                if dev.ip_address:
-                    await self._query_device(name, dev.ip_address)
+                # Prefer use_address from config, fall back to mDNS IP
+                addr = self._address_overrides.get(name) or dev.ip_address
+                if addr:
+                    await self._query_device(name, addr)
 
             await asyncio.sleep(self._poll_interval)
 
@@ -315,6 +320,7 @@ class DevicePoller:
         targets: list[str],
         name_to_target: Optional[dict[str, str]] = None,
         encryption_keys: Optional[dict[str, str]] = None,
+        address_overrides: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Inform the poller about known YAML targets so it can map device
@@ -326,10 +332,13 @@ class DevicePoller:
 
         *encryption_keys* maps device names to base64-encoded noise PSK keys
         for devices that require API encryption.
+
+        *address_overrides* maps device names to ``wifi.use_address`` values.
         """
         self._compile_targets = list(targets)
         self._name_to_target = name_to_target or {}
         self._encryption_keys = encryption_keys or {}
+        self._address_overrides = address_overrides or {}
         for dev in self._devices.values():
             dev.compile_target = self._map_target(dev.name)
 

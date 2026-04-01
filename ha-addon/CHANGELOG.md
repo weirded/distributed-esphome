@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.68
+- Use `wifi.use_address` from ESPHome configs for device polling
+  (prefers config-specified address over mDNS-discovered IP)
+
 ## 0.0.67
 - Support encrypted API connections to ESPHome devices
   - Extracts `api: encryption: key:` from resolved YAML configs
