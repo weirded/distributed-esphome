@@ -467,8 +467,10 @@ export function EditorModal({ target, onClose, onToast, onValidate, monacoTheme 
                 automaticLayout: true,
                 tabSize: 2,
                 insertSpaces: true,
-                quickSuggestions: true,
+                quickSuggestions: { other: true, strings: true, comments: false },
                 suggestOnTriggerCharacters: true,
+                wordBasedSuggestions: 'off',
+                acceptSuggestionOnCommitCharacter: true,
               }}
               onMount={handleEditorDidMount}
             />

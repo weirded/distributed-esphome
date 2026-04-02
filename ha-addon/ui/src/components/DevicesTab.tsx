@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getApiKey } from '../api/client';
+import { deleteTarget, getApiKey } from '../api/client';
 import type { Device, Target } from '../types';
 import { stripYaml } from '../utils';
 import { useSortable } from '../hooks/useSortable';
@@ -11,6 +11,8 @@ interface Props {
   onCompile: (targets: string[] | 'all' | 'outdated') => void;
   onEdit: (target: string) => void;
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
+  onDelete: () => void;
+  onRename: (target: string) => void;
 }
 
 function timeAgo(isoString: string): string {
@@ -26,7 +28,7 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
   return fields.some(f => f?.toLowerCase().includes(q));
 }
 
-export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Props) {
+export function DevicesTab({ targets, devices, onCompile, onEdit, onToast, onDelete, onRename }: Props) {
   const [filter, setFilter] = useState('');
   const { sort, handleSort, sortedItems } = useSortable();
 
@@ -196,7 +198,7 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Pro
               ) : (
                 <>
                   {filteredTargets.map(t => (
-                    <TargetRow key={t.target} target={t} onCompile={onCompile} onEdit={onEdit} onToast={onToast} />
+                    <TargetRow key={t.target} target={t} onCompile={onCompile} onEdit={onEdit} onToast={onToast} onDelete={onDelete} onRename={onRename} />
                   ))}
                   {filteredUnmanaged.map(d => (
                     <UnmanagedRow key={d.name} device={d} />
@@ -214,9 +216,13 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Pro
 function DeviceMenu({
   target: t,
   onToast,
+  onDelete,
+  onRename,
 }: {
   target: Target;
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
+  onDelete: () => void;
+  onRename: (target: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -244,6 +250,23 @@ function DeviceMenu({
     }
   }
 
+  async function handleRename() {
+    setOpen(false);
+    onRename(t.target);
+  }
+
+  async function handleDelete() {
+    setOpen(false);
+    if (!window.confirm(`Delete ${stripYaml(t.target)}? The file will be moved to .archive/`)) return;
+    try {
+      await deleteTarget(t.target);
+      onToast(`Deleted ${stripYaml(t.target)}`, 'success');
+      onDelete();
+    } catch (err) {
+      onToast('Delete failed: ' + (err as Error).message, 'error');
+    }
+  }
+
   return (
     <div className="action-menu-wrap" ref={wrapRef}>
       <button
@@ -262,6 +285,21 @@ function DeviceMenu({
         >
           &#128273; Copy API Key
         </button>
+        <button
+          className="action-menu-item"
+          onClick={handleRename}
+          title="Rename this device config"
+        >
+          &#9998; Rename
+        </button>
+        <button
+          className="action-menu-item"
+          onClick={handleDelete}
+          title="Delete this device config"
+          style={{ color: 'var(--danger, #ef4444)' }}
+        >
+          &#128465; Delete
+        </button>
       </div>
     </div>
   );
@@ -272,11 +310,15 @@ function TargetRow({
   onCompile,
   onEdit,
   onToast,
+  onDelete,
+  onRename,
 }: {
   target: Target;
   onCompile: (targets: string[]) => void;
   onEdit: (target: string) => void;
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
+  onDelete: () => void;
+  onRename: (target: string) => void;
 }) {
   let lastSeenEl: React.ReactNode = null;
   if (t.last_seen) {
@@ -327,7 +369,7 @@ function TargetRow({
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
           <button className={`${upgradeBtnCls} btn-sm`} onClick={() => onCompile([t.target])}>Upgrade</button>
           <button className="btn-secondary btn-sm" onClick={() => onEdit(t.target)}>Edit</button>
-          <DeviceMenu target={t} onToast={onToast} />
+          <DeviceMenu target={t} onToast={onToast} onDelete={onDelete} onRename={onRename} />
         </div>
       </td>
     </tr>

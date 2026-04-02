@@ -12,6 +12,7 @@ import {
   getTargets,
   getWorkers,
   removeWorker,
+  renameTarget,
   retryAllFailed,
   retryJobs,
   setEsphomeVersion,
@@ -326,6 +327,25 @@ export default function App() {
     }
   }
 
+  async function handleDeleteDevice() {
+    // The actual delete API call, confirmation dialog, and toast are handled
+    // inside DeviceMenu so they execute close to the user's click. This
+    // callback only needs to refresh the device list.
+    await fetchDevicesAndTargets();
+  }
+
+  async function handleRenameDevice(target: string) {
+    const newName = window.prompt('New device name:', stripYaml(target));
+    if (!newName) return;
+    try {
+      const result = await renameTarget(target, newName);
+      addToast(`Renamed to ${stripYaml(result.new_filename)}`, 'success');
+      await fetchDevicesAndTargets();
+    } catch (err) {
+      addToast('Rename failed: ' + (err as Error).message, 'error');
+    }
+  }
+
   async function handleSelectEsphomeVersion(version: string) {
     setVersionDropdownOpen(false);
     try {
@@ -416,6 +436,8 @@ export default function App() {
             onCompile={handleCompile}
             onEdit={setEditorTarget}
             onToast={addToast}
+            onDelete={handleDeleteDevice}
+            onRename={handleRenameDevice}
           />
         )}
         {activeTab === 'queue' && (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -462,6 +463,119 @@ async def save_target_content(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
     logger.info("Saved %s (%d bytes)", filename, len(content))
     return web.json_response({"ok": True})
+
+
+@routes.delete("/ui/api/targets/{filename}")
+async def delete_target(request: web.Request) -> web.Response:
+    """Delete (or archive) a YAML config file and cancel any pending jobs for it."""
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    config_dir = Path(cfg.config_dir)
+    path = (config_dir / filename).resolve()
+
+    # Security: ensure path is within config_dir
+    try:
+        path.relative_to(config_dir.resolve())
+    except ValueError:
+        return web.json_response({"error": "Invalid filename"}, status=400)
+
+    if not path.exists():
+        return web.json_response({"error": "File not found"}, status=404)
+
+    archive = request.rel_url.query.get("archive", "true") == "true"
+
+    try:
+        if archive:
+            archive_dir = config_dir / ".archive"
+            archive_dir.mkdir(exist_ok=True)
+            dest = archive_dir / filename
+            path.rename(dest)
+        else:
+            path.unlink()
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+    # Cancel any pending jobs for this target
+    queue = request.app["queue"]
+    job_ids = [j.id for j in queue.get_all() if j.target == filename and j.state == JobState.PENDING]
+    if job_ids:
+        await queue.cancel(job_ids)
+
+    # Invalidate config cache for the deleted file
+    from scanner import _config_cache  # noqa: PLC0415
+    _config_cache.pop(filename, None)
+
+    logger.info("Deleted config %s (archive=%s)", filename, archive)
+    return web.json_response({"ok": True})
+
+
+@routes.post("/ui/api/targets/{filename}/rename")
+async def rename_target(request: web.Request) -> web.Response:
+    """Rename a YAML config file and update the esphome.name field within it."""
+    filename = request.match_info["filename"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    new_name = body.get("new_name", "").strip()
+    if not new_name:
+        return web.json_response({"error": "new_name required"}, status=400)
+
+    cfg = _cfg(request)
+    config_dir = Path(cfg.config_dir)
+    old_path = (config_dir / filename).resolve()
+
+    # Security: ensure path is within config_dir
+    try:
+        old_path.relative_to(config_dir.resolve())
+    except ValueError:
+        return web.json_response({"error": "Invalid filename"}, status=400)
+
+    if not old_path.exists():
+        return web.json_response({"error": "File not found"}, status=404)
+
+    # Derive new filename: lowercase, spaces → hyphens, ensure .yaml extension
+    new_filename = new_name.replace(" ", "-").lower()
+    if not new_filename.endswith(".yaml"):
+        new_filename += ".yaml"
+
+    new_path = (config_dir / new_filename).resolve()
+
+    # Security: ensure new path is also within config_dir
+    try:
+        new_path.relative_to(config_dir.resolve())
+    except ValueError:
+        return web.json_response({"error": "Invalid new_name"}, status=400)
+
+    if new_path.exists() and new_path != old_path:
+        return web.json_response({"error": f"{new_filename} already exists"}, status=409)
+
+    try:
+        content = old_path.read_text(encoding="utf-8")
+        # Update the esphome.name field to match the new filename stem.
+        # Matches:  name: old-name  or  name: "old-name"  or  name: 'old-name'
+        base_name = new_filename.replace(".yaml", "")
+        content = re.sub(
+            r"(^\s*name:\s*[\"']?)[\w-]+([\"']?\s*$)",
+            rf"\g<1>{base_name}\g<2>",
+            content,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        new_path.write_text(content, encoding="utf-8")
+        if new_path != old_path:
+            old_path.unlink()
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+    # Invalidate config cache for both old and new filenames
+    from scanner import _config_cache  # noqa: PLC0415
+    _config_cache.pop(filename, None)
+    _config_cache.pop(new_filename, None)
+
+    logger.info("Renamed config %s → %s", filename, new_filename)
+    return web.json_response({"ok": True, "new_filename": new_filename})
 
 
 @routes.get("/ui/api/targets/{filename}/api-key")

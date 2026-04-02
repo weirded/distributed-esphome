@@ -47,8 +47,8 @@ Mark items `[x]` when complete.
 
 ## Device Lifecycle
 
-- [ ] **2.3 Delete device** — `DELETE /ui/api/targets/{f}` with archive option, confirmation dialog
-- [ ] **2.2 Rename device** — `POST /ui/api/targets/{f}/rename`, update esphome.name + filename
+- [x] **2.3 Delete device** (1.1.0-dev.16) — `DELETE /ui/api/targets/{f}` with archive, confirmation dialog, hamburger menu
+- [x] **2.2 Rename device** (1.1.0-dev.16) — `POST /ui/api/targets/{f}/rename`, updates esphome.name + filename
 - [ ] **2.1a Create device: empty template** — wizard modal with name, platform, board, WiFi from secrets
 - [ ] **2.1b Create device: clone existing** — duplicate a config with new name
 - [ ] **2.1c Create device: import from URL** — fetch config from GitHub/project URL

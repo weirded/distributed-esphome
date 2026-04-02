@@ -219,3 +219,33 @@ export async function getEsphomeSchema(): Promise<string[]> {
   const data = await r.json() as { components?: string[] };
   return data.components || [];
 }
+
+export async function deleteTarget(filename: string, archive = true): Promise<void> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}?archive=${archive}`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
+export async function renameTarget(
+  filename: string,
+  newName: string,
+): Promise<{ new_filename: string }> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/rename`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_name: newName }),
+    },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+  return r.json() as Promise<{ new_filename: string }>;
+}
