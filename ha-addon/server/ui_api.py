@@ -194,7 +194,8 @@ async def get_targets(request: web.Request) -> web.Response:
         # 4.2c: Use HA connected state as additional online signal.
         # If the device poller hasn't confirmed online yet but HA says connected,
         # treat the device as online.
-        poller_online = dev.online if dev else None
+        poller_online: bool | None = dev.online if dev else None
+        effective_online: bool | None
         if poller_online is not True and ha_connected is True:
             effective_online = True
         else:
