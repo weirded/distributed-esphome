@@ -13,12 +13,21 @@ interface ToastProps {
   onRemove: (id: number) => void;
 }
 
-// Auto-dismiss timer per toast
+const DISMISS_MS: Record<ToastType, number> = {
+  info: 3000,
+  success: 3000,
+  error: 5000,
+};
+
 function ToastEntry({ item, onRemove }: { item: ToastItem; onRemove: (id: number) => void }) {
+  // Store onRemove in a ref so the timer doesn't reset when the parent re-renders
+  const onRemoveRef = useRef(onRemove);
+  onRemoveRef.current = onRemove;
+
   useEffect(() => {
-    const t = setTimeout(() => onRemove(item.id), 4000);
+    const t = setTimeout(() => onRemoveRef.current(item.id), DISMISS_MS[item.type] ?? 3000);
     return () => clearTimeout(t);
-  }, [item.id, onRemove]);
+  }, [item.id, item.type]);
 
   return (
     <div className={`toast ${item.type}`}>

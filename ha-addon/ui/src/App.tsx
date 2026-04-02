@@ -205,10 +205,33 @@ export default function App() {
 
   async function handleValidate(target: string) {
     try {
-      await validateConfig(target);
+      const result = await validateConfig(target);
+      const jobId = result.job_id;
       addToast(`Validating ${stripYaml(target)}...`, 'info');
-      // Don't close editor or switch tabs — user stays in the editor
       await fetchQueue();
+
+      // Poll for validation result (completes in 2-5 seconds)
+      if (jobId) {
+        const pollForResult = async () => {
+          for (let i = 0; i < 30; i++) { // up to 30 seconds
+            await new Promise(r => setTimeout(r, 1000));
+            const latestQueue = await getQueue();
+            setQueue(latestQueue);
+            const latestJob = latestQueue.find((j: Job) => j.id === jobId);
+            if (!latestJob) break;
+            if (latestJob.state === 'success' && latestJob.validate_only) {
+              addToast(`${stripYaml(target)} is valid`, 'success');
+              return;
+            }
+            if (latestJob.state === 'failed') {
+              addToast(`Validation failed for ${stripYaml(target)} — check log for details`, 'error');
+              setLogJobId(jobId);
+              return;
+            }
+          }
+        };
+        pollForResult().catch(() => {});
+      }
     } catch (err) {
       addToast('Validate failed: ' + (err as Error).message, 'error');
     }
