@@ -524,6 +524,24 @@ async def clear_queue(request: web.Request) -> web.Response:
     return web.json_response({"cleared": cleared})
 
 
+@routes.get("/ui/api/secret-keys")
+async def get_secret_keys(request: web.Request) -> web.Response:
+    """Return list of secret key names from secrets.yaml (values are never sent)."""
+    import yaml  # noqa: PLC0415
+    cfg = _cfg(request)
+    path = Path(cfg.config_dir) / "secrets.yaml"
+    if not path.exists():
+        return web.json_response({"keys": []})
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data, dict):
+            return web.json_response({"keys": sorted(str(k) for k in data)})
+    except Exception:
+        logger.debug("Failed to parse secrets.yaml", exc_info=True)
+    return web.json_response({"keys": []})
+
+
 @routes.post("/ui/api/cancel")
 async def cancel_jobs(request: web.Request) -> web.Response:
     """Cancel jobs by id.

@@ -194,3 +194,10 @@ export async function getApiKey(filename: string): Promise<string> {
   if (!r.ok) throw new Error(data.error || String(r.status));
   return data.key!;
 }
+
+export async function getSecretKeys(): Promise<string[]> {
+  const r = await apiFetch('./ui/api/secret-keys');
+  if (!r.ok) return [];
+  const data = await r.json() as { keys?: string[] };
+  return data.keys || [];
+}

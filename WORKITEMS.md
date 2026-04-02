@@ -30,10 +30,10 @@ Mark items `[x]` when complete.
 
 ## Editor Improvements
 
-- [ ] **1.1a Load ESPHome JSON schema** — fetch from json.esphome.io, cache in sessionStorage
-- [ ] **1.1b Monaco YAML autocomplete** — integrate monaco-yaml or custom CompletionItemProvider with schema
-- [ ] **1.1c Inline validation** — red squiggles for schema errors as you type
-- [ ] **1.1d Support !include, !secret, !lambda** — custom YAML tag handling in editor
+- [x] **1.1a Load ESPHome JSON schema** (1.1.0-dev.9) — fetch from json.esphome.io, cached in module-level variable
+- [x] **1.1b Monaco YAML autocomplete** (1.1.0-dev.9) — custom CompletionItemProvider walks schema graph for context-aware completions
+- [x] **1.1c Inline validation** (1.1.0-dev.9) — warning markers for unknown top-level keys, debounced 500ms
+- [x] **1.1d Support !include, !secret, !lambda** (1.1.0-dev.9) — !secret autocompletes from secrets.yaml, !-prefixed values skip validation
 
 ---
 
