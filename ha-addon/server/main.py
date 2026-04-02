@@ -167,10 +167,10 @@ async def ha_entity_poller(app: web.Application) -> None:
             for entry in entity_registry:
                 if entry.get("platform") != "esphome":
                     continue
-                entity_id: str = entry.get("entity_id", "")
-                if "." not in entity_id:
+                eid: str = entry.get("entity_id", "")
+                if "." not in eid:
                     continue
-                entity_local = entity_id.split(".", 1)[1]  # e.g. "living_room_sensor_temperature"
+                entity_local = eid.split(".", 1)[1]  # e.g. "living_room_sensor_temperature"
                 connected: bool | None = connectivity.get(entity_local)  # non-None only for _status entities
                 ha_status[entity_local] = {
                     "configured": True,
