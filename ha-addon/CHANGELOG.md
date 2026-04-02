@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.0.73
+- Added PRD for full ESPHome dashboard replacement (React + Vite migration, 30+ features)
+
 ## 0.0.72
 - Honor remote package refresh periods (skip_update=False)
   - ESPHome checks FETCH_HEAD timestamp vs configured refresh (default: 1 day)
