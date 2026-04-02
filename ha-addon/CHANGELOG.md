@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.70
+- Ping-based liveness fallback (mimics official ESPHome dashboard)
+  - When API connection fails, falls back to ICMP ping via icmplib
+  - Uses unprivileged UDP mode (no root/CAP_NET_RAW needed)
+  - Devices reachable by ping but not API show as online
+  - Graceful degradation: works without icmplib installed
+
 ## 0.0.69
 - Proactively create device entries from wifi.use_address configs
   (devices no longer require mDNS discovery to appear in the Devices tab)

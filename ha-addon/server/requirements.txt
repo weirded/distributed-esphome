@@ -4,3 +4,4 @@ zeroconf>=0.131
 pyyaml>=6.0
 esphome>=2024.1.0
 requests>=2.31
+icmplib>=3.0

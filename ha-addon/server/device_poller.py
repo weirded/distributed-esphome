@@ -27,6 +27,13 @@ except ImportError:
     logger.warning("aioesphomeapi not available; device version polling disabled")
     AIOESPHOMEAPI_AVAILABLE = False
 
+try:
+    import icmplib  # noqa: F401
+    _PING_AVAILABLE = True
+except ImportError:
+    logger.warning("icmplib not available; ping-based liveness fallback disabled")
+    _PING_AVAILABLE = False
+
 if TYPE_CHECKING:
     from zeroconf import ServiceBrowser, Zeroconf  # noqa: F811
     from zeroconf.asyncio import AsyncZeroconf  # noqa: F811
@@ -213,6 +220,25 @@ class DevicePoller:
             logger.exception("Error handling mDNS service change for %s", name)
 
     # ------------------------------------------------------------------
+    # Ping liveness check
+    # ------------------------------------------------------------------
+
+    async def _ping_device(self, name: str, ip: str) -> bool:
+        """Ping a device to check if it is reachable. Returns True if alive.
+
+        Uses UDP-based ICMP (privileged=False) so no root or CAP_NET_RAW is
+        required.  Only called when the API connection fails and icmplib is
+        installed; guarded by _PING_AVAILABLE at the call site.
+        """
+        try:
+            from icmplib import async_ping  # noqa: PLC0415
+            host = await async_ping(ip, count=1, timeout=2, privileged=False)
+            return host.is_alive
+        except Exception:
+            logger.debug("Ping failed for device %s at %s", name, ip, exc_info=True)
+            return False
+
+    # ------------------------------------------------------------------
     # API polling
     # ------------------------------------------------------------------
 
@@ -255,19 +281,35 @@ class DevicePoller:
                 await client.disconnect()
         except Exception as exc:
             exc_str = str(exc).lower()
-            async with self._lock:
-                dev = self._devices.get(name)
-                if dev:
-                    if "encryption" in exc_str:
-                        # Device is online but requires encryption and we don't
-                        # have the key (or the key is wrong). Mark as online.
+            if "encryption" in exc_str:
+                # Device is reachable but requires encryption and we don't have
+                # the key (or the key is wrong). No need to ping — mark online.
+                async with self._lock:
+                    dev = self._devices.get(name)
+                    if dev:
                         dev.online = True
                         dev.last_seen = _utcnow()
                         self._save_cache()
-                        logger.debug("Device %s at %s requires encryption — marked online", name, ip)
+                logger.debug("Device %s at %s requires encryption — marked online", name, ip)
+                return
+
+            # API failed for a non-encryption reason — fall back to ping so we
+            # can still report liveness even when the native API is unavailable.
+            ping_alive = await self._ping_device(name, ip) if _PING_AVAILABLE else False
+            async with self._lock:
+                dev = self._devices.get(name)
+                if dev:
+                    if ping_alive:
+                        dev.online = True
+                        dev.last_seen = _utcnow()
+                        self._save_cache()
+                        logger.debug(
+                            "Device %s at %s: API failed (%s), ping succeeded — marked online",
+                            name, ip, exc,
+                        )
                     else:
                         dev.online = False
-                        logger.debug("Could not query device %s at %s: %s", name, ip, str(exc))
+                        logger.debug("Could not reach device %s at %s: %s", name, ip, exc)
 
     # ------------------------------------------------------------------
     # Cache

@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
 sys.modules.setdefault("zeroconf", MagicMock())
 sys.modules.setdefault("zeroconf.asyncio", MagicMock())
 sys.modules.setdefault("aioesphomeapi", MagicMock())
+# Provide a minimal icmplib stub so _PING_AVAILABLE is True in tests.
+# Individual tests override async_ping via patch() as needed.
+_icmplib_stub = MagicMock()
+sys.modules.setdefault("icmplib", _icmplib_stub)
 
 from device_poller import Device, DevicePoller  # noqa: E402
 
@@ -168,3 +172,141 @@ def test_update_targets_with_new_set(poller):
 def test_map_target_parametrized(device_name, targets, expected, poller):
     poller.update_compile_targets(targets)
     assert poller._map_target(device_name) == expected
+
+
+# ---------------------------------------------------------------------------
+# _ping_device
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ping_device_returns_true_when_alive(poller):
+    """_ping_device returns True when icmplib reports the host is alive."""
+    alive_host = MagicMock()
+    alive_host.is_alive = True
+    with patch("device_poller._PING_AVAILABLE", True), \
+         patch("icmplib.async_ping", new=AsyncMock(return_value=alive_host)):
+        result = await poller._ping_device("living_room", "192.168.1.10")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_ping_device_returns_false_when_not_alive(poller):
+    """_ping_device returns False when icmplib reports no response."""
+    dead_host = MagicMock()
+    dead_host.is_alive = False
+    with patch("device_poller._PING_AVAILABLE", True), \
+         patch("icmplib.async_ping", new=AsyncMock(return_value=dead_host)):
+        result = await poller._ping_device("living_room", "192.168.1.10")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_ping_device_returns_false_on_exception(poller):
+    """_ping_device swallows exceptions and returns False."""
+    with patch("device_poller._PING_AVAILABLE", True), \
+         patch("icmplib.async_ping", new=AsyncMock(side_effect=OSError("socket error"))):
+        result = await poller._ping_device("living_room", "192.168.1.10")
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _query_device ping fallback behaviour
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_query_device_ping_fallback_marks_online(poller):
+    """When API fails (non-encryption error) but ping succeeds, device is online."""
+    import device_poller as dp
+
+    poller._devices["living_room"] = Device(
+        name="living_room", ip_address="192.168.1.10", online=False
+    )
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock(side_effect=ConnectionRefusedError("refused"))
+    mock_client.disconnect = AsyncMock()
+
+    alive_host = MagicMock()
+    alive_host.is_alive = True
+
+    with patch.object(dp.aioesphomeapi, "APIClient", return_value=mock_client), \
+         patch("device_poller._PING_AVAILABLE", True), \
+         patch("icmplib.async_ping", new=AsyncMock(return_value=alive_host)), \
+         patch.object(poller, "_save_cache"):
+        await poller._query_device("living_room", "192.168.1.10")
+
+    dev = poller._devices["living_room"]
+    assert dev.online is True
+    assert dev.last_seen is not None
+
+
+@pytest.mark.asyncio
+async def test_query_device_ping_fallback_marks_offline(poller):
+    """When both API and ping fail, device is marked offline."""
+    import device_poller as dp
+
+    poller._devices["living_room"] = Device(
+        name="living_room", ip_address="192.168.1.10", online=True
+    )
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock(side_effect=ConnectionRefusedError("refused"))
+    mock_client.disconnect = AsyncMock()
+
+    dead_host = MagicMock()
+    dead_host.is_alive = False
+
+    with patch.object(dp.aioesphomeapi, "APIClient", return_value=mock_client), \
+         patch("device_poller._PING_AVAILABLE", True), \
+         patch("icmplib.async_ping", new=AsyncMock(return_value=dead_host)), \
+         patch.object(poller, "_save_cache"):
+        await poller._query_device("living_room", "192.168.1.10")
+
+    dev = poller._devices["living_room"]
+    assert dev.online is False
+
+
+@pytest.mark.asyncio
+async def test_query_device_ping_skipped_when_unavailable(poller):
+    """When _PING_AVAILABLE is False, no ping is attempted and device goes offline."""
+    import device_poller as dp
+
+    poller._devices["living_room"] = Device(
+        name="living_room", ip_address="192.168.1.10", online=True
+    )
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock(side_effect=ConnectionRefusedError("refused"))
+    mock_client.disconnect = AsyncMock()
+
+    with patch.object(dp.aioesphomeapi, "APIClient", return_value=mock_client), \
+         patch("device_poller._PING_AVAILABLE", False), \
+         patch.object(poller, "_ping_device", new=AsyncMock()) as mock_ping, \
+         patch.object(poller, "_save_cache"):
+        await poller._query_device("living_room", "192.168.1.10")
+
+    mock_ping.assert_not_called()
+    assert poller._devices["living_room"].online is False
+
+
+@pytest.mark.asyncio
+async def test_query_device_encryption_error_skips_ping(poller):
+    """Encryption errors mark the device online immediately without pinging."""
+    import device_poller as dp
+
+    poller._devices["living_room"] = Device(
+        name="living_room", ip_address="192.168.1.10", online=False
+    )
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock(side_effect=Exception("Bad encryption key"))
+    mock_client.disconnect = AsyncMock()
+
+    with patch.object(dp.aioesphomeapi, "APIClient", return_value=mock_client), \
+         patch("device_poller._PING_AVAILABLE", True), \
+         patch.object(poller, "_ping_device", new=AsyncMock()) as mock_ping, \
+         patch.object(poller, "_save_cache"):
+        await poller._query_device("living_room", "192.168.1.10")
+
+    mock_ping.assert_not_called()
+    assert poller._devices["living_room"].online is True
