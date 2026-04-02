@@ -12,12 +12,16 @@ mypy ha-addon/server/ --ignore-missing-imports
 echo "==> pre-push: mypy — client..."
 mypy ha-addon/client/ --ignore-missing-imports
 
-echo "==> pre-push: checking changelog has entry for current version..."
-VERSION="$(cat ha-addon/VERSION)"
-if ! grep -q "^## ${VERSION}\$" ha-addon/CHANGELOG.md; then
-  echo "ERROR: ha-addon/CHANGELOG.md has no entry for version ${VERSION}"
-  echo "Add a '## ${VERSION}' section before pushing."
-  exit 1
+# Only enforce changelog entry when pushing to main (stable releases)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" = "main" ]; then
+  echo "==> pre-push: checking changelog has entry for current version..."
+  VERSION="$(cat ha-addon/VERSION)"
+  if ! grep -q "^## ${VERSION}\$" ha-addon/CHANGELOG.md; then
+    echo "ERROR: ha-addon/CHANGELOG.md has no entry for version ${VERSION}"
+    echo "Add a '## ${VERSION}' section before pushing."
+    exit 1
+  fi
 fi
 
 echo "==> pre-push: all checks passed."

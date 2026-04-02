@@ -98,11 +98,24 @@ Worker config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 ./push-to-hass-4.sh
 ```
 
-## Release Process
+## Branching & Release Process
 
-Always bump the version number when pushing to GitHub, unless otherwise specified. Use `bash scripts/bump-version.sh X.Y.Z` to update all three places atomically.
+**Branches:**
+- `develop` — default working branch. All development happens here.
+- `main` — stable releases only. Users install from this branch.
 
-**Every version bump MUST include a `ha-addon/CHANGELOG.md` entry.** Add a new `## X.Y.Z` section at the top with a brief description of what changed. If a section for the current version already exists, update it. The changelog is in reverse-chronological order. A pre-push hook enforces that a changelog entry exists for the current version.
+**Day-to-day development (on `develop`):**
+- Bump the dev version after each turn: `bash scripts/bump-dev.sh` (auto-increments `-dev.N`)
+- Push to GitHub freely — CI runs tests, no GHCR images published
+- Deploy to hass-4 for testing: `./push-to-hass-4.sh`
+- Changelog entries accumulate under the next stable version heading
+
+**Stable releases (merge to `main`):**
+- Use `bash scripts/bump-version.sh X.Y.Z` for the stable version
+- Finalize `ha-addon/CHANGELOG.md` — consolidate dev changes into release entry
+- The pre-push hook enforces a changelog entry when pushing to `main`
+- Tag the release: `git tag vX.Y.Z && git push origin vX.Y.Z`
+- GHCR images are published automatically on push to `main`
 
 ## Design Specification
 
