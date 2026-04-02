@@ -77,8 +77,8 @@ Mark items `[x]` when complete.
 
 ## HA Integration
 
-- [ ] **4.2a Background task** — poll HA REST API for ESPHome device entity status
-- [ ] **4.2b Device status in UI** — show "In HA" badge (configured/connected) in Devices tab
+- [x] **4.2a Background task** (1.1.0-dev.19) — poll HA entity registry every 30s for ESPHome device status
+- [x] **4.2b Device status in UI** (1.1.0-dev.19) — show "In HA" badge (configured/connected) in Devices tab
 - [ ] **4.2c Influence online/offline** — use HA connected state as additional signal
 
 ---
@@ -122,4 +122,91 @@ Mark items `[x]` when complete.
 
 - [ ] **6.5 Streamer mode** — toggle masks IPs, keys, tokens (CSS blur)
 - [ ] **6.7 Prometheus metrics** — service discovery endpoint with device metadata
-- [ ] **CI: add npm build** — run `npm run build` in CI pipeline alongside Python tests
+
+---
+
+## CI / GitHub Actions
+
+- [ ] **CI.1 Run E2E tests** — remove `--ignore=tests/test_e2e_client.py`, add `-m "not integration"` to skip real-ESPHome tests
+- [ ] **CI.2 Add test coverage** — install `pytest-cov`, run with `--cov`, upload coverage artifact
+- [ ] **CI.3 Add ruff linting** — `ruff check ha-addon/server/ ha-addon/client/ tests/` + `ruff format --check`
+- [ ] **CI.4 Add frontend build+lint job** — parallel job: `npm ci && npm run lint && npm run build` in `ha-addon/ui/`
+
+---
+
+## Test Suite Improvements
+
+Existing tests (126 total) are all genuine and valuable. The main gaps are zero coverage of api.py, ui_api.py, and main.py (1,780 lines combined).
+
+### Test infrastructure & anti-pattern fixes
+- [ ] **T.0a Remove redundant `sys.path.insert()`** — conftest.py already handles it; remove from test_queue.py, test_device_poller.py, test_scanner.py, test_registry.py, test_client.py
+- [ ] **T.0b Fix hardcoded `/tmp`** — `test_queue.py:test_concurrent_claims_atomic` should use `tmp_path`
+- [ ] **T.0c Convert test_queue.py to native async** — replace `run(coro)` wrapper with `async def` tests
+- [ ] **T.0d Fix module-level sys.modules patching** — move from test_device_poller.py into session-scoped conftest fixture
+- [ ] **T.0e Rename test_client.py** — to `test_version_manager.py` (matches what it actually tests)
+
+### Auth middleware tests (`tests/test_middleware.py`, ~6 tests)
+- [ ] **T.1 Auth middleware tests** — security critical: test UI bypass, token validation, wrong token rejection, supervisor IP trust
+
+### Worker API tests (`tests/test_api.py`, ~21 tests)
+- [ ] **T.2a Registration & heartbeat tests** — register, re-register, heartbeat, deregister, error cases
+- [ ] **T.2b Job scheduling tests** — empty queue, bundle delivery, disabled worker, performance-based deferral, pinned jobs, bundle failure recovery
+- [ ] **T.2c Result submission tests** — success/failed results, unknown job, OTA patching, log append
+
+### UI API tests (`tests/test_ui_api.py`, ~23 tests)
+- [ ] **T.3a Target & device listing tests** — YAML list, device status, needs-update flag
+- [ ] **T.3b Compile & validate tests** — compile all/outdated/specific, deduplication, validate-only
+- [ ] **T.3c Config CRUD tests** — read/write content, path traversal security, delete with archive
+- [ ] **T.3d Rename tests** — filename+name update, conflict 409, OTA job enqueue
+- [ ] **T.3e Queue management tests** — clear by state, retry failed, cancel, worker disable/enable
+
+### Extend existing module tests (~15 tests)
+- [ ] **T.4a Scanner extensions** — `get_device_metadata()`, `build_name_to_target_map()` (encryption keys, address overrides)
+- [ ] **T.4b Queue extensions** — validate-only jobs, OTA address, pinned job claim, OTA retry pinning
+- [ ] **T.4c Device poller extensions** — cache load/save round-trip, address overrides, start/stop lifecycle
+
+---
+
+## UI Audit & Cleanup
+
+### DRY violations
+- [ ] **UI.1a Extract `timeAgo()`** — duplicated in DevicesTab.tsx and QueueTab.tsx, move to utils.ts
+- [ ] **UI.1b Extract `useTerminal` hook** — duplicated Terminal init in LogModal.tsx and DeviceLogModal.tsx
+- [ ] **UI.1c Extract `downloadTerminalLog()`** — duplicated blob-download in LogModal.tsx and DeviceLogModal.tsx
+- [ ] **UI.1d Extract `useEscapeKey` hook** — duplicated Escape handler in LogModal, DeviceLogModal, EditorModal
+- [ ] **UI.1e Extract overlay click handler** — duplicated `handleOverlayClick` in 4+ modals
+- [ ] **UI.1f Merge clear handlers** — combine `handleClearSucceeded`/`handleClearFinished` in App.tsx
+
+### Structural fixes
+- [ ] **UI.2a Use or delete `usePolling` hook** — exists but App.tsx uses manual setInterval; recommend delete (App.tsx pattern is more efficient for multi-resource fetches)
+- [ ] **UI.2b Use `useWebSocket` hook in DeviceLogModal** — hook exists but DeviceLogModal manages WebSocket manually
+- [ ] **UI.2c Add utility CSS classes** — replace repeated inline styles with `.text-xs-muted`, `.font-mono`, `.flex-actions`; clean up App.css boilerplate
+- [ ] **UI.2d Document DOM checkbox pattern** — add comment in DevicesTab/QueueTab explaining useRef+DOM approach is intentional for perf
+
+### CLAUDE.md
+- [ ] **UI.3 Add frontend section to CLAUDE.md** — dev commands, conventions (hooks in hooks/, CSS tokens, no state library, Monaco global registration)
+
+---
+
+## Python Codebase Cleanup
+
+### Server DRY cleanup
+- [ ] **PY.1a Extract `helpers.py`** — shared `_cfg()`, `json_error()`, `parse_json_body()` from api.py and ui_api.py
+- [ ] **PY.1b Consolidate auth logic** — extract `HA_SUPERVISOR_IP`, `is_ha_supervisor()`, `check_bearer_token()` to helpers.py (duplicated in main.py and api.py)
+- [ ] **PY.1c Add DevicePoller public accessors** — `get_api_key()`, `get_address_override()`, `has_api_key_for_target()` to replace ui_api.py accessing private `_encryption_keys`/`_address_overrides`
+
+### Client cleanup
+- [ ] **PY.2a Extract heartbeat thread helper** — copy-pasted 3 times in client.py
+- [ ] **PY.2b Fix `run_job()` cleanup duplication** — early returns duplicate finally-block cleanup; restructure so all paths use finally
+- [ ] **PY.2c Remove duplicate config reads** — `MAX_ESPHOME_VERSIONS`/`ESPHOME_VERSIONS_DIR` read from env in both client.py and version_manager.py; pass as constructor args instead
+- [ ] **PY.2d Add startup env var validation** — validate `POLL_INTERVAL`, `JOB_TIMEOUT`, `MAX_PARALLEL_JOBS` at startup with clear error messages
+- [ ] **PY.2e Add logging to silent exception handlers** — ~10 bare `except Exception: pass` blocks; add `logger.debug()`
+
+### Version manager thread safety
+- [ ] **PY.3a Add timeout to wait loop** — `wait_event.wait()` has no timeout; add 5-minute timeout with retry/error
+- [ ] **PY.3b Fix error propagation to waiters** — if `_install()` raises, waiters retry broken install forever; track and propagate failures
+
+### Consistency & polish
+- [ ] **PY.4a Standardize error handling** — use `json_error()` in route handlers, `logger.exception()` in background tasks
+- [ ] **PY.4b Fill missing type hints** — focus on function signatures in ui_api.py and client.py
+- [ ] **PY.4c CLAUDE.md updates** — document helpers.py, error handling patterns, Python version discrepancy (CI=3.12, Dockerfile.standalone=3.11, build.yaml=3.13)

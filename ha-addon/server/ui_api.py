@@ -101,12 +101,59 @@ async def get_server_info(request: web.Request) -> web.Response:
     })
 
 
+def _ha_status_for_target(
+    ha_entity_status: dict[str, dict],
+    target: str,
+    meta: dict,
+) -> tuple[bool, bool | None]:
+    """Return (ha_configured, ha_connected) for a given compile target.
+
+    Matching strategy: ESPHome device names use hyphens (e.g. living-room-sensor)
+    but HA entity_ids use underscores (living_room_sensor_temperature). We
+    normalise the target's device name to underscores and check whether any
+    entity in the registry starts with that normalised prefix.
+
+    Returns (False, None) when no match is found or ha_entity_status is empty.
+    """
+    if not ha_entity_status:
+        return False, None
+
+    # Derive the normalised device name: prefer the parsed esphome.name field,
+    # fall back to the filename stem (both hyphens → underscores).
+    raw_name: str = meta.get("device_name_raw") or target.replace(".yaml", "")
+    norm_name = raw_name.replace("-", "_").replace(" ", "_").lower()
+
+    configured = False
+    connected: bool | None = None
+
+    for entity_local, status in ha_entity_status.items():
+        # entity_local looks like "living_room_sensor_temperature"
+        # norm_name looks like "living_room_sensor"
+        # Match if the entity_local equals the norm or starts with norm + "_"
+        if entity_local == norm_name or entity_local.startswith(norm_name + "_"):
+            configured = True
+            # If any entity reports a definitive connected state, use it.
+            # Prefer the binary_sensor.<name>_status entity (connected != None)
+            # over entities without a connectivity signal.
+            if status.get("connected") is not None:
+                connected = status["connected"]
+                break  # status entity is authoritative — stop searching
+
+    if configured and connected is None:
+        # We found entities for this device but no _status binary sensor.
+        # We cannot determine connectivity, leave as None.
+        pass
+
+    return configured, connected
+
+
 @routes.get("/ui/api/targets")
 async def get_targets(request: web.Request) -> web.Response:
     """List discovered YAML targets with device status."""
     cfg = _cfg(request)
     device_poller = request.app.get("device_poller")
     server_version = get_esphome_version()
+    ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
 
     targets = scan_configs(cfg.config_dir)
 
@@ -142,6 +189,8 @@ async def get_targets(request: web.Request) -> web.Response:
                     has_api_key = True
                     break
 
+        ha_configured, ha_connected = _ha_status_for_target(ha_entity_status, target, meta)
+
         entry: dict = {
             "target": target,
             "friendly_name": meta["friendly_name"],
@@ -161,6 +210,8 @@ async def get_targets(request: web.Request) -> web.Response:
             "server_version": server_version,
             "has_api_key": has_api_key,
             "has_web_server": meta["has_web_server"],
+            "ha_configured": ha_configured,
+            "ha_connected": ha_connected,
         }
         result.append(entry)
 
@@ -541,6 +592,9 @@ async def save_target_content(request: web.Request) -> web.Response:
         path.write_text(content, encoding="utf-8")
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
+    # Invalidate config cache so changes are picked up immediately
+    from scanner import _config_cache  # noqa: PLC0415
+    _config_cache.pop(filename, None)
     logger.info("Saved %s (%d bytes)", filename, len(content))
     return web.json_response({"ok": True})
 
@@ -649,24 +703,36 @@ async def rename_target(request: web.Request) -> web.Response:
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
 
-    # Invalidate config cache for both old and new filenames
-    from scanner import _config_cache  # noqa: PLC0415
+    # Invalidate config cache and force device poller to rescan
+    from scanner import _config_cache, scan_configs, build_name_to_target_map  # noqa: PLC0415
     _config_cache.pop(filename, None)
     _config_cache.pop(new_filename, None)
 
-    logger.info("Renamed config %s → %s", filename, new_filename)
-
-    # Enqueue a compile+OTA job so the device gets flashed with the new name.
-    # The device is still running the old firmware with the old hostname,
-    # so OTA must target the OLD address. We look up the device by the old
-    # config filename and pass its current IP as ota_address.
+    # Capture OTA address and remove stale device entry for the old filename.
+    # Must happen before rescanning so we can still find the device by old compile_target.
+    # After rename, the old mDNS device name no longer maps to any target and
+    # would show up as an unmanaged device until mDNS re-discovers the new name.
     device_poller = request.app.get("device_poller")
     old_device_addr = None
     if device_poller:
+        old_dev_name = None
         for d in device_poller.get_devices():
             if d.compile_target == filename:
+                old_dev_name = d.name
                 old_device_addr = device_poller._address_overrides.get(d.name) or d.ip_address
                 break
+        if old_dev_name and old_dev_name in device_poller._devices:
+            del device_poller._devices[old_dev_name]
+            logger.debug("Removed stale device entry %s after rename to %s", old_dev_name, new_filename)
+
+    # Force immediate rescan so the UI shows the new name right away
+    if device_poller:
+        cfg = _cfg(request)
+        targets = scan_configs(cfg.config_dir)
+        name_map, enc_keys, addr_overrides = build_name_to_target_map(cfg.config_dir, targets)
+        device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides)
+
+    logger.info("Renamed config %s → %s", filename, new_filename)
 
     queue = request.app["queue"]
     server_version = get_esphome_version()

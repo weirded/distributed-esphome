@@ -143,8 +143,11 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onLogs, onToas
     // The filename stem
     managedDeviceNames.add(stripYaml(t.target).toLowerCase());
   }
+  const managedIPs = new Set(targets.map(t => t.ip_address).filter(Boolean) as string[]);
   const unmanaged = devices.filter(d =>
-    !d.compile_target && !managedDeviceNames.has(d.name.toLowerCase())
+    !d.compile_target &&
+    !managedDeviceNames.has(d.name.toLowerCase()) &&
+    !(d.ip_address && managedIPs.has(d.ip_address))
   );
   const defaultSortedTargets = [...targets].sort((a, b) => a.target.localeCompare(b.target));
   const defaultSortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
@@ -435,7 +438,7 @@ function TargetRow({
 
   let statusEl: React.ReactNode;
   if (t.online == null) {
-    statusEl = <><span className="dot dot-offline"></span><span style={{ color: 'var(--text-muted)' }}>Unknown</span></>;
+    statusEl = <><span className="dot dot-checking"></span><span style={{ color: 'var(--text-muted)' }}>Checking...</span></>;
   } else if (t.online) {
     statusEl = <><span className="dot dot-online"></span>Online{lastSeenEl}</>;
   } else {
@@ -446,11 +449,42 @@ function TargetRow({
   const displayName = t.friendly_name || t.device_name || stripYaml(t.target);
   const showIpLink = t.has_web_server && t.online && t.ip_address;
 
+  let haBadge: React.ReactNode = null;
+  if (t.ha_configured) {
+    const color = t.ha_connected === true
+      ? 'var(--success, #22c55e)'
+      : t.ha_connected === false
+        ? 'var(--warn, #f59e0b)'
+        : 'var(--text-muted)';
+    const label = t.ha_connected === true
+      ? 'In Home Assistant (connected)'
+      : t.ha_connected === false
+        ? 'In Home Assistant (disconnected)'
+        : 'In Home Assistant';
+    haBadge = (
+      <span
+        title={label}
+        aria-label={label}
+        style={{
+          display: 'inline-block',
+          marginLeft: 6,
+          fontSize: 11,
+          color,
+          verticalAlign: 'middle',
+          cursor: 'default',
+          userSelect: 'none',
+        }}
+      >
+        &#8962;
+      </span>
+    );
+  }
+
   return (
     <tr>
       <td><input type="checkbox" className="target-cb" value={t.target} /></td>
       <td>
-        <span className="device-name">{displayName}</span>
+        <span className="device-name">{displayName}{haBadge}</span>
         <div className="device-filename">{stripYaml(t.target)}</div>
         {t.comment && <div className="device-comment">{t.comment}</div>}
       </td>

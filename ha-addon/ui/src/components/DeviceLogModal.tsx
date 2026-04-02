@@ -96,8 +96,14 @@ export function DeviceLogModal({ target, onClose }: Props) {
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  const mouseDownTargetRef = useRef<EventTarget | null>(null);
+  function handleOverlayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    mouseDownTargetRef.current = e.target;
+  }
   function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget && mouseDownTargetRef.current === e.currentTarget) {
+      onClose();
+    }
   }
 
   function handleDownload() {
@@ -123,6 +129,7 @@ export function DeviceLogModal({ target, onClose }: Props) {
     <div
       id="device-log-modal"
       className="modal-overlay open"
+      onMouseDown={handleOverlayMouseDown}
       onClick={handleOverlayClick}
     >
       <div className="modal">

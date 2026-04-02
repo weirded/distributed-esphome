@@ -457,6 +457,7 @@ export default function App() {
             onClearSucceeded={handleClearSucceeded}
             onClearFinished={handleClearFinished}
             onOpenLog={setLogJobId}
+            onEdit={(target) => setEditorTarget(target)}
           />
         )}
         {activeTab === 'workers' && (
@@ -479,6 +480,7 @@ export default function App() {
         workers={workers}
         onClose={() => setLogJobId(null)}
         onRetry={handleRetryJobs}
+        onEdit={(target) => { setLogJobId(null); setEditorTarget(target); }}
       />
 
       {deviceLogTarget && (
@@ -494,6 +496,7 @@ export default function App() {
           onClose={() => setEditorTarget(null)}
           onToast={addToast}
           onValidate={handleValidate}
+          onCompile={(target) => { handleCompile([target]); switchTab('queue'); }}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
           esphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? undefined}
         />

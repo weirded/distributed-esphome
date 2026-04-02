@@ -94,6 +94,99 @@ async def timeout_checker(app: web.Application) -> None:
             logger.exception("Error in timeout checker")
 
 
+async def ha_entity_poller(app: web.Application) -> None:
+    """Background task: poll HA entity registry every 30s to determine which
+    ESPHome devices are configured in Home Assistant and whether they are
+    currently connected.
+
+    Requires SUPERVISOR_TOKEN (injected automatically when hassio_api: true).
+    Stores results in app["ha_entity_status"]: dict[str, {configured, connected}]
+    keyed by normalised device name (hyphens replaced with underscores, lowercase).
+    """
+    import os  # noqa: PLC0415
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        logger.info("No SUPERVISOR_TOKEN — HA entity status polling disabled")
+        return
+
+    headers = {"Authorization": f"Bearer {token}"}
+    timeout = aiohttp.ClientTimeout(total=10)
+
+    while True:
+        await asyncio.sleep(30)
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Entity registry: gives us platform="esphome" entries — most
+                # reliable signal that a device is configured in HA.
+                async with session.get(
+                    "http://supervisor/core/api/config/entity_registry",
+                    headers=headers,
+                    timeout=timeout,
+                ) as resp:
+                    if resp.status != 200:
+                        logger.debug(
+                            "HA entity registry returned HTTP %d — skipping poll",
+                            resp.status,
+                        )
+                        continue
+                    entity_registry: list[dict] = await resp.json()
+
+                # States: used to read binary_sensor.<name>_status connectivity.
+                async with session.get(
+                    "http://supervisor/core/api/states",
+                    headers=headers,
+                    timeout=timeout,
+                ) as resp:
+                    if resp.status != 200:
+                        logger.debug(
+                            "HA states returned HTTP %d — skipping poll",
+                            resp.status,
+                        )
+                        continue
+                    states: list[dict] = await resp.json()
+
+            # Build a map of entity_local → connected state from
+            # binary_sensor.<name>_status entities (state "on" = connected).
+            # Key: entity_local of the status entity, e.g. "living_room_sensor_status"
+            # Value: True if connected, False if disconnected.
+            connectivity: dict[str, bool] = {}
+            for entity in states:
+                entity_id: str = entity.get("entity_id", "")
+                if entity_id.startswith("binary_sensor.") and entity_id.endswith("_status"):
+                    entity_local = entity_id[len("binary_sensor."):]  # e.g. "living_room_sensor_status"
+                    connectivity[entity_local] = entity.get("state") == "on"
+
+            # Build the configured set from ESPHome platform entries.
+            # ha_status is keyed by entity_local (e.g. "living_room_sensor_temperature").
+            # For status entities, we also store connectivity directly on the entry.
+            # _ha_status_for_target matches by prefix: any entity_local starting with
+            # norm_name + "_" means the device is configured. It reads connectivity
+            # from the "<norm_name>_status" entry specifically.
+            ha_status: dict[str, dict] = {}
+            for entry in entity_registry:
+                if entry.get("platform") != "esphome":
+                    continue
+                entity_id: str = entry.get("entity_id", "")
+                if "." not in entity_id:
+                    continue
+                entity_local = entity_id.split(".", 1)[1]  # e.g. "living_room_sensor_temperature"
+                connected: bool | None = connectivity.get(entity_local)  # non-None only for _status entities
+                ha_status[entity_local] = {
+                    "configured": True,
+                    "connected": connected,
+                }
+
+            app["ha_entity_status"] = ha_status
+            logger.debug(
+                "HA entity status updated: %d ESPHome entities",
+                len(ha_status),
+            )
+
+        except Exception:
+            logger.debug("Error polling HA entity status", exc_info=True)
+
+
 async def config_scanner(app: web.Application) -> None:
     """Background task: re-scan config dir every 30s and update device poller targets."""
     from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
@@ -281,6 +374,10 @@ def create_app() -> web.Application:
     app["esphome_available_versions"] = []   # list of versions from PyPI
     app["esphome_versions_fetched_at"] = 0.0
 
+    # HA entity status — populated by ha_entity_poller background task
+    # dict[str, {"configured": bool, "connected": bool | None}]
+    app["ha_entity_status"] = {}
+
     # Startup/shutdown hooks
     async def on_startup(app: web.Application) -> None:
         logger.info("Starting ESPHome Distributed Build Server")
@@ -319,11 +416,12 @@ def create_app() -> web.Application:
         app["timeout_checker_task"] = asyncio.create_task(timeout_checker(app))
         app["config_scanner_task"] = asyncio.create_task(config_scanner(app))
         app["pypi_version_refresher_task"] = asyncio.create_task(pypi_version_refresher(app))
+        app["ha_entity_poller_task"] = asyncio.create_task(ha_entity_poller(app))
 
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down ESPHome Distributed Build Server")
 
-        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task"):
+        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task"):
             task = app.get(task_name)
             if task:
                 task.cancel()

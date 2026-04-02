@@ -111,6 +111,7 @@ interface Props {
   onClose: () => void;
   onToast: (msg: string, type?: ToastType) => void;
   onValidate?: (target: string) => void;
+  onCompile?: (target: string) => void;
   monacoTheme?: string;
   esphomeVersion?: string | null;
 }
@@ -239,7 +240,7 @@ let _completionRegistered = false;
 // Debounce timer handle for validation
 let _validationTimer: ReturnType<typeof setTimeout> | null = null;
 
-export function EditorModal({ target, onClose, onToast, onValidate, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
+export function EditorModal({ target, onClose, onToast, onValidate, onCompile, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
   const isOpen = target !== null;
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
@@ -430,6 +431,19 @@ export function EditorModal({ target, onClose, onToast, onValidate, monacoTheme 
     }
   }
 
+  async function handleSaveAndUpgrade() {
+    if (!editorRef.current || !target) return;
+    const value = editorRef.current.getValue();
+    try {
+      await saveTargetContent(target, value);
+      onToast('Saved ' + target, 'success');
+      onCompile?.(target);
+      onClose();
+    } catch (err) {
+      onToast('Save failed: ' + (err as Error).message, 'error');
+    }
+  }
+
   return (
     <div
       id="editor-modal"
@@ -440,6 +454,15 @@ export function EditorModal({ target, onClose, onToast, onValidate, monacoTheme 
         <div className="editor-header">
           <h3>{target || ''}</h3>
           <button className="btn-primary btn-sm" onClick={handleSave}>Save</button>
+          {onCompile && target && target !== 'secrets.yaml' && (
+            <button
+              className="btn-success btn-sm"
+              onClick={handleSaveAndUpgrade}
+              title="Save and trigger firmware compile + OTA"
+            >
+              Save &amp; Upgrade
+            </button>
+          )}
           {onValidate && target && target !== 'secrets.yaml' && (
             <button
               className="btn-secondary btn-sm"

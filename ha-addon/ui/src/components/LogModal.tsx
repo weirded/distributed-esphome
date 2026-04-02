@@ -11,9 +11,10 @@ interface Props {
   workers: Worker[];
   onClose: () => void;
   onRetry: (ids: string[]) => void;
+  onEdit?: (target: string) => void;
 }
 
-export function LogModal({ jobId, queue, workers, onClose, onRetry }: Props) {
+export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit }: Props) {
   const isOpen = jobId !== null;
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -253,6 +254,15 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry }: Props) {
             {metaEl}
             {retryEl}
           </div>
+          {onEdit && job && (
+            <button
+              className="btn-secondary btn-sm"
+              onClick={() => { onEdit(job.target); onClose(); }}
+              title="Open config in editor"
+            >
+              Edit
+            </button>
+          )}
           <button className="btn-secondary btn-sm" onClick={handleDownload} title="Download log">
             &#8595; Download
           </button>

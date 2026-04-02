@@ -28,6 +28,8 @@ export interface Target {
   server_version?: string;
   has_api_key?: boolean;
   has_web_server?: boolean;
+  ha_configured?: boolean;
+  ha_connected?: boolean | null;
 }
 
 export interface Device {

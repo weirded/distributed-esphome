@@ -20,6 +20,7 @@ interface Props {
   onClearSucceeded: () => void;
   onClearFinished: () => void;
   onOpenLog: (jobId: string) => void;
+  onEdit: (target: string) => void;
 }
 
 const STATE_ORDER: Record<string, number> = {
@@ -39,6 +40,7 @@ export function QueueTab({
   onClearSucceeded,
   onClearFinished,
   onOpenLog,
+  onEdit,
 }: Props) {
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -127,6 +129,7 @@ export function QueueTab({
                     onCancel={onCancel}
                     onRetry={onRetry}
                     onOpenLog={onOpenLog}
+                    onEdit={onEdit}
                   />
                 ))
               )}
@@ -144,12 +147,14 @@ function QueueRow({
   onCancel,
   onRetry,
   onOpenLog,
+  onEdit,
 }: {
   job: Job;
   workers: Worker[];
   onCancel: (ids: string[]) => void;
   onRetry: (ids: string[]) => void;
   onOpenLog: (jobId: string) => void;
+  onEdit: (target: string) => void;
 }) {
   const assignedClient = job.assigned_client_id
     ? workers.find(c => c.client_id === job.assigned_client_id)
@@ -213,6 +218,7 @@ function QueueRow({
           {hasLog && (
             <button className="btn-secondary btn-sm" onClick={() => onOpenLog(job.id)}>Log</button>
           )}
+          <button className="btn-secondary btn-sm" onClick={() => onEdit(job.target)}>Edit</button>
         </div>
       </td>
     </tr>

@@ -154,6 +154,7 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
     result: dict = {
         "friendly_name": None,
         "device_name": None,
+        "device_name_raw": None,  # raw esphome.name value (hyphens/underscores preserved)
         "comment": None,
         "has_web_server": False,
     }
@@ -168,6 +169,7 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
             result["friendly_name"] = str(friendly)
         raw_name = esphome_block.get("name")
         if raw_name:
+            result["device_name_raw"] = str(raw_name)
             result["device_name"] = str(raw_name).replace("_", " ").replace("-", " ").title()
         comment = esphome_block.get("comment")
         if comment:

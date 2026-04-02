@@ -286,8 +286,10 @@ tr.clickable:hover td { background: var(--surface2); }
   border-radius: 50%;
   margin-right: 5px;
 }
-.dot-online  { background: var(--success); }
-.dot-offline { background: #4b5563; }
+.dot-online    { background: var(--success); }
+.dot-offline   { background: #4b5563; }
+.dot-checking  { background: #4b5563; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 
 .needs-update-yes { color: var(--warn); font-weight: 600; }
 .needs-update-no  { color: var(--text-muted); }
@@ -487,6 +489,25 @@ input[type="checkbox"] {
 .editor-header .modal-close { color: #888; }
 .editor-header .modal-close:hover { color: #ccc; background: #3c3c3c; }
 .monaco-container { flex: 1; overflow: hidden; border-radius: 0 0 var(--radius) var(--radius); }
+
+[data-theme="light"] .editor-modal {
+  background: #ffffff;
+  border-color: var(--border);
+}
+[data-theme="light"] .editor-header {
+  background: var(--surface2);
+  border-color: var(--border);
+}
+[data-theme="light"] .editor-header h3 {
+  color: var(--text);
+}
+[data-theme="light"] .editor-header .modal-close {
+  color: var(--text-muted);
+}
+[data-theme="light"] .editor-header .modal-close:hover {
+  color: var(--text);
+  background: var(--border);
+}
 
 /* ---- Toast ---- */
 #toast-container {
