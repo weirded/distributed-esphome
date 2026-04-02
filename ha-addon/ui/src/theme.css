@@ -18,6 +18,17 @@
   --shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 
+[data-theme="light"] {
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --surface2: #f0f1f3;
+  --border: #dee2e6;
+  --text: #212529;
+  --text-muted: #6c757d;
+  /* accent, success, warn, danger, info, orange remain the same */
+  --shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -503,3 +514,6 @@ input[type="checkbox"] {
   width: 100%;
   height: 100%;
 }
+
+/* IP address link in devices table */
+.ip-link:hover { text-decoration: underline; }

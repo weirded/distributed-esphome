@@ -389,6 +389,19 @@ async def save_target_content(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+@routes.get("/ui/api/targets/{filename}/api-key")
+async def get_api_key(request: web.Request) -> web.Response:
+    """Return the ESPHome API encryption key for a target device."""
+    filename = request.match_info["filename"]
+    device_poller = request.app.get("device_poller")
+    if device_poller:
+        for name, key in device_poller._encryption_keys.items():
+            target = device_poller._map_target(name)
+            if target == filename:
+                return web.json_response({"key": key})
+    return web.json_response({"error": "No API key found"}, status=404)
+
+
 @routes.post("/ui/api/retry")
 async def retry_jobs(request: web.Request) -> web.Response:
     """Re-enqueue failed/timed_out jobs.

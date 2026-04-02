@@ -59,6 +59,12 @@ function getTabCount(
   return '';
 }
 
+function getInitialTheme(): 'dark' | 'light' {
+  const stored = localStorage.getItem('theme');
+  if (stored === 'light' || stored === 'dark') return stored;
+  return 'dark';
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabName>(
     () => (sessionStorage.getItem('activeTab') as TabName) || 'devices',
@@ -74,10 +80,22 @@ export default function App() {
     available: [],
   });
 
+  const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme);
+
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const [logJobId, setLogJobId] = useState<string | null>(null);
   const [editorTarget, setEditorTarget] = useState<string | null>(null);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
+
+  // Apply theme to <html> element on mount and on change
+  useEffect(() => {
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   const { items: toastItems, addToast, removeToast } = useToast();
 
@@ -300,6 +318,21 @@ export default function App() {
           onToggle={handleVersionDropdownToggle}
           onSelect={handleSelectEsphomeVersion}
         />
+        <button
+          className="btn-secondary btn-sm"
+          onClick={() => setEditorTarget('secrets.yaml')}
+          title="Edit secrets.yaml"
+        >
+          Secrets
+        </button>
+        <button
+          className="btn-secondary btn-sm"
+          onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          style={{ padding: '4px 8px', fontSize: 14 }}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
         <span className="spacer" />
         <span className="status-dot" title="Server online" />
       </header>
@@ -326,6 +359,7 @@ export default function App() {
             devices={devices}
             onCompile={handleCompile}
             onEdit={setEditorTarget}
+            onToast={addToast}
           />
         )}
         {activeTab === 'queue' && (
@@ -367,6 +401,7 @@ export default function App() {
           target={editorTarget}
           onClose={() => setEditorTarget(null)}
           onToast={addToast}
+          monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
         />
       )}
 

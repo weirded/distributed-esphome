@@ -1,4 +1,5 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { getApiKey } from '../api/client';
 import type { Device, Target } from '../types';
 import { stripYaml } from '../utils';
 
@@ -7,6 +8,7 @@ interface Props {
   devices: Device[];
   onCompile: (targets: string[] | 'all' | 'outdated') => void;
   onEdit: (target: string) => void;
+  onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
 }
 
 function timeAgo(isoString: string): string {
@@ -16,7 +18,15 @@ function timeAgo(isoString: string): string {
   return Math.floor(ago / 3600) + 'h ago';
 }
 
-export function DevicesTab({ targets, devices, onCompile, onEdit }: Props) {
+function matchesFilter(filter: string, ...fields: (string | null | undefined)[]): boolean {
+  if (!filter) return true;
+  const q = filter.toLowerCase();
+  return fields.some(f => f?.toLowerCase().includes(q));
+}
+
+export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Props) {
+  const [filter, setFilter] = useState('');
+
   // Track checked state in a ref — we read DOM directly to avoid re-render loops
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -43,6 +53,36 @@ export function DevicesTab({ targets, devices, onCompile, onEdit }: Props) {
   const sortedTargets = [...targets].sort((a, b) => a.target.localeCompare(b.target));
   const sortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
 
+  const filteredTargets = filter
+    ? sortedTargets.filter(t =>
+        matchesFilter(
+          filter,
+          t.friendly_name,
+          t.device_name,
+          stripYaml(t.target),
+          t.target,
+          t.online == null ? 'unknown' : t.online ? 'online' : 'offline',
+          t.ip_address,
+          t.running_version,
+        )
+      )
+    : sortedTargets;
+
+  const filteredUnmanaged = filter
+    ? sortedUnmanaged.filter(d =>
+        matchesFilter(
+          filter,
+          d.name,
+          stripYaml(d.name),
+          d.online ? 'online' : 'offline',
+          d.ip_address,
+          d.running_version,
+        )
+      )
+    : sortedUnmanaged;
+
+  const hasResults = filteredTargets.length > 0 || filteredUnmanaged.length > 0;
+
   return (
     <div className="tab-panel active" id="tab-devices">
       <div className="panel">
@@ -52,6 +92,47 @@ export function DevicesTab({ targets, devices, onCompile, onEdit }: Props) {
             <button className="btn-primary btn-sm" onClick={() => onCompile('all')}>Upgrade All</button>
             <button className="btn-secondary btn-sm" onClick={handleCompileSelected}>Upgrade Selected</button>
             <button className="btn-success btn-sm" onClick={() => onCompile('outdated')} disabled={!targets.some(t => t.needs_update)}>Upgrade Outdated</button>
+          </div>
+        </div>
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>
+          <div style={{ position: 'relative', maxWidth: 320 }}>
+            <input
+              type="text"
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              placeholder="Search devices..."
+              style={{
+                width: '100%',
+                background: 'var(--surface2)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                color: 'var(--text)',
+                fontSize: 13,
+                padding: '5px 28px 5px 10px',
+                outline: 'none',
+              }}
+            />
+            {filter && (
+              <button
+                onClick={() => setFilter('')}
+                style={{
+                  position: 'absolute',
+                  right: 6,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '0 2px',
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+                title="Clear filter"
+              >
+                ×
+              </button>
+            )}
           </div>
         </div>
         <div className="table-wrap">
@@ -67,16 +148,20 @@ export function DevicesTab({ targets, devices, onCompile, onEdit }: Props) {
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
-              {sortedTargets.length === 0 && sortedUnmanaged.length === 0 ? (
+              {!hasResults ? (
                 <tr className="empty-row">
-                  <td colSpan={6}>No devices found — ensure ESPHome configs are in /config/esphome/</td>
+                  <td colSpan={6}>
+                    {filter
+                      ? 'No devices match your search'
+                      : 'No devices found — ensure ESPHome configs are in /config/esphome/'}
+                  </td>
                 </tr>
               ) : (
                 <>
-                  {sortedTargets.map(t => (
-                    <TargetRow key={t.target} target={t} onCompile={onCompile} onEdit={onEdit} />
+                  {filteredTargets.map(t => (
+                    <TargetRow key={t.target} target={t} onCompile={onCompile} onEdit={onEdit} onToast={onToast} />
                   ))}
-                  {sortedUnmanaged.map(d => (
+                  {filteredUnmanaged.map(d => (
                     <UnmanagedRow key={d.name} device={d} />
                   ))}
                 </>
@@ -93,10 +178,12 @@ function TargetRow({
   target: t,
   onCompile,
   onEdit,
+  onToast,
 }: {
   target: Target;
   onCompile: (targets: string[]) => void;
   onEdit: (target: string) => void;
+  onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
 }) {
   let lastSeenEl: React.ReactNode = null;
   if (t.last_seen) {
@@ -115,6 +202,21 @@ function TargetRow({
   const upgradeBtnCls = t.needs_update ? 'btn-success' : 'btn-secondary';
   const displayName = t.friendly_name || t.device_name || stripYaml(t.target);
 
+  async function handleCopyApiKey() {
+    try {
+      const key = await getApiKey(t.target);
+      await navigator.clipboard.writeText(key);
+      onToast('API key copied!', 'success');
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes('No API key') || msg === '404') {
+        onToast('No API key', 'info');
+      } else {
+        onToast('No API key', 'info');
+      }
+    }
+  }
+
   return (
     <tr>
       <td><input type="checkbox" className="target-cb" value={t.target} /></td>
@@ -125,7 +227,9 @@ function TargetRow({
       </td>
       <td>{statusEl}</td>
       <td style={{ color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: 12 }}>
-        {t.ip_address || '—'}
+        {t.online && t.ip_address
+          ? <a href={`http://${t.ip_address}`} target="_blank" rel="noopener" style={{ color: 'inherit', textDecoration: 'none' }} className="ip-link">{t.ip_address}</a>
+          : (t.ip_address || '—')}
       </td>
       <td style={{ fontSize: 12 }}>
         {t.running_version || '—'}
@@ -135,6 +239,14 @@ function TargetRow({
         <div style={{ display: 'flex', gap: 4 }}>
           <button className={`${upgradeBtnCls} btn-sm`} onClick={() => onCompile([t.target])}>Upgrade</button>
           <button className="btn-secondary btn-sm" onClick={() => onEdit(t.target)}>Edit</button>
+          <button
+            className="btn-secondary btn-sm"
+            onClick={handleCopyApiKey}
+            title="Copy API encryption key"
+            style={{ padding: '4px 7px' }}
+          >
+            &#128273;
+          </button>
         </div>
       </td>
     </tr>
@@ -155,7 +267,9 @@ function UnmanagedRow({ device: d }: { device: Device }) {
       </td>
       <td>{statusEl}</td>
       <td style={{ color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: 12 }}>
-        {d.ip_address || '—'}
+        {d.online && d.ip_address
+          ? <a href={`http://${d.ip_address}`} target="_blank" rel="noopener" style={{ color: 'inherit', textDecoration: 'none' }} className="ip-link">{d.ip_address}</a>
+          : (d.ip_address || '—')}
       </td>
       <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>
       <td></td>

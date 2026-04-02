@@ -7,6 +7,7 @@ interface Props {
   target: string | null;
   onClose: () => void;
   onToast: (msg: string, type?: ToastType) => void;
+  monacoTheme?: string;
 }
 
 const YAML_KEYWORDS = [
@@ -19,7 +20,7 @@ const YAML_KEYWORDS = [
 
 let _completionRegistered = false;
 
-export function EditorModal({ target, onClose, onToast }: Props) {
+export function EditorModal({ target, onClose, onToast, monacoTheme = 'vs-dark' }: Props) {
   const isOpen = target !== null;
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
@@ -111,7 +112,7 @@ export function EditorModal({ target, onClose, onToast }: Props) {
               height="100%"
               defaultLanguage="yaml"
               value={content}
-              theme="vs-dark"
+              theme={monacoTheme}
               options={{
                 fontSize: 13,
                 lineNumbers: 'on',

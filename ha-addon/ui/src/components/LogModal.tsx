@@ -210,6 +210,25 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry }: Props) {
     }
   }
 
+  function handleDownload() {
+    const term = termRef.current;
+    if (!term) return;
+    const buffer = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buffer.length; i++) {
+      lines.push(buffer.getLine(i)?.translateToString() ?? '');
+    }
+    const text = lines.join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `${job?.target ?? 'log'}-${ts}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div
       id="log-modal"
@@ -224,6 +243,9 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry }: Props) {
             {metaEl}
             {retryEl}
           </div>
+          <button className="btn-secondary btn-sm" onClick={handleDownload} title="Download log">
+            &#8595; Download
+          </button>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body" style={{ padding: 0 }}>

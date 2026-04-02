@@ -187,3 +187,10 @@ export async function getJobLog(
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }
+
+export async function getApiKey(filename: string): Promise<string> {
+  const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/api-key`);
+  const data = await r.json() as { key?: string; error?: string };
+  if (!r.ok) throw new Error(data.error || String(r.status));
+  return data.key!;
+}

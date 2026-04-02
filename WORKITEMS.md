@@ -19,12 +19,12 @@ Mark items `[x]` when complete.
 
 ## Quick Wins (small, high-value, no backend changes)
 
-- [ ] **6.1 Device search/filter bar** — client-side filter across all columns, persists across polls
-- [ ] **4.3 Device web server links** — make IP clickable when device has web_server component
-- [ ] **4.4 Show API encryption key** — copy-to-clipboard button per device (keys already extracted server-side)
-- [ ] **6.4 Export logs** — download button in log modal saves terminal content as .txt
-- [ ] **1.3 Secrets editor** — "Secrets" button in header opens secrets.yaml in Monaco editor
-- [ ] **6.2 Dark/light theme toggle** — CSS variables for both themes, persist in localStorage
+- [x] **6.1 Device search/filter bar** — client-side filter across all columns, persists across polls
+- [x] **4.3 Device web server links** — make IP clickable when device is online
+- [x] **4.4 Show API encryption key** — copy-to-clipboard button per device + server endpoint
+- [x] **6.4 Export logs** — download button in log modal saves terminal content as .txt
+- [x] **1.3 Secrets editor** — "Secrets" button in header opens secrets.yaml in Monaco editor
+- [x] **6.2 Dark/light theme toggle** — CSS variables for both themes, persist in localStorage
 
 ---
 
