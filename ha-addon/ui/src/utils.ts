@@ -40,17 +40,24 @@ export function isJobRetryable(job: { state: string; ota_result?: string }): boo
 export function getJobBadge(job: {
   state: string;
   ota_only?: boolean;
+  validate_only?: boolean;
   ota_result?: string;
   status_text?: string;
 }): { label: string; cls: string } {
-  if (job.state === 'pending' && job.ota_only) {
+  if (job.state === 'pending' && job.validate_only) {
+    return { label: 'Validate', cls: 'badge badge-pending' };
+  } else if (job.state === 'pending' && job.ota_only) {
     return { label: 'OTA Retry', cls: 'badge badge-timed_out' };
   } else if (job.state === 'pending') {
     return { label: 'Pending', cls: 'badge badge-pending' };
+  } else if (job.state === 'working' && job.validate_only) {
+    return { label: job.status_text || 'Validating', cls: 'badge badge-working' };
   } else if (job.state === 'working') {
     return { label: job.status_text || 'Working', cls: 'badge badge-working' };
   } else if (job.state === 'failed') {
     return { label: 'Failed', cls: 'badge badge-failed' };
+  } else if (job.state === 'success' && job.validate_only) {
+    return { label: 'Valid', cls: 'badge badge-success' };
   } else if (job.state === 'success') {
     if (job.ota_result === 'success') {
       return { label: 'Success', cls: 'badge badge-success' };

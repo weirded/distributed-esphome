@@ -39,9 +39,9 @@ Mark items `[x]` when complete.
 
 ## Config Validation
 
-- [ ] **1.2a Server endpoint** — `POST /ui/api/validate` dispatches validation job
-- [ ] **1.2b Job type: validate_only** — add field to Job dataclass, worker runs `esphome config` instead of compile
-- [ ] **1.2c Validate button in editor** — triggers validation, shows results in terminal or inline
+- [x] **1.2a Server endpoint** (1.1.0-dev.10) — `POST /ui/api/validate` dispatches validation job
+- [x] **1.2b Job type: validate_only** (1.1.0-dev.10) — worker runs `esphome config` (2-5s) instead of compile+OTA
+- [x] **1.2c Validate button in editor** (1.1.0-dev.10) — triggers validation, switches to queue tab, badge shows "Validating"/"Valid"
 
 ---
 

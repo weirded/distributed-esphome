@@ -17,6 +17,7 @@ import {
   setEsphomeVersion,
   setInitialAddonVersion,
   setToastFn,
+  validateConfig,
 } from './api/client';
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
 import { DevicesTab } from './components/DevicesTab';
@@ -199,6 +200,18 @@ export default function App() {
       await fetchQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleValidate(target: string) {
+    try {
+      await validateConfig(target);
+      addToast(`Validating ${target}`, 'info');
+      setEditorTarget(null);
+      switchTab('queue');
+      await fetchQueue();
+    } catch (err) {
+      addToast('Validate failed: ' + (err as Error).message, 'error');
     }
   }
 
@@ -412,6 +425,7 @@ export default function App() {
           target={editorTarget}
           onClose={() => setEditorTarget(null)}
           onToast={addToast}
+          onValidate={handleValidate}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
         />
       )}

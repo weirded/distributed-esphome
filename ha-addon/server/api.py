@@ -254,6 +254,7 @@ async def get_next_job(request: web.Request) -> web.Response:
             "bundle_b64": bundle_b64,
             "timeout_seconds": job.timeout_seconds,
             "ota_only": job.ota_only,
+            "validate_only": job.validate_only,
         }
     )
 

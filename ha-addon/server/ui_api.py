@@ -291,6 +291,39 @@ async def set_esphome_version_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "version": version})
 
 
+@routes.post("/ui/api/validate")
+async def validate_config(request: web.Request) -> web.Response:
+    """Start a validation job for a single target (runs esphome config, not compile).
+
+    Body: { "target": "mydevice.yaml" }
+    Returns: { "job_id": "..." }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    target = body.get("target")
+    if not target:
+        return web.json_response({"error": "target required"}, status=400)
+
+    cfg = _cfg(request)
+    queue = request.app["queue"]
+    server_version = get_esphome_version()
+
+    job = await queue.enqueue(
+        target=target,
+        esphome_version=server_version,
+        run_id=str(uuid.uuid4()),
+        timeout_seconds=cfg.job_timeout,
+        validate_only=True,
+    )
+    if job is None:
+        return web.json_response({"error": "Job already queued"}, status=409)
+    logger.info("Validation job %s enqueued for target %s", job.id, target)
+    return web.json_response({"job_id": job.id})
+
+
 @routes.post("/ui/api/compile")
 async def start_compile(request: web.Request) -> web.Response:
     """Start a compile run.

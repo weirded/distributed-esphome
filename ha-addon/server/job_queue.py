@@ -59,6 +59,7 @@ class Job:
     log: Optional[str] = None
     ota_result: Optional[str] = None
     ota_only: bool = False  # skip compile, just re-run OTA upload
+    validate_only: bool = False  # run esphome config (validation) instead of compile+OTA
     pinned_client_id: Optional[str] = None  # only this client can claim the job
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
@@ -81,6 +82,7 @@ class Job:
             "log": self.log,
             "ota_result": self.ota_result,
             "ota_only": self.ota_only,
+            "validate_only": self.validate_only,
             "pinned_client_id": self.pinned_client_id,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
@@ -109,6 +111,7 @@ class Job:
             log=d.get("log"),
             ota_result=d.get("ota_result"),
             ota_only=d.get("ota_only", False),
+            validate_only=d.get("validate_only", False),
             pinned_client_id=d.get("pinned_client_id"),
         )
 
@@ -173,6 +176,7 @@ class JobQueue:
         esphome_version: str,
         run_id: str,
         timeout_seconds: int,
+        validate_only: bool = False,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -212,6 +216,7 @@ class JobQueue:
                 state=JobState.PENDING,
                 run_id=run_id,
                 timeout_seconds=timeout_seconds,
+                validate_only=validate_only,
             )
             self._jobs[job.id] = job
             self._persist()

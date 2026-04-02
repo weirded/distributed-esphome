@@ -7,6 +7,7 @@ interface Props {
   target: string | null;
   onClose: () => void;
   onToast: (msg: string, type?: ToastType) => void;
+  onValidate?: (target: string) => void;
   monacoTheme?: string;
 }
 
@@ -171,7 +172,7 @@ let _completionRegistered = false;
 // Debounce timer handle for validation
 let _validationTimer: ReturnType<typeof setTimeout> | null = null;
 
-export function EditorModal({ target, onClose, onToast, monacoTheme = 'vs-dark' }: Props) {
+export function EditorModal({ target, onClose, onToast, onValidate, monacoTheme = 'vs-dark' }: Props) {
   const isOpen = target !== null;
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
@@ -332,6 +333,15 @@ export function EditorModal({ target, onClose, onToast, monacoTheme = 'vs-dark' 
         <div className="editor-header">
           <h3>{target || ''}</h3>
           <button className="btn-primary btn-sm" onClick={handleSave}>Save</button>
+          {onValidate && target && (
+            <button
+              className="btn-secondary btn-sm"
+              onClick={() => onValidate(target)}
+              title="Validate config via esphome config (2-5s)"
+            >
+              Validate
+            </button>
+          )}
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="monaco-container">

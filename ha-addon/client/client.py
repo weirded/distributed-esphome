@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.1.0-dev.9"
+CLIENT_VERSION = "1.1.0-dev.10"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -712,9 +712,13 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     bundle_b64 = job["bundle_b64"]
     timeout_seconds = job.get("timeout_seconds", JOB_TIMEOUT)
     ota_only = job.get("ota_only", False)
+    validate_only = job.get("validate_only", False)
 
     _log_context.current_target = target
-    logger.info("Starting job %s: target=%s esphome=%s ota_only=%s", job_id, target, esphome_version, ota_only)
+    logger.info(
+        "Starting job %s: target=%s esphome=%s ota_only=%s validate_only=%s",
+        job_id, target, esphome_version, ota_only, validate_only,
+    )
 
     # Per-slot PlatformIO core directory — prevents cross-slot package conflicts
     # when multiple workers run esphome compile simultaneously.
@@ -757,6 +761,22 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         if not os.path.exists(target_path):
             _submit_result(job_id, "failed", log=f"Target file not found in bundle: {target}", ota_result=None)
             return
+
+        # ---------------------------------------------------------------
+        # Validation phase (validate_only=True) — runs esphome config and exits
+        # ---------------------------------------------------------------
+        if validate_only:
+            _report_status(job_id, "Validating")
+            _compile_log, compile_ok = _run_subprocess(
+                [esphome_bin, "config", target_path],
+                cwd=tmp_dir,
+                timeout=60,  # validation is fast — 60s is plenty
+                label="validate",
+                env=subprocess_env,
+                job_id=job_id,
+            )
+            _submit_result(job_id, "success" if compile_ok else "failed", log=None, ota_result=None)
+            return  # skip compile and OTA phases
 
         # ---------------------------------------------------------------
         # Compile phase — timer starts NOW

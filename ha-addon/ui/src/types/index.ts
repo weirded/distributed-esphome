@@ -75,6 +75,7 @@ export interface Job {
   created_at: string;
   status_text?: string;
   ota_only?: boolean;
+  validate_only?: boolean;
   ota_result?: string;
   log?: string;
 }

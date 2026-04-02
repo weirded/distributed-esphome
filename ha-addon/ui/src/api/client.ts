@@ -195,6 +195,17 @@ export async function getApiKey(filename: string): Promise<string> {
   return data.key!;
 }
 
+export async function validateConfig(target: string): Promise<{ job_id?: string; error?: string }> {
+  const r = await apiFetch('./ui/api/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target }),
+  });
+  const data = await r.json() as { job_id?: string; error?: string };
+  if (!r.ok) throw new Error(data.error || String(r.status));
+  return data;
+}
+
 export async function getSecretKeys(): Promise<string[]> {
   const r = await apiFetch('./ui/api/secret-keys');
   if (!r.ok) return [];
