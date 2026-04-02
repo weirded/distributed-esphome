@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   cancelJobs,
   clearQueue,
@@ -133,23 +133,27 @@ export default function App() {
   }, []);
 
   // ---- Initial load + polling ----
+  // Use refs so the effect runs exactly once (no re-creation of intervals)
+  const fetchersRef = useRef({ fetchServerInfo, fetchEsphomeVersions, fetchWorkers, fetchDevicesAndTargets, fetchQueue });
+  fetchersRef.current = { fetchServerInfo, fetchEsphomeVersions, fetchWorkers, fetchDevicesAndTargets, fetchQueue };
 
   useEffect(() => {
-    fetchServerInfo();
-    fetchEsphomeVersions();
-    fetchWorkers();
-    fetchDevicesAndTargets();
-    fetchQueue();
+    const f = fetchersRef.current;
+    f.fetchServerInfo();
+    f.fetchEsphomeVersions();
+    f.fetchWorkers();
+    f.fetchDevicesAndTargets();
+    f.fetchQueue();
 
     const intervals = [
-      setInterval(fetchServerInfo, 30_000),
-      setInterval(fetchEsphomeVersions, 15 * 60_000),
-      setInterval(fetchWorkers, 5_000),
-      setInterval(fetchDevicesAndTargets, 15_000),
-      setInterval(fetchQueue, 3_000),
+      setInterval(() => fetchersRef.current.fetchServerInfo(), 30_000),
+      setInterval(() => fetchersRef.current.fetchEsphomeVersions(), 15 * 60_000),
+      setInterval(() => fetchersRef.current.fetchWorkers(), 5_000),
+      setInterval(() => fetchersRef.current.fetchDevicesAndTargets(), 15_000),
+      setInterval(() => fetchersRef.current.fetchQueue(), 3_000),
     ];
     return () => intervals.forEach(clearInterval);
-  }, [fetchServerInfo, fetchEsphomeVersions, fetchWorkers, fetchDevicesAndTargets, fetchQueue]);
+  }, []);
 
   // Close version dropdown on outside click
   useEffect(() => {
