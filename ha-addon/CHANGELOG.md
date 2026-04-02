@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.72
+- Honor remote package refresh periods (skip_update=False)
+  - ESPHome checks FETCH_HEAD timestamp vs configured refresh (default: 1 day)
+  - Combined with mtime cache, repos only update when stale AND config changed
+
 ## 0.0.71
 - Cache resolved ESPHome configs by file mtime — eliminates repeated git clones
   on startup and every poll cycle (was cloning remote packages every 15 seconds)

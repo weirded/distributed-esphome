@@ -126,8 +126,10 @@ def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
         if not isinstance(config, dict):
             return None
 
-        # Resolve packages (local + remote includes) — skip git updates for speed
-        config = do_packages_pass(config, skip_update=True)
+        # Resolve packages (local + remote includes). skip_update=False lets
+        # ESPHome honor each package's refresh period (default: 1 day).
+        # Our mtime cache prevents repeated resolutions within the same runtime.
+        config = do_packages_pass(config, skip_update=False)
         config = merge_packages(config)
 
         # Resolve ${substitutions}
