@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.1.0-dev.1"
+CLIENT_VERSION = "1.1.0-dev.2"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)

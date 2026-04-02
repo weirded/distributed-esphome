@@ -271,6 +271,10 @@ def create_app() -> web.Application:
     app.router.add_get("/index.html", serve_index)
     if STATIC_DIR.is_dir():
         app.router.add_static("/static/", path=str(STATIC_DIR), name="static")
+        # Serve Vite-built assets at /assets/ (referenced by base-relative URLs in index.html)
+        assets_dir = STATIC_DIR / "assets"
+        if assets_dir.is_dir():
+            app.router.add_static("/assets/", path=str(assets_dir), name="assets")
 
     # ESPHome version state — populated during startup
     app["esphome_detected_version"] = None   # version from HA Supervisor (or None)
