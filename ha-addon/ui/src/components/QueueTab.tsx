@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import type { Job, Worker } from '../types';
-import { fmtDuration, getJobBadge, stripYaml } from '../utils';
+import { fmtDuration, getJobBadge, stripYaml, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable } from '../utils';
 
 interface Props {
   queue: Job[];
@@ -54,10 +54,15 @@ export function QueueTab({
   function handleRetrySelected() {
     const ids = getChecked().filter(id => {
       const job = queue.find(j => j.id === id);
-      return job && ['failed', 'timed_out', 'success'].includes(job.state);
+      return job && isJobRetryable(job);
     });
     if (ids.length > 0) onRetry(ids);
   }
+
+  // Button state: compute what's in the queue
+  const hasFailedJobs = queue.some(j => isJobFailed(j));
+  const hasSuccessfulJobs = queue.some(j => isJobSuccessful(j));
+  const hasFinishedJobs = queue.some(j => isJobFinished(j));
 
   const sorted = [...queue].sort((a, b) => {
     const so = (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9);
@@ -71,11 +76,11 @@ export function QueueTab({
         <div className="panel-header">
           <h2>Queue</h2>
           <div className="actions">
-            <button className="btn-warn btn-sm" onClick={onRetryAllFailed}>Retry All Failed</button>
+            <button className="btn-warn btn-sm" onClick={onRetryAllFailed} disabled={!hasFailedJobs}>Retry All Failed</button>
             <button className="btn-warn btn-sm" onClick={handleRetrySelected}>Retry Selected</button>
             <button className="btn-danger btn-sm" onClick={handleCancelSelected}>Cancel Selected</button>
-            <button className="btn-success btn-sm" onClick={onClearSucceeded}>Clear Succeeded</button>
-            <button className="btn-secondary btn-sm" onClick={onClearFinished}>Clear Finished</button>
+            <button className="btn-success btn-sm" onClick={onClearSucceeded} disabled={!hasSuccessfulJobs}>Clear Succeeded</button>
+            <button className="btn-secondary btn-sm" onClick={onClearFinished} disabled={!hasFinishedJobs}>Clear Finished</button>
           </div>
         </div>
         <div className="table-wrap">
@@ -148,17 +153,18 @@ function QueueRow({
   const showPinned =
     pinnedHostname && job.pinned_client_id && job.state === 'pending';
 
-  const isActive = ['pending', 'working'].includes(job.state);
+  const inProgress = isJobInProgress(job);
   const dur =
     job.duration_seconds != null
       ? fmtDuration(job.duration_seconds)
-      : isActive && job.assigned_at
+      : inProgress && job.assigned_at
       ? fmtDuration((Date.now() - new Date(job.assigned_at).getTime()) / 1000)
       : '—';
 
   const { label: badgeLabel, cls: badgeCls } = getJobBadge(job);
-  const hasLog = !!(job.log || job.state === 'working');
-  const canRetry = ['failed', 'timed_out', 'success'].includes(job.state);
+  const hasLog = !!(job.log || inProgress);
+  const canRetry = isJobRetryable(job);
+  const canCancel = inProgress;
 
   return (
     <tr data-job={job.id}>
@@ -178,7 +184,7 @@ function QueueRow({
       <td style={{ fontSize: 12 }}>{dur}</td>
       <td>
         <div style={{ display: 'flex', gap: 4 }}>
-          {isActive && (
+          {canCancel && (
             <button className="btn-danger btn-sm" onClick={() => onCancel([job.id])}>Cancel</button>
           )}
           {canRetry && (

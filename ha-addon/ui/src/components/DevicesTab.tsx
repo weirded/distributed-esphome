@@ -51,7 +51,7 @@ export function DevicesTab({ targets, devices, onCompile, onEdit }: Props) {
           <div className="actions">
             <button className="btn-primary btn-sm" onClick={() => onCompile('all')}>Upgrade All</button>
             <button className="btn-secondary btn-sm" onClick={handleCompileSelected}>Upgrade Selected</button>
-            <button className="btn-warn btn-sm" onClick={() => onCompile('outdated')}>Upgrade Outdated</button>
+            <button className="btn-success btn-sm" onClick={() => onCompile('outdated')} disabled={!targets.some(t => t.needs_update)}>Upgrade Outdated</button>
           </div>
         </div>
         <div className="table-wrap">

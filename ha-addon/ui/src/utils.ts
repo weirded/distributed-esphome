@@ -9,6 +9,34 @@ export function fmtDuration(secs: number | null | undefined): string {
   return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
 }
 
+/** Job is fully done and successful (compile + OTA both succeeded) */
+export function isJobSuccessful(job: { state: string; ota_result?: string }): boolean {
+  return job.state === 'success' && job.ota_result === 'success';
+}
+
+/** Job is still in progress (not yet reached a terminal state) */
+export function isJobInProgress(job: { state: string; ota_result?: string }): boolean {
+  if (job.state === 'pending' || job.state === 'working') return true;
+  // Compile succeeded but OTA hasn't finished yet
+  if (job.state === 'success' && job.ota_result !== 'success' && job.ota_result !== 'failed') return true;
+  return false;
+}
+
+/** Job is in a terminal failed state (not running, not successful) */
+export function isJobFailed(job: { state: string; ota_result?: string }): boolean {
+  return !isJobInProgress(job) && !isJobSuccessful(job);
+}
+
+/** Job is in a terminal state (not running) */
+export function isJobFinished(job: { state: string; ota_result?: string }): boolean {
+  return !isJobInProgress(job);
+}
+
+/** Job can be retried (terminal and not successful) */
+export function isJobRetryable(job: { state: string; ota_result?: string }): boolean {
+  return isJobFailed(job);
+}
+
 export function getJobBadge(job: {
   state: string;
   ota_only?: boolean;
