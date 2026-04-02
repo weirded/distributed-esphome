@@ -7,6 +7,8 @@ interface Props {
   onClose: () => void;
 }
 
+type Shell = 'bash' | 'powershell';
+
 function buildDockerCmd(params: {
   serverUrl: string;
   token: string;
@@ -17,28 +19,32 @@ function buildDockerCmd(params: {
   hostPlatform: string;
   restartPolicy: string;
   clientTag: string;
+  shell: Shell;
 }): string {
   const {
     serverUrl, token, containerName, hostname, maxJobs,
-    seedVersion, hostPlatform, restartPolicy, clientTag,
+    seedVersion, hostPlatform, restartPolicy, clientTag, shell,
   } = params;
 
-  const lines = ['docker run -d \\'];
-  lines.push(`  --name ${containerName} \\`);
+  const cont = shell === 'powershell' ? '`' : '\\';
+  const hostnameVar = shell === 'powershell' ? '$env:COMPUTERNAME' : '$(hostname)';
+
+  const lines = [`docker run -d ${cont}`];
+  lines.push(`  --name ${containerName} ${cont}`);
   if (restartPolicy !== 'no') {
-    lines.push(`  --restart ${restartPolicy} \\`);
+    lines.push(`  --restart ${restartPolicy} ${cont}`);
   }
-  lines.push(`  --hostname ${hostname || '$(hostname)'} \\`);
-  lines.push(`  -e SERVER_URL=${serverUrl} \\`);
-  lines.push(`  -e SERVER_TOKEN=${token} \\`);
-  lines.push(`  -e MAX_PARALLEL_JOBS=${maxJobs} \\`);
+  lines.push(`  --hostname ${hostname || hostnameVar} ${cont}`);
+  lines.push(`  -e SERVER_URL=${serverUrl} ${cont}`);
+  lines.push(`  -e SERVER_TOKEN=${token} ${cont}`);
+  lines.push(`  -e MAX_PARALLEL_JOBS=${maxJobs} ${cont}`);
   if (seedVersion) {
-    lines.push(`  -e ESPHOME_SEED_VERSION=${seedVersion} \\`);
+    lines.push(`  -e ESPHOME_SEED_VERSION=${seedVersion} ${cont}`);
   }
   if (hostPlatform) {
-    lines.push(`  -e HOST_PLATFORM=${JSON.stringify(hostPlatform)} \\`);
+    lines.push(`  -e HOST_PLATFORM=${JSON.stringify(hostPlatform)} ${cont}`);
   }
-  lines.push(`  -v esphome-versions:/esphome-versions \\`);
+  lines.push(`  -v esphome-versions:/esphome-versions ${cont}`);
   lines.push(`  ghcr.io/weirded/esphome-dist-client:${clientTag}`);
 
   return lines.join('\n');
@@ -59,6 +65,7 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
   const seedUserEdited = useRef(false);
   const [hostPlatform, setHostPlatform] = useState('');
   const [restartPolicy, setRestartPolicy] = useState('unless-stopped');
+  const [shell, setShell] = useState<Shell>('bash');
   const [copied, setCopied] = useState(false);
 
   // Sync seed version from props unless user manually edited it
@@ -87,6 +94,7 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
     hostPlatform,
     restartPolicy,
     clientTag,
+    shell,
   });
 
   function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -189,6 +197,25 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
                 <option value="always">always</option>
                 <option value="no">no</option>
               </select>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em' }}>Shell</span>
+            <div style={{ display: 'flex', gap: 0, border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+              <button
+                className={shell === 'bash' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+                style={{ borderRadius: 0, border: 'none' }}
+                onClick={() => setShell('bash')}
+              >
+                Bash
+              </button>
+              <button
+                className={shell === 'powershell' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+                style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)' }}
+                onClick={() => setShell('powershell')}
+              >
+                PowerShell
+              </button>
             </div>
           </div>
           <div className="docker-cmd-wrap">

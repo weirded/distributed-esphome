@@ -1,6 +1,15 @@
 import { useCallback, useRef } from 'react';
 import type { Job, Worker } from '../types';
 import { fmtDuration, getJobBadge, stripYaml, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable } from '../utils';
+import { useSortable } from '../hooks/useSortable';
+import { SortableHeader } from './SortableHeader';
+
+function timeAgo(isoString: string): string {
+  const ago = Math.round((Date.now() - new Date(isoString).getTime()) / 1000);
+  if (ago < 60) return ago + 's ago';
+  if (ago < 3600) return Math.floor(ago / 60) + 'm ago';
+  return Math.floor(ago / 3600) + 'h ago';
+}
 
 interface Props {
   queue: Job[];
@@ -33,6 +42,7 @@ export function QueueTab({
 }: Props) {
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const { sort, handleSort, sortedItems } = useSortable();
 
   const getChecked = useCallback((): string[] => {
     if (!tbodyRef.current) return [];
@@ -64,11 +74,21 @@ export function QueueTab({
   const hasSuccessfulJobs = queue.some(j => isJobSuccessful(j));
   const hasFinishedJobs = queue.some(j => isJobFinished(j));
 
-  const sorted = [...queue].sort((a, b) => {
+  const defaultSorted = [...queue].sort((a, b) => {
     const so = (STATE_ORDER[a.state] ?? 9) - (STATE_ORDER[b.state] ?? 9);
     if (so !== 0) return so;
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
+
+  const getJobValue = (job: Job): string | number => {
+    if (sort.col === 'device') return stripYaml(job.target);
+    if (sort.col === 'state') return STATE_ORDER[job.state] ?? 9;
+    if (sort.col === 'worker') return job.assigned_hostname || '';
+    if (sort.col === 'duration') return job.duration_seconds ?? 0;
+    return '';
+  };
+
+  const sorted = sort.dir ? sortedItems(defaultSorted, getJobValue) : defaultSorted;
 
   return (
     <div className="tab-panel active" id="tab-queue">
@@ -88,10 +108,10 @@ export function QueueTab({
             <thead>
               <tr>
                 <th><input type="checkbox" ref={selectAllRef} onChange={handleSelectAll} /></th>
-                <th>Device</th>
-                <th>State</th>
-                <th>Worker</th>
-                <th>Duration</th>
+                <SortableHeader label="Device" col="device" sort={sort} onSort={handleSort} />
+                <SortableHeader label="State" col="state" sort={sort} onSort={handleSort} />
+                <SortableHeader label="Worker" col="worker" sort={sort} onSort={handleSort} />
+                <SortableHeader label="Duration" col="duration" sort={sort} onSort={handleSort} />
                 <th>Actions</th>
               </tr>
             </thead>
@@ -172,7 +192,7 @@ function QueueRow({
       <td>
         <strong>{stripYaml(job.target)}</strong>
         <br />
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{job.id.slice(0, 8)}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{timeAgo(job.created_at)}</span>
       </td>
       <td><span className={badgeCls}>{badgeLabel}</span></td>
       <td style={{ fontSize: 12 }}>

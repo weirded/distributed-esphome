@@ -1,5 +1,7 @@
 import type { Job, SystemInfo, Worker } from '../types';
 import { stripYaml } from '../utils';
+import { useSortable } from '../hooks/useSortable';
+import { SortableHeader } from './SortableHeader';
 
 interface Props {
   workers: Worker[];
@@ -56,9 +58,23 @@ export function WorkersTab({ workers, queue, serverClientVersion, onDisable, onR
   const online = workers.filter(c => c.online).length;
   const countText = online + '/' + workers.length + ' online';
 
+  const { sort, handleSort, sortedItems } = useSortable('hostname');
+
+  const getWorkerValue = (c: Worker): string => {
+    if (sort.col === 'hostname') return c.hostname;
+    if (sort.col === 'status') {
+      if (c.disabled) return 'disabled';
+      return c.online ? 'online' : 'offline';
+    }
+    if (sort.col === 'version') return c.client_version || '';
+    return '';
+  };
+
+  const sortedWorkers = sort.dir ? sortedItems(workers, getWorkerValue) : [...workers].sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
+
   const rows: React.ReactNode[] = [];
 
-  for (const c of workers) {
+  for (const c of sortedWorkers) {
     const slots = c.max_parallel_jobs || 1;
     const statusEl = c.disabled
       ? <><span className="dot dot-offline"></span><span style={{ color: 'var(--text-muted)' }}>Disabled</span></>
@@ -144,11 +160,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, onDisable, onR
           <table>
             <thead>
               <tr>
-                <th>Hostname</th>
+                <SortableHeader label="Hostname" col="hostname" sort={sort} onSort={handleSort} />
                 <th>Platform</th>
-                <th>Status</th>
+                <SortableHeader label="Status" col="status" sort={sort} onSort={handleSort} />
                 <th>Current Job</th>
-                <th>Version</th>
+                <SortableHeader label="Version" col="version" sort={sort} onSort={handleSort} />
                 <th></th>
               </tr>
             </thead>

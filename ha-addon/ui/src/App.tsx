@@ -27,6 +27,7 @@ import { QueueTab } from './components/QueueTab';
 import { ToastContainer, useToast } from './components/Toast';
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, EsphomeVersions, Job, ServerInfo, Target, Worker } from './types';
+import { stripYaml } from './utils';
 import './theme.css';
 
 type TabName = 'devices' | 'queue' | 'workers';
@@ -204,7 +205,10 @@ export default function App() {
   async function handleCancelJobs(ids: string[]) {
     try {
       const data = await cancelJobs(ids);
-      addToast(`Cancelled ${data.cancelled} job(s)`, 'success');
+      const msg = data.cancelled === 1
+        ? `Cancelled ${stripYaml(queue.find(j => j.id === ids[0])?.target ?? ids[0])}`
+        : `Cancelled ${data.cancelled} jobs`;
+      addToast(msg, 'success');
       await fetchQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
@@ -214,7 +218,10 @@ export default function App() {
   async function handleRetryJobs(ids: string[]) {
     try {
       const data = await retryJobs(ids);
-      addToast(`Retrying ${data.retried} job(s)`, 'success');
+      const msg = data.retried === 1
+        ? `Retrying ${stripYaml(queue.find(j => j.id === ids[0])?.target ?? ids[0])}`
+        : `Retrying ${data.retried} jobs`;
+      addToast(msg, 'success');
       await fetchQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
@@ -224,7 +231,8 @@ export default function App() {
   async function handleRetryAllFailed() {
     try {
       const data = await retryAllFailed();
-      addToast(`Retrying ${data.retried} failed job(s)`, 'success');
+      const msg = data.retried === 1 ? 'Retrying 1 job' : `Retrying ${data.retried} failed jobs`;
+      addToast(msg, 'success');
       await fetchQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
@@ -234,7 +242,8 @@ export default function App() {
   async function handleClearSucceeded() {
     try {
       const data = await clearQueue(['success'], true);
-      addToast(`Cleared ${data.cleared} succeeded job(s)`, 'success');
+      const msg = data.cleared === 1 ? 'Cleared 1 succeeded job' : `Cleared ${data.cleared} succeeded jobs`;
+      addToast(msg, 'success');
       await fetchQueue();
     } catch {
       addToast('Clear failed', 'error');
@@ -244,7 +253,8 @@ export default function App() {
   async function handleClearFinished() {
     try {
       const data = await clearQueue(['success', 'failed', 'timed_out']);
-      addToast(`Cleared ${data.cleared} finished job(s)`, 'success');
+      const msg = data.cleared === 1 ? 'Cleared 1 finished job' : `Cleared ${data.cleared} finished jobs`;
+      addToast(msg, 'success');
       await fetchQueue();
     } catch {
       addToast('Clear failed', 'error');

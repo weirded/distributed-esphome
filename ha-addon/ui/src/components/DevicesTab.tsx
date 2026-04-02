@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiKey } from '../api/client';
 import type { Device, Target } from '../types';
 import { stripYaml } from '../utils';
+import { useSortable } from '../hooks/useSortable';
+import { SortableHeader } from './SortableHeader';
 
 interface Props {
   targets: Target[];
@@ -26,6 +28,7 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
 
 export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Props) {
   const [filter, setFilter] = useState('');
+  const { sort, handleSort, sortedItems } = useSortable();
 
   // Track checked state in a ref — we read DOM directly to avoid re-render loops
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -50,11 +53,11 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Pro
   }
 
   const unmanaged = devices.filter(d => !d.compile_target);
-  const sortedTargets = [...targets].sort((a, b) => a.target.localeCompare(b.target));
-  const sortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
+  const defaultSortedTargets = [...targets].sort((a, b) => a.target.localeCompare(b.target));
+  const defaultSortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
 
-  const filteredTargets = filter
-    ? sortedTargets.filter(t =>
+  const baseFilteredTargets = filter
+    ? defaultSortedTargets.filter(t =>
         matchesFilter(
           filter,
           t.friendly_name,
@@ -66,10 +69,10 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Pro
           t.running_version,
         )
       )
-    : sortedTargets;
+    : defaultSortedTargets;
 
-  const filteredUnmanaged = filter
-    ? sortedUnmanaged.filter(d =>
+  const baseFilteredUnmanaged = filter
+    ? defaultSortedUnmanaged.filter(d =>
         matchesFilter(
           filter,
           d.name,
@@ -79,7 +82,30 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Pro
           d.running_version,
         )
       )
-    : sortedUnmanaged;
+    : defaultSortedUnmanaged;
+
+  // Apply column sort on top of filter
+  const getTargetValue = (t: Target): string => {
+    if (sort.col === 'device') return t.friendly_name || t.device_name || stripYaml(t.target);
+    if (sort.col === 'status') return t.online == null ? 'unknown' : t.online ? 'online' : 'offline';
+    if (sort.col === 'ip') return t.ip_address || '';
+    if (sort.col === 'running') return t.running_version || '';
+    return '';
+  };
+  const getUnmanagedValue = (d: Device): string => {
+    if (sort.col === 'device') return d.name;
+    if (sort.col === 'status') return d.online ? 'online' : 'offline';
+    if (sort.col === 'ip') return d.ip_address || '';
+    if (sort.col === 'running') return d.running_version || '';
+    return '';
+  };
+
+  const filteredTargets = sort.dir
+    ? sortedItems(baseFilteredTargets, getTargetValue)
+    : baseFilteredTargets;
+  const filteredUnmanaged = sort.dir
+    ? sortedItems(baseFilteredUnmanaged, getUnmanagedValue)
+    : baseFilteredUnmanaged;
 
   const hasResults = filteredTargets.length > 0 || filteredUnmanaged.length > 0;
 
@@ -140,10 +166,10 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onToast }: Pro
             <thead>
               <tr>
                 <th><input type="checkbox" ref={selectAllRef} onChange={handleSelectAll} /></th>
-                <th>Device</th>
-                <th>Status</th>
-                <th>IP</th>
-                <th>Running</th>
+                <SortableHeader label="Device" col="device" sort={sort} onSort={handleSort} />
+                <SortableHeader label="Status" col="status" sort={sort} onSort={handleSort} />
+                <SortableHeader label="IP" col="ip" sort={sort} onSort={handleSort} />
+                <SortableHeader label="Running" col="running" sort={sort} onSort={handleSort} />
                 <th></th>
               </tr>
             </thead>
