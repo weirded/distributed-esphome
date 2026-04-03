@@ -213,7 +213,16 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onLogs, onToas
         <div className="panel-header">
           <h2>Devices</h2>
           <div className="actions">
-            <button className="btn-primary btn-sm" onClick={() => onCompile('all')}>Upgrade All</button>
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => {
+                const onlineTargets = targets.filter(t => t.online !== false).map(t => t.target);
+                if (onlineTargets.length > 0) onCompile(onlineTargets);
+              }}
+              title="Compile and OTA all online devices (skips known-offline)"
+            >
+              Upgrade All
+            </button>
             <button className="btn-secondary btn-sm" onClick={handleCompileSelected}>Upgrade Selected</button>
             <button className="btn-success btn-sm" onClick={() => onCompile('outdated')} disabled={!targets.some(t => t.needs_update)}>Upgrade Outdated</button>
           </div>

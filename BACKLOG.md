@@ -13,7 +13,7 @@
 
 6. https://github.com/weirded/distributed-esphome/issues/4 Worker on server (configurable)
 
-7. Upgrade all should optionally skip offline devices. 
+7. DONE (1.2.0-dev.2) - Upgrade All now skips known-offline devices. Includes online + checking/unknown, excludes confirmed offline.
 
 8. DONE (1.2.0-dev.1) - Change parallel job slots from the web UI. Workers tab has +/- controls per worker; value pushed via heartbeat, worker restarts to apply.
 
