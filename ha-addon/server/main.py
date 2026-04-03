@@ -147,6 +147,47 @@ async def ha_entity_poller(app: web.Application) -> None:
                 except Exception:
                     logger.warning("Template API call failed", exc_info=True)
 
+                # 1b. Get MAC addresses for ESPHome devices via template API.
+                # Returns a dict of {mac_address: entity_id} for matching by MAC.
+                ha_mac_set: set[str] = set()
+                if esphome_entity_ids:
+                    try:
+                        # Build a Jinja template that extracts MAC from device identifiers
+                        # for each ESPHome entity. ESPHome identifiers look like {("esphome", "AABBCCDDEEFF")}.
+                        tmpl = (
+                            "{%- set ns = namespace(macs=[]) -%}"
+                            "{%- for eid in integration_entities('esphome') -%}"
+                            "  {%- set did = device_id(eid) -%}"
+                            "  {%- if did -%}"
+                            "    {%- set ids = device_attr(did, 'identifiers') -%}"
+                            "    {%- if ids -%}"
+                            "      {%- for id_tuple in ids -%}"
+                            "        {%- if id_tuple[0] == 'esphome' -%}"
+                            "          {%- set ns.macs = ns.macs + [id_tuple[1]] -%}"
+                            "        {%- endif -%}"
+                            "      {%- endfor -%}"
+                            "    {%- endif -%}"
+                            "  {%- endif -%}"
+                            "{%- endfor -%}"
+                            "{{ ns.macs | unique | list | tojson }}"
+                        )
+                        async with session.post(
+                            "http://supervisor/core/api/template",
+                            headers={**headers, "Content-Type": "application/json"},
+                            json={"template": tmpl},
+                            timeout=timeout,
+                        ) as resp:
+                            if resp.status == 200:
+                                raw_macs = await resp.text()
+                                try:
+                                    parsed_macs = _json.loads(raw_macs)
+                                    if isinstance(parsed_macs, list):
+                                        ha_mac_set = {str(m).upper() for m in parsed_macs}
+                                except (_json.JSONDecodeError, TypeError):
+                                    pass
+                    except Exception:
+                        logger.debug("MAC template query failed", exc_info=True)
+
                 # 2. Fetch states for connectivity info
                 async with session.get(
                     "http://supervisor/core/api/states",
@@ -208,6 +249,7 @@ async def ha_entity_poller(app: web.Application) -> None:
 
             app["ha_entity_status"].clear()
             app["ha_entity_status"].update(ha_status)
+            app["ha_mac_set"] = ha_mac_set
 
             if first_poll:
                 first_poll = False

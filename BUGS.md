@@ -169,3 +169,7 @@
 85. FIXED (1.1.0-dev.28) - Timezone mismatch causing different config_hash. Server now sends its TZ in job response; worker sets TZ in subprocess env so ESPHome detects the correct timezone.
 
 86. FIXED (1.1.0-dev.28) - OTA retry restored. If esphome run fails after compile success, retries with esphome upload after 5s delay.
+
+87. FIXED (1.1.0-dev.29) - OTA retry keeps job in WORKING state until final result. If worker dies during retry, timeout checker re-queues to another worker. Previously reported "success" before OTA retry, leaving job stuck.
+
+88. FIXED (1.1.0-dev.29) - MAC address matching for HA devices. Device poller now captures MAC from device_info(). HA entity poller queries device identifiers via template API. Matching tries MAC first (most reliable), then name fallback.

@@ -116,21 +116,35 @@ def _ha_status_for_target(
     ha_entity_status: dict[str, dict],
     target: str,
     meta: dict,
+    device_mac: str | None = None,
+    ha_mac_set: set[str] | None = None,
 ) -> tuple[bool, bool | None]:
     """Return (ha_configured, ha_connected) for a given compile target.
 
-    ha_entity_status is keyed by normalised device name (e.g. "nespresso_machine")
-    derived from binary_sensor.<name>_status entities with device_class=connectivity.
+    Matching priority:
+    1. MAC address (most reliable — HA identifies ESPHome devices by MAC)
+    2. Direct name lookup (friendly_name, esphome.name, filename)
+    3. Prefix match against entity locals
 
-    HA names entities from the friendly_name (if set) or the esphome.name.
-    We try both, plus the filename stem as a fallback.
-
-    Returns (False, None) when no match is found or ha_entity_status is empty.
+    Returns (False, None) when no match is found.
     """
-    if not ha_entity_status:
+    # 1. MAC address match (authoritative — doesn't depend on naming)
+    if device_mac and ha_mac_set:
+        normalized_mac = device_mac.upper().replace(":", "")
+        if normalized_mac in ha_mac_set or device_mac.upper() in ha_mac_set:
+            # Device is in HA by MAC. Try to find connectivity from name matching.
+            # Fall through to name matching for connected state.
+            pass  # Will try name matching below for connectivity, but mark configured
+            mac_confirmed = True
+        else:
+            mac_confirmed = False
+    else:
+        mac_confirmed = False
+
+    if not ha_entity_status and not mac_confirmed:
         return False, None
 
-    # Try matching in priority order: friendly_name, esphome.name, filename stem
+    # 2. Name matching for connectivity state
     candidates: list[str] = []
     friendly = meta.get("friendly_name")
     if friendly:
@@ -140,19 +154,22 @@ def _ha_status_for_target(
         candidates.append(_normalize_for_ha(raw_name))
     candidates.append(_normalize_for_ha(target.replace(".yaml", "")))
 
-    # First try direct lookup (fastest, works for connectivity-matched names)
+    # Direct lookup
     for norm_name in candidates:
         entry = ha_entity_status.get(norm_name)
         if entry:
             return True, entry.get("connected")
 
-    # Fallback: prefix match against entity locals (e.g. "nespresso_machine"
-    # matches "nespresso_machine_temperature" in ha_entity_status)
+    # Prefix match
     for norm_name in candidates:
         prefix = norm_name + "_"
         for key, entry in ha_entity_status.items():
             if key.startswith(prefix) or key == norm_name:
                 return True, entry.get("connected")
+
+    # 3. If MAC confirmed but name didn't match, still mark as configured
+    if mac_confirmed:
+        return True, None
 
     return False, None
 
@@ -164,6 +181,7 @@ async def get_targets(request: web.Request) -> web.Response:
     device_poller = request.app.get("device_poller")
     server_version = get_esphome_version()
     ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
+    ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
 
     targets = scan_configs(cfg.config_dir)
 
@@ -199,7 +217,10 @@ async def get_targets(request: web.Request) -> web.Response:
                     has_api_key = True
                     break
 
-        ha_configured, ha_connected = _ha_status_for_target(ha_entity_status, target, meta)
+        device_mac = dev.mac_address if dev else None
+        ha_configured, ha_connected = _ha_status_for_target(
+            ha_entity_status, target, meta, device_mac=device_mac, ha_mac_set=ha_mac_set,
+        )
 
         # 4.2c: Use HA connected state as additional online signal.
         # If the device poller hasn't confirmed online yet but HA says connected,
@@ -1004,16 +1025,30 @@ async def debug_ha_status(request: web.Request) -> web.Response:
     """Debug endpoint: show HA entity status keys and matching info per target."""
     cfg = _cfg(request)
     ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
+    ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
+    device_poller = request.app.get("device_poller")
     targets = scan_configs(cfg.config_dir)
+
+    devices_by_target: dict[str, Device] = {}
+    if device_poller:
+        for dev in device_poller.get_devices():
+            if dev.compile_target:
+                devices_by_target[dev.compile_target] = dev
 
     result: dict = {
         "ha_entity_status_keys": sorted(ha_entity_status.keys()),
         "ha_entity_count": len(ha_entity_status),
+        "ha_mac_count": len(ha_mac_set),
+        "ha_macs": sorted(ha_mac_set),
         "targets": {},
     }
     for target in targets:
         meta = get_device_metadata(cfg.config_dir, target)
-        ha_configured, ha_connected = _ha_status_for_target(ha_entity_status, target, meta)
+        dev = devices_by_target.get(target)
+        device_mac = dev.mac_address if dev else None
+        ha_configured, ha_connected = _ha_status_for_target(
+            ha_entity_status, target, meta, device_mac=device_mac, ha_mac_set=ha_mac_set,
+        )
         candidates = []
         friendly = meta.get("friendly_name")
         if friendly:
@@ -1025,6 +1060,7 @@ async def debug_ha_status(request: web.Request) -> web.Response:
         result["targets"][target] = {
             "friendly_name": meta.get("friendly_name"),
             "device_name_raw": meta.get("device_name_raw"),
+            "device_mac": device_mac,
             "candidates": candidates,
             "ha_configured": ha_configured,
             "ha_connected": ha_connected,
