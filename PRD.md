@@ -160,27 +160,34 @@ See feature list below.
 
 ### Category 6: UI & UX
 
-**6.1 Dark/Light Theme Toggle**
+**6.1 Device Search/Filter**
+- Search bar above the Devices table that filters rows in real-time
+- Matches against all visible columns: device name, friendly name, filename, status, IP, running version
+- Client-side filtering (no API call) — instant results as you type
+- Filter state persists across background poll refreshes (same pattern as checkbox retention)
+- Clear button to reset the filter
+
+**6.2 Dark/Light Theme Toggle**
 - CSS custom properties for both themes
 - Persist preference in localStorage
 - Default: dark (current)
 
-**6.2 Device Groups/Tags**
+**6.3 Device Groups/Tags**
 - Organize devices by room, type, or custom tags
 - Filter/group in Devices tab
 - Stored in JSON sidecar metadata
 
-**6.3 Export Logs**
+**6.4 Export Logs**
 - Download compile or device logs as .txt file from log modal
 
-**6.4 Streamer Mode**
+**6.5 Streamer Mode**
 - Toggle that masks IPs, API keys, tokens in the UI
 - CSS-based blur on sensitive elements
 
-**6.5 Bulk Operations**
+**6.6 Bulk Operations**
 - Extend existing multi-select: bulk delete, bulk validate, bulk tag
 
-**6.6 Prometheus Metrics Endpoint**
+**6.7 Prometheus Metrics Endpoint**
 - Service discovery format for monitoring
 - Device metadata labels
 

@@ -100,17 +100,24 @@ class VersionManager:
         )
 
         pip = venv_dir / "bin" / "pip"
+        logger.info("Running: pip install --no-cache-dir esphome==%s", version)
         result = subprocess.run(
             [str(pip), "install", "--no-cache-dir", f"esphome=={version}"],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
+            stderr_excerpt = (result.stderr or "")[-2000:]  # last 2000 chars
+            stdout_excerpt = (result.stdout or "")[-1000:]
+            logger.error(
+                "pip install esphome==%s failed (exit %d):\nstderr: %s\nstdout: %s",
+                version, result.returncode, stderr_excerpt, stdout_excerpt,
+            )
             # Cleanup on failure
             shutil.rmtree(str(venv_dir), ignore_errors=True)
             raise RuntimeError(
-                f"pip install esphome=={version} failed:\n"
-                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+                f"pip install esphome=={version} failed (exit {result.returncode}):\n"
+                f"{stderr_excerpt}"
             )
 
         logger.info("esphome==%s installed successfully", version)

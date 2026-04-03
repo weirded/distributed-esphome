@@ -246,6 +246,17 @@ async def get_next_job(request: web.Request) -> web.Response:
 
     registry.set_job(client_id, job.id)
 
+    # Include server timezone so worker can match ESPHome's timezone detection.
+    # Different timezones produce different config_hash → unnecessary clean rebuilds.
+    import time as _time  # noqa: PLC0415
+    server_tz = _time.tzname[0] if _time.daylight == 0 else _time.tzname[1]
+    try:
+        # Prefer the actual TZ env var or read /etc/timezone for the IANA name
+        import os as _os  # noqa: PLC0415
+        server_tz = _os.environ.get("TZ") or open("/etc/timezone").read().strip() or server_tz
+    except Exception:
+        pass
+
     return web.json_response(
         {
             "job_id": job.id,
@@ -254,6 +265,9 @@ async def get_next_job(request: web.Request) -> web.Response:
             "bundle_b64": bundle_b64,
             "timeout_seconds": job.timeout_seconds,
             "ota_only": job.ota_only,
+            "validate_only": job.validate_only,
+            "ota_address": job.ota_address,
+            "server_timezone": server_tz,
         }
     )
 

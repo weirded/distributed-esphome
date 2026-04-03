@@ -25,7 +25,7 @@ jobs:
             pytest pytest-asyncio \
             aiohttp aioesphomeapi zeroconf \
             requests \
-            mypy types-requests
+            mypy types-requests types-PyYAML
 
       - name: Run unit tests
         run: pytest tests/ --ignore=tests/test_e2e_client.py -v

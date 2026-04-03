@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.0.0"
+CLIENT_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -712,9 +712,13 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     bundle_b64 = job["bundle_b64"]
     timeout_seconds = job.get("timeout_seconds", JOB_TIMEOUT)
     ota_only = job.get("ota_only", False)
+    validate_only = job.get("validate_only", False)
 
     _log_context.current_target = target
-    logger.info("Starting job %s: target=%s esphome=%s ota_only=%s", job_id, target, esphome_version, ota_only)
+    logger.info(
+        "Starting job %s: target=%s esphome=%s ota_only=%s validate_only=%s",
+        job_id, target, esphome_version, ota_only, validate_only,
+    )
 
     # Per-slot PlatformIO core directory — prevents cross-slot package conflicts
     # when multiple workers run esphome compile simultaneously.
@@ -727,18 +731,30 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         logger.debug("Could not create pio dir %s (%s); using default PLATFORMIO_CORE_DIR", pio_dir, exc)
         subprocess_env = dict(os.environ)
 
+    # Match server timezone so ESPHome produces identical config_hash.
+    # Mismatched TZ → different hash → unnecessary clean rebuild → different firmware binary.
+    server_tz = job.get("server_timezone")
+    if server_tz:
+        subprocess_env["TZ"] = server_tz
+        logger.debug("Using server timezone: %s", server_tz)
+
     # Install ESPHome version (BEFORE starting the timeout timer)
     if ESPHOME_BIN:
         esphome_bin = ESPHOME_BIN
         logger.info("Using esphome binary override: %s", esphome_bin)
     else:
         _report_status(job_id, f"Downloading ESPHome {esphome_version}")
+        _flush_log_text(job_id, f"Installing ESPHome {esphome_version}...\n")
         try:
             esphome_bin = version_manager.ensure_version(esphome_version)
             logger.info("Using esphome binary: %s", esphome_bin)
+            _flush_log_text(job_id, f"ESPHome {esphome_version} ready.\n")
         except Exception as exc:
-            logger.error("Failed to install esphome==%s: %s", esphome_version, exc)
-            _submit_result(job_id, "failed", log=f"Version install failed: {exc}", ota_result=None)
+            error_detail = str(exc)
+            logger.error("Failed to install esphome==%s: %s", esphome_version, error_detail)
+            # Stream the full error to the job log so the user sees it in the terminal
+            _flush_log_text(job_id, f"\n\033[31mERROR: Failed to install ESPHome {esphome_version}\033[0m\n{error_detail}\n")
+            _submit_result(job_id, "failed", log=None, ota_result=None)
             with _active_jobs_lock:
                 _active_jobs -= 1
             return
@@ -759,61 +775,77 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             return
 
         # ---------------------------------------------------------------
-        # Compile phase — timer starts NOW
+        # Validation phase (validate_only=True) — runs esphome config and exits
         # ---------------------------------------------------------------
-        _report_status(job_id, "Compiling" + (" (OTA retry)" if ota_only else ""))
-        compile_log, compile_ok = _run_subprocess(
-            [esphome_bin, "compile", target_path],
+        if validate_only:
+            _report_status(job_id, "Validating")
+            _compile_log, compile_ok = _run_subprocess(
+                [esphome_bin, "config", target_path],
+                cwd=tmp_dir,
+                timeout=60,  # validation is fast — 60s is plenty
+                label="validate",
+                env=subprocess_env,
+                job_id=job_id,
+            )
+            _submit_result(job_id, "success" if compile_ok else "failed", log=None, ota_result=None)
+            return  # skip compile and OTA phases
+
+        # ---------------------------------------------------------------
+        # Build + OTA via `esphome run` (compile and upload in one step)
+        # ---------------------------------------------------------------
+        _report_status(job_id, "Compiling + OTA" + (" (retry)" if ota_only else ""))
+        run_cmd = [esphome_bin, "run", target_path, "--no-logs"]
+        ota_address = job.get("ota_address")
+        if ota_address:
+            run_cmd.extend(["--device", ota_address])
+
+        # Total timeout covers both compile + OTA
+        total_timeout = timeout_seconds + OTA_TIMEOUT
+        run_log, run_ok = _run_subprocess(
+            run_cmd,
             cwd=tmp_dir,
-            timeout=timeout_seconds,
-            label="compile",
+            timeout=total_timeout,
+            label="compile+OTA",
             env=subprocess_env,
             job_id=job_id,
         )
 
-        if not compile_ok:
-            # log=None tells the server to use the streamed log
-            _submit_result(job_id, "failed", log=None, ota_result=None)
-            return
+        if run_ok:
+            _submit_result(job_id, "success", log=None, ota_result="success")
+        else:
+            log_lower = run_log.lower()
+            compile_succeeded = "successfully compiled" in log_lower
+            ota_failed = compile_succeeded and ("failed" in log_lower or "timed out" in log_lower)
 
-        # Compile succeeded — report success first
-        _submit_result(job_id, "success", log=None, ota_result=None)
-
-        # ---------------------------------------------------------------
-        # OTA phase (with one retry on failure)
-        # ---------------------------------------------------------------
-        ota_result = "failed"
-        ota_logs: list[str] = []
-        for attempt in range(2):
-            if attempt > 0:
-                logger.info("OTA failed, retrying in 5s (attempt %d/2)", attempt + 1)
-                _report_status(job_id, "OTA Retry")
+            if not compile_succeeded:
+                _submit_result(job_id, "failed", log=None, ota_result=None)
+            elif ota_failed:
+                # Compile succeeded but OTA failed — retry OTA before reporting.
+                # Keep job in WORKING state so timeout checker can re-queue if we die.
+                _flush_log_text(job_id, "\n--- OTA failed, retrying in 5s ---\n")
                 time.sleep(5)
-            _report_status(job_id, "OTA Upgrade")
-            ota_log, ota_ok = _run_subprocess(
-                [esphome_bin, "upload", target_path],
-                cwd=tmp_dir,
-                timeout=OTA_TIMEOUT,
-                label=f"OTA upload (attempt {attempt + 1})",
-                env=subprocess_env,
-                job_id=job_id,
-            )
-            ota_logs.append(ota_log)
-            if ota_ok:
-                ota_result = "success"
-                break
-            if ota_log.endswith("TIMED OUT"):
-                break  # Don't retry timeouts
-
-        # Run network diagnostics on OTA failure to help debug
-        if ota_result == "failed":
-            diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
-            if diag:
-                ota_logs.append("\n--- Network Diagnostics ---\n" + diag)
-
-        logger.info("OTA result for job %s: %s", job_id, ota_result)
-        # log=None tells the server to use the streamed log for the OTA phase
-        _submit_ota_result(job_id, ota_result, None)
+                _report_status(job_id, "OTA Retry")
+                upload_cmd = [esphome_bin, "upload", target_path, "--no-logs"]
+                if ota_address:
+                    upload_cmd.extend(["--device", ota_address])
+                retry_log, retry_ok = _run_subprocess(
+                    upload_cmd,
+                    cwd=tmp_dir,
+                    timeout=OTA_TIMEOUT,
+                    label="OTA retry",
+                    env=subprocess_env,
+                    job_id=job_id,
+                )
+                if retry_ok:
+                    _submit_result(job_id, "success", log=None, ota_result="success")
+                else:
+                    _submit_result(job_id, "success", log=None, ota_result="failed")
+                    diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
+                    if diag:
+                        _flush_log_text(job_id, "\n--- Network Diagnostics ---\n" + diag)
+            else:
+                # Compile succeeded but something else failed
+                _submit_result(job_id, "success", log=None, ota_result="failed")
 
     finally:
         _log_context.current_target = None
@@ -824,6 +856,18 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             logger.debug("Cleaned up temp dir %s", tmp_dir)
         except Exception:
             pass
+
+
+def _colorize_log_line(line: str) -> str:
+    """Add ANSI color codes to ESPHome log lines based on level prefix."""
+    stripped = line.lstrip()
+    if stripped.startswith("INFO "):
+        return f"\033[32m{line}\033[0m"  # green
+    if stripped.startswith("WARNING "):
+        return f"\033[33m{line}\033[0m"  # yellow/orange
+    if stripped.startswith("ERROR "):
+        return f"\033[31m{line}\033[0m"  # red
+    return line
 
 
 def _run_subprocess(
@@ -892,8 +936,10 @@ def _run_subprocess(
             if not chunk:
                 break
             text = chunk.decode("utf-8", errors="replace")
-            log_chunks.append(text)
-            flush_buffer.append(text)
+            # Colorize log lines for xterm.js display
+            colored = "\n".join(_colorize_log_line(l) for l in text.split("\n"))
+            log_chunks.append(colored)
+            flush_buffer.append(colored)
             now = time.monotonic()
             if now - last_flush >= FLUSH_INTERVAL:
                 _flush_log()
@@ -911,6 +957,14 @@ def _run_subprocess(
     log = "".join(log_chunks)
     logger.info("%s finished: returncode=%d", label, proc.returncode)
     return log, success
+
+
+def _flush_log_text(job_id: str, text: str) -> None:
+    """Send a chunk of log text to the server for live streaming."""
+    try:
+        post(f"/api/v1/jobs/{job_id}/log", {"lines": text}, timeout=5)
+    except Exception:
+        pass
 
 
 def _report_status(job_id: str, status_text: str) -> None:

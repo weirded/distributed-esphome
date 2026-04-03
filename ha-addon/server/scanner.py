@@ -126,10 +126,11 @@ def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
         if not isinstance(config, dict):
             return None
 
-        # Resolve packages (local + remote includes). skip_update=False lets
-        # ESPHome honor each package's refresh period (default: 1 day).
-        # Our mtime cache prevents repeated resolutions within the same runtime.
-        config = do_packages_pass(config, skip_update=False)
+        # Resolve packages (local + remote includes). Skip git updates if we
+        # already have a cached result for any version of this file — the first
+        # resolution will clone, subsequent ones reuse the local checkout.
+        already_resolved = target in _config_cache
+        config = do_packages_pass(config, skip_update=already_resolved)
         config = merge_packages(config)
 
         # Resolve ${substitutions}
@@ -146,11 +147,18 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
     """Return display metadata from a YAML config file.
 
     Returns a dict with keys:
-      - friendly_name: str | None  — esphome.friendly_name (substitutions resolved)
-      - device_name:   str | None  — esphome.name formatted as title case
-      - comment:       str | None  — esphome.comment
+      - friendly_name:  str | None  — esphome.friendly_name (substitutions resolved)
+      - device_name:    str | None  — esphome.name formatted as title case
+      - comment:        str | None  — esphome.comment
+      - has_web_server: bool        — True if the web_server component is present
     """
-    result: dict = {"friendly_name": None, "device_name": None, "comment": None}
+    result: dict = {
+        "friendly_name": None,
+        "device_name": None,
+        "device_name_raw": None,  # raw esphome.name value (hyphens/underscores preserved)
+        "comment": None,
+        "has_web_server": False,
+    }
     config = _resolve_esphome_config(config_dir, target)
     if config is None:
         return result
@@ -162,10 +170,16 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
             result["friendly_name"] = str(friendly)
         raw_name = esphome_block.get("name")
         if raw_name:
+            result["device_name_raw"] = str(raw_name)
             result["device_name"] = str(raw_name).replace("_", " ").replace("-", " ").title()
         comment = esphome_block.get("comment")
         if comment:
             result["comment"] = str(comment)
+
+    # Detect presence of the web_server component (enables the IP → HTTP link in UI)
+    if config.get("web_server") is not None:
+        result["has_web_server"] = True
+
     return result
 
 

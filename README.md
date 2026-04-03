@@ -1,5 +1,8 @@
 # Distributed ESPHome
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/weirded)
+
 Offload ESPHome firmware compilation to remote machines. A Home Assistant add-on coordinates the job queue and serves the web UI; lightweight Docker containers on other hosts do the compiling and push firmware via OTA.
 
 ## Why?
@@ -313,7 +316,7 @@ distributed-esphome/
 ├── .github/workflows/publish-server.yml # Publish standalone server image to GHCR
 ├── .github/workflows/publish-client.yml # Publish worker image to GHCR
 ├── package-client.sh         # Build + package client Docker image for distribution
-└── REQUIREMENTS.md           # Full design specification
+└── PRD.md                    # Product requirements for ESPHome dashboard replacement
 ```
 
 ## Versioning
@@ -338,3 +341,13 @@ docker buildx build --platform linux/arm64 --load -t esphome-dist-client ha-addo
 # Package and distribute an ARM64 worker archive
 ./package-client.sh http://your-ha-host:8765 your-token linux/arm64
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Support
+
+If you find this project useful, consider buying me a coffee:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buy-me-a-coffee&logoColor=white&style=for-the-badge)](https://buymeacoffee.com/weirded)

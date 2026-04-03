@@ -1,5 +1,5 @@
 name: "ESPHome Distributed Build Server"
-version: "1.0.0"
+version: "1.1.0"
 slug: "esphome_dist_server"
 description: "Offload ESPHome firmware compilation to remote machines with a web UI for job management and OTA updates"
 url: "https://github.com/weirded/distributed-esphome"
@@ -29,6 +29,8 @@ host_network: true
 
 # Supervisor API access — needed to detect ESPHome add-on version
 hassio_api: true
+# HA Core REST API access — needed to read entity states (device connectivity)
+homeassistant_api: true
 
 map:
   - config:rw

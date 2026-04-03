@@ -59,6 +59,8 @@ class Job:
     log: Optional[str] = None
     ota_result: Optional[str] = None
     ota_only: bool = False  # skip compile, just re-run OTA upload
+    validate_only: bool = False  # run esphome config (validation) instead of compile+OTA
+    ota_address: Optional[str] = None  # override OTA target address (used after rename)
     pinned_client_id: Optional[str] = None  # only this client can claim the job
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
@@ -81,6 +83,8 @@ class Job:
             "log": self.log,
             "ota_result": self.ota_result,
             "ota_only": self.ota_only,
+            "validate_only": self.validate_only,
+            "ota_address": self.ota_address,
             "pinned_client_id": self.pinned_client_id,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
@@ -109,6 +113,8 @@ class Job:
             log=d.get("log"),
             ota_result=d.get("ota_result"),
             ota_only=d.get("ota_only", False),
+            validate_only=d.get("validate_only", False),
+            ota_address=d.get("ota_address"),
             pinned_client_id=d.get("pinned_client_id"),
         )
 
@@ -173,6 +179,8 @@ class JobQueue:
         esphome_version: str,
         run_id: str,
         timeout_seconds: int,
+        validate_only: bool = False,
+        ota_address: Optional[str] = None,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -212,6 +220,8 @@ class JobQueue:
                 state=JobState.PENDING,
                 run_id=run_id,
                 timeout_seconds=timeout_seconds,
+                validate_only=validate_only,
+                ota_address=ota_address,
             )
             self._jobs[job.id] = job
             self._persist()
@@ -449,6 +459,20 @@ class JobQueue:
             for j in self._jobs.values()
             if j.state in (JobState.PENDING, JobState.WORKING)
         )
+
+    async def remove_jobs(self, job_ids: list[str]) -> int:
+        """Remove terminal jobs by ID. Returns count removed."""
+        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT}
+        async with self._lock:
+            removed = 0
+            for job_id in job_ids:
+                job = self._jobs.get(job_id)
+                if job and job.state in terminal:
+                    del self._jobs[job_id]
+                    removed += 1
+            if removed:
+                self._persist()
+            return removed
 
     async def clear(self, states: list[str], require_ota_success: bool = False) -> int:
         """Remove terminal jobs whose state is in *states*. Returns count removed.

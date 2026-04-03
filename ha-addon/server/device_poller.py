@@ -55,6 +55,7 @@ class Device:
     compilation_time: Optional[str] = None  # e.g. "Mar 29 2026, 17:00:00"
     last_seen: Optional[datetime] = None
     compile_target: Optional[str] = None  # e.g. "living_room.yaml"
+    mac_address: Optional[str] = None  # e.g. "AA:BB:CC:DD:EE:FF"
 
     def to_dict(self) -> dict:
         return {
@@ -65,6 +66,7 @@ class Device:
             "compilation_time": self.compilation_time,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "compile_target": self.compile_target,
+            "mac_address": self.mac_address,
         }
 
 
@@ -251,11 +253,14 @@ class DevicePoller:
             async with self._lock:
                 snapshot = dict(self._devices)
 
+            # Query all devices concurrently for fast initial status
+            tasks = []
             for name, dev in snapshot.items():
-                # Prefer use_address from config, fall back to mDNS IP
                 addr = self._address_overrides.get(name) or dev.ip_address
                 if addr:
-                    await self._query_device(name, addr)
+                    tasks.append(self._query_device(name, addr))
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
             await asyncio.sleep(self._poll_interval)
 
@@ -274,6 +279,7 @@ class DevicePoller:
                     if dev:
                         dev.running_version = info.esphome_version
                         dev.compilation_time = getattr(info, "compilation_time", None) or None
+                        dev.mac_address = getattr(info, "mac_address", None) or None
                         dev.online = True
                         dev.last_seen = _utcnow()
                         self._save_cache()
@@ -330,6 +336,7 @@ class DevicePoller:
                     running_version=info.get("running_version"),
                     compilation_time=info.get("compilation_time"),
                     compile_target=compile_target,
+                    mac_address=info.get("mac_address"),
                 )
             logger.info("Loaded %d devices from cache", len(data))
         except Exception:
@@ -343,6 +350,7 @@ class DevicePoller:
                     "ip_address": dev.ip_address,
                     "running_version": dev.running_version,
                     "compilation_time": dev.compilation_time,
+                    "mac_address": dev.mac_address,
                 }
                 for name, dev in self._devices.items()
             }
