@@ -409,16 +409,14 @@ function DeviceMenu({
         <button
           className="action-menu-item"
           onClick={handleLogs}
-          disabled={!t.online}
-          title={t.online ? 'Stream live device logs' : 'Device is offline'}
+          title="Stream live device logs"
         >
           Live Logs
         </button>
         <button
           className="action-menu-item"
           onClick={handleRestart}
-          disabled={!t.online}
-          title={t.online ? 'Restart this device' : 'Device is offline'}
+          title="Restart this device"
         >
           Restart Device
         </button>

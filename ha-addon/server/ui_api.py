@@ -48,6 +48,12 @@ async def get_esphome_schema(request: web.Request) -> web.Response:
                 if (p.is_dir() and (p / "__init__.py").exists())
                 or (p.suffix == ".py" and p.stem != "__init__")
             })
+            # Ensure well-known root keys are always present even if the
+            # directory walk misses them (e.g. "esphome" core block).
+            for core_key in ("esphome", "substitutions", "packages", "external_components"):
+                if core_key not in names:
+                    names.append(core_key)
+                    names.sort()
             _esphome_components_cache = names
             logger.debug("ESPHome component list cached: %d components", len(names))
         except Exception:
@@ -101,6 +107,11 @@ async def get_server_info(request: web.Request) -> web.Response:
     })
 
 
+def _normalize_for_ha(name: str) -> str:
+    """Normalize a name to match HA entity_id conventions (underscores, lowercase)."""
+    return name.replace("-", "_").replace(" ", "_").lower()
+
+
 def _ha_status_for_target(
     ha_entity_status: dict[str, dict],
     target: str,
@@ -108,23 +119,31 @@ def _ha_status_for_target(
 ) -> tuple[bool, bool | None]:
     """Return (ha_configured, ha_connected) for a given compile target.
 
-    ha_entity_status is keyed by normalised device name (e.g. "living_room_sensor")
+    ha_entity_status is keyed by normalised device name (e.g. "nespresso_machine")
     derived from binary_sensor.<name>_status entities with device_class=connectivity.
-    We normalise the target's device name the same way and do a direct lookup.
+
+    HA names entities from the friendly_name (if set) or the esphome.name.
+    We try both, plus the filename stem as a fallback.
 
     Returns (False, None) when no match is found or ha_entity_status is empty.
     """
     if not ha_entity_status:
         return False, None
 
-    # Derive the normalised device name: prefer the parsed esphome.name field,
-    # fall back to the filename stem (both hyphens → underscores).
-    raw_name: str = meta.get("device_name_raw") or target.replace(".yaml", "")
-    norm_name = raw_name.replace("-", "_").replace(" ", "_").lower()
+    # Try matching in priority order: friendly_name, esphome.name, filename stem
+    candidates: list[str] = []
+    friendly = meta.get("friendly_name")
+    if friendly:
+        candidates.append(_normalize_for_ha(friendly))
+    raw_name = meta.get("device_name_raw")
+    if raw_name:
+        candidates.append(_normalize_for_ha(raw_name))
+    candidates.append(_normalize_for_ha(target.replace(".yaml", "")))
 
-    entry = ha_entity_status.get(norm_name)
-    if entry:
-        return True, entry.get("connected")
+    for norm_name in candidates:
+        entry = ha_entity_status.get(norm_name)
+        if entry:
+            return True, entry.get("connected")
     return False, None
 
 
@@ -294,7 +313,7 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
             _asyncio.ensure_future(ws.send_str(text), loop=loop)
 
         # subscribe_logs is synchronous and returns an unsubscribe callable.
-        unsub = client.subscribe_logs(log_callback, log_level=LogLevel.LOG_LEVEL_VERY_VERBOSE)
+        unsub = client.subscribe_logs(log_callback, log_level=LogLevel.LOG_LEVEL_VERY_VERBOSE, dump_config=True)
 
         # Keep the WebSocket open until the browser disconnects.
         async for msg in ws:
@@ -764,8 +783,11 @@ async def restart_device(request: web.Request) -> web.Response:
 
     filename = request.match_info["filename"]
     meta = get_device_metadata(_cfg(request).config_dir, filename)
+
+    # HA names the restart button from friendly_name (if set) or esphome.name
+    friendly = meta.get("friendly_name")
     raw_name: str = meta.get("device_name_raw") or filename.replace(".yaml", "")
-    norm_name = raw_name.replace("-", "_").replace(" ", "_").lower()
+    norm_name = _normalize_for_ha(friendly) if friendly else _normalize_for_ha(raw_name)
     entity_id = f"button.{norm_name}_restart"
 
     token = os.environ.get("SUPERVISOR_TOKEN")

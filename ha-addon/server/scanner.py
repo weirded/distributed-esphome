@@ -126,10 +126,11 @@ def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
         if not isinstance(config, dict):
             return None
 
-        # Resolve packages (local + remote includes). skip_update=False lets
-        # ESPHome honor each package's refresh period (default: 1 day).
-        # Our mtime cache prevents repeated resolutions within the same runtime.
-        config = do_packages_pass(config, skip_update=False)
+        # Resolve packages (local + remote includes). Skip git updates if we
+        # already have a cached result for any version of this file — the first
+        # resolution will clone, subsequent ones reuse the local checkout.
+        already_resolved = target in _config_cache
+        config = do_packages_pass(config, skip_update=already_resolved)
         config = merge_packages(config)
 
         # Resolve ${substitutions}

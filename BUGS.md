@@ -124,4 +124,18 @@
 
 63. FIXED (1.1.0-dev.23) - Device polling now uses asyncio.gather for concurrent status checks instead of sequential.
 
+64. FIXED (1.1.0-dev.24) - Restart button uses friendly_name for HA entity matching (was using esphome.name which doesn't match HA's naming).
 
+65. FIXED (1.1.0-dev.24) - Live logs now include boot log (dump_config=True in subscribe_logs).
+
+66. FIXED (1.1.0-dev.24) - Git clone caching regression. Config resolver now uses skip_update=True after first resolution per target.
+
+67. FIXED (1.1.0-dev.24) - HA status matching now tries friendly_name first, then esphome.name, then filename stem. Should match most devices.
+
+68. FIXED (1.1.0-dev.24) - Live Logs and Restart no longer disabled when device appears offline.
+
+69. FIXED (1.1.0-dev.24) - "esphome:" marked unknown. Added core keys (esphome, substitutions, packages, external_components) to component list.
+
+70. FIXED (1.1.0-dev.24) - DeprecationWarning on app state. Changed to clear()+update() on existing dict instead of reassigning.
+
+71. FIXED (1.1.0-dev.24) - HA entity matching uses friendly_name (e.g. "Nespresso Machine" → "nespresso_machine") instead of esphome.name.

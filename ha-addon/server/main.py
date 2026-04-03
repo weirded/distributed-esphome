@@ -164,7 +164,8 @@ async def ha_entity_poller(app: web.Application) -> None:
                     "connected": connected,
                 }
 
-            app["ha_entity_status"] = ha_status
+            app["ha_entity_status"].clear()
+            app["ha_entity_status"].update(ha_status)
 
             if first_poll:
                 first_poll = False
