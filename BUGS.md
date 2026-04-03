@@ -141,3 +141,19 @@
 71. FIXED (1.1.0-dev.24) - HA entity matching uses friendly_name (e.g. "Nespresso Machine" → "nespresso_machine") instead of esphome.name.
 
 72. FIXED (1.1.0-dev.25) - HA device detection without _status sensor. Now uses template API (integration_entities('esphome')) to find ALL ESPHome entities, then cross-references with _status sensors for connectivity. Devices without _status show as "Configured" instead of "—". 
+
+73. INVESTIGATING (1.1.0-dev.26) - Upgraded template API logging to WARNING level. Check add-on logs after restart for "Template API" messages.
+
+74. FIXED (1.1.0-dev.26) - Editor diff uses Monaco's built-in diff computation with common prefix/suffix fallback. Shifted lines no longer marked as changed.
+
+75. FIXED (1.1.0-dev.26) - Restart uses native API first (aioesphomeapi: list entities → find restart button → button_command), falls back to HA REST API.
+
+76. FIXED (1.1.0-dev.26) - Live log lines include [HH:MM:SS] timestamps.
+
+77. FIXED (1.1.0-dev.26) - Compile logs colorized via ANSI escapes: INFO=green, WARNING=yellow, ERROR=red.
+
+78. FIXED (1.1.0-dev.26) - OTA always passes --device with known IP. Server populates ota_address from device poller for all compile jobs.
+
+79. FIXED (1.1.0-dev.26) - Editor diff uses Monaco's diff API with prefix/suffix fallback (replaced custom LCS).
+
+80. FIXED (1.1.0-dev.26) - Switched from separate compile+upload to `esphome run --no-logs` (single process, same as native ESPHome UI).

@@ -135,12 +135,17 @@ async def ha_entity_poller(app: web.Application) -> None:
                         timeout=timeout,
                     ) as resp:
                         if resp.status == 200:
-                            raw = await resp.json()
-                            esphome_entity_ids = _json.loads(raw) if isinstance(raw, str) else []
+                            raw = await resp.text()
+                            try:
+                                parsed = _json.loads(raw)
+                                esphome_entity_ids = parsed if isinstance(parsed, list) else []
+                            except (_json.JSONDecodeError, TypeError):
+                                logger.warning("HA template API returned unparseable response: %.200s", raw)
                         else:
-                            logger.debug("HA template API returned HTTP %d", resp.status)
+                            body = await resp.text()
+                            logger.warning("HA template API returned HTTP %d: %.200s", resp.status, body)
                 except Exception:
-                    logger.debug("Template API call failed", exc_info=True)
+                    logger.warning("Template API call failed", exc_info=True)
 
                 # 2. Fetch states for connectivity info
                 async with session.get(

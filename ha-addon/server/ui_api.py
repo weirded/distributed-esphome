@@ -317,10 +317,12 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
         def log_callback(msg: Any) -> None:
             if ws.closed:
                 return
+            from datetime import datetime as _dt  # noqa: PLC0415
             text = msg.message.decode("utf-8", errors="replace")
             if not text.endswith("\n"):
                 text += "\n"
-            _asyncio.ensure_future(ws.send_str(text), loop=loop)
+            ts = _dt.now().strftime("[%H:%M:%S] ")
+            _asyncio.ensure_future(ws.send_str(ts + text), loop=loop)
 
         # subscribe_logs is synchronous and returns an unsubscribe callable.
         unsub = client.subscribe_logs(log_callback, log_level=LogLevel.LOG_LEVEL_VERY_VERBOSE, dump_config=True)
@@ -556,6 +558,14 @@ async def start_compile(request: web.Request) -> web.Response:
     else:
         return web.json_response({"error": "Invalid targets value"}, status=400)
 
+    # Build a map of target → device IP for OTA addressing
+    ota_addresses: dict[str, str] = {}
+    if device_poller:
+        for dev in device_poller.get_devices():
+            if dev.compile_target and dev.ip_address:
+                addr = device_poller._address_overrides.get(dev.name) or dev.ip_address
+                ota_addresses[dev.compile_target] = addr
+
     run_id = str(uuid.uuid4())
     enqueued = 0
     for target in selected:
@@ -564,6 +574,7 @@ async def start_compile(request: web.Request) -> web.Response:
             esphome_version=server_version,
             run_id=run_id,
             timeout_seconds=cfg.job_timeout,
+            ota_address=ota_addresses.get(target),
         )
         if job is not None:
             enqueued += 1
@@ -784,17 +795,46 @@ async def get_api_key(request: web.Request) -> web.Response:
 
 @routes.post("/ui/api/targets/{filename}/restart")
 async def restart_device(request: web.Request) -> web.Response:
-    """Restart an ESPHome device by pressing its HA restart button entity.
+    """Restart an ESPHome device via the native API (preferred) or HA button entity (fallback).
 
-    Uses the HA REST API: POST /api/services/button/press
-    with entity_id = button.<norm_name>_restart
+    Native API: connect via aioesphomeapi, list entities, find restart button, press it.
+    HA fallback: POST /api/services/button/press with button.<name>_restart entity_id.
     """
     import os  # noqa: PLC0415
+    import aioesphomeapi as _api  # noqa: PLC0415
 
     filename = request.match_info["filename"]
-    meta = get_device_metadata(_cfg(request).config_dir, filename)
+    device_poller = request.app.get("device_poller")
 
-    # HA names the restart button from friendly_name (if set) or esphome.name
+    # Try native API restart first — works even without HA integration
+    if device_poller:
+        dev = None
+        for d in device_poller.get_devices():
+            if d.compile_target == filename:
+                dev = d
+                break
+        if dev and dev.ip_address:
+            noise_psk = device_poller._encryption_keys.get(dev.name)
+            addr = device_poller._address_overrides.get(dev.name) or dev.ip_address
+            try:
+                client = _api.APIClient(addr, 6053, password=None, noise_psk=noise_psk)
+                await client.connect(login=True)
+                try:
+                    entities = await client.list_entities_services()
+                    # entities is a tuple: (entities_list, services_list)
+                    for entity in entities[0]:
+                        if hasattr(entity, "object_id") and "restart" in getattr(entity, "object_id", "").lower():
+                            if hasattr(entity, "key"):
+                                await client.button_command(entity.key)  # type: ignore[func-returns-value]
+                                logger.info("Restarted %s via native API (key=%d)", filename, entity.key)
+                                return web.json_response({"ok": True, "method": "native_api"})
+                finally:
+                    await client.disconnect()
+            except Exception as exc:
+                logger.debug("Native API restart failed for %s: %s — trying HA fallback", filename, exc)
+
+    # Fallback: HA REST API button.press
+    meta = get_device_metadata(_cfg(request).config_dir, filename)
     friendly = meta.get("friendly_name")
     raw_name: str = meta.get("device_name_raw") or filename.replace(".yaml", "")
     norm_name = _normalize_for_ha(friendly) if friendly else _normalize_for_ha(raw_name)
@@ -802,7 +842,7 @@ async def restart_device(request: web.Request) -> web.Response:
 
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
-        return web.json_response({"error": "No SUPERVISOR_TOKEN available"}, status=500)
+        return web.json_response({"error": "Could not restart device — no native API access and no SUPERVISOR_TOKEN"}, status=500)
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -813,8 +853,8 @@ async def restart_device(request: web.Request) -> web.Response:
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status == 200:
-                    logger.info("Restarted device %s via %s", filename, entity_id)
-                    return web.json_response({"ok": True, "entity_id": entity_id})
+                    logger.info("Restarted device %s via HA (%s)", filename, entity_id)
+                    return web.json_response({"ok": True, "method": "ha_api", "entity_id": entity_id})
                 body = await resp.text()
                 logger.warning("Restart failed for %s: HTTP %d — %s", entity_id, resp.status, body)
                 return web.json_response(

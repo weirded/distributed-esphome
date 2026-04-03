@@ -249,6 +249,7 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
   const savedContentRef = useRef('');
   const [dirtyLineCount, setDirtyLineCount] = useState(0);
 
@@ -303,24 +304,62 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
     if (e.target === e.currentTarget) onClose();
   }
 
-  function updateDirtyDecorations(editor: Parameters<OnMount>[0]) {
+  async function updateDirtyDecorations(editor: Parameters<OnMount>[0]) {
     const model = editor.getModel();
-    if (!model) return;
-    const currentLines = model.getValue().split('\n');
-    const savedLines = savedContentRef.current.split('\n');
-    const decorations: import('monaco-editor').editor.IModelDeltaDecoration[] = [];
-    const maxLen = Math.max(currentLines.length, savedLines.length);
-    for (let i = 0; i < maxLen; i++) {
-      if (i >= currentLines.length) break;
-      if (i >= savedLines.length || currentLines[i] !== savedLines[i]) {
-        decorations.push({
-          range: { startLineNumber: i + 1, startColumn: 1, endLineNumber: i + 1, endColumn: 1 },
-          options: { isWholeLine: true, className: 'dirty-line', glyphMarginClassName: 'dirty-glyph' },
-        });
-      }
+    if (!model || !monacoRef.current) return;
+    const monaco = monacoRef.current;
+
+    const currentValue = model.getValue();
+    const savedValue = savedContentRef.current;
+
+    if (currentValue === savedValue) {
+      _dirtyDecorationIds = editor.deltaDecorations(_dirtyDecorationIds, []);
+      setDirtyLineCount(0);
+      return;
     }
-    _dirtyDecorationIds = editor.deltaDecorations(_dirtyDecorationIds, decorations);
-    setDirtyLineCount(decorations.length);
+
+    // Use Monaco's built-in diff computation via the editor worker service.
+    // Create a temporary model for the saved content so Monaco can diff them.
+    const savedModel = monaco.editor.createModel(savedValue, 'yaml');
+    try {
+      let changes: { modifiedStartLineNumber: number; modifiedEndLineNumber: number }[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const editorWorker = (monaco.editor as any).getEditorWorkerService?.();
+      if (editorWorker?.computeDiff) {
+        const diff = await editorWorker.computeDiff(savedModel.uri, model.uri, false, 100000);
+        changes = (diff?.changes ?? []).map((c: { modified: { startLineNumber: number; endLineNumberExclusive: number } }) => ({
+          modifiedStartLineNumber: c.modified.startLineNumber,
+          modifiedEndLineNumber: c.modified.endLineNumberExclusive - 1,
+        }));
+      }
+
+      // Fallback: common prefix/suffix approach if worker API unavailable
+      if (changes.length === 0 && currentValue !== savedValue) {
+        const origLines = savedValue.split('\n');
+        const modLines = currentValue.split('\n');
+        let prefixLen = 0;
+        while (prefixLen < origLines.length && prefixLen < modLines.length && origLines[prefixLen] === modLines[prefixLen]) prefixLen++;
+        let suffixLen = 0;
+        while (suffixLen < origLines.length - prefixLen && suffixLen < modLines.length - prefixLen && origLines[origLines.length - 1 - suffixLen] === modLines[modLines.length - 1 - suffixLen]) suffixLen++;
+        if (prefixLen < modLines.length - suffixLen) {
+          changes = [{ modifiedStartLineNumber: prefixLen + 1, modifiedEndLineNumber: modLines.length - suffixLen }];
+        }
+      }
+
+      const decorations: import('monaco-editor').editor.IModelDeltaDecoration[] = [];
+      for (const change of changes) {
+        for (let line = change.modifiedStartLineNumber; line <= change.modifiedEndLineNumber; line++) {
+          decorations.push({
+            range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+            options: { isWholeLine: true, className: 'dirty-line', glyphMarginClassName: 'dirty-glyph' },
+          });
+        }
+      }
+      _dirtyDecorationIds = editor.deltaDecorations(_dirtyDecorationIds, decorations);
+      setDirtyLineCount(decorations.length);
+    } finally {
+      savedModel.dispose();
+    }
   }
 
   function handleEditorDidMount(
@@ -328,6 +367,7 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
     monaco: Parameters<OnMount>[1],
   ) {
     editorRef.current = editor;
+    monacoRef.current = monaco;
     _dirtyDecorationIds = [];
 
     if (!_completionRegistered) {

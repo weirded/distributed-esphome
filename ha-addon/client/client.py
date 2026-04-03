@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.1.0-dev.25"
+CLIENT_VERSION = "1.1.0-dev.26"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -779,66 +779,44 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             return  # skip compile and OTA phases
 
         # ---------------------------------------------------------------
-        # Compile phase — timer starts NOW
+        # Build + OTA via `esphome run` (compile and upload in one step)
         # ---------------------------------------------------------------
-        _report_status(job_id, "Compiling" + (" (OTA retry)" if ota_only else ""))
-        compile_log, compile_ok = _run_subprocess(
-            [esphome_bin, "compile", target_path],
+        _report_status(job_id, "Compiling + OTA" + (" (retry)" if ota_only else ""))
+        run_cmd = [esphome_bin, "run", target_path, "--no-logs"]
+        ota_address = job.get("ota_address")
+        if ota_address:
+            run_cmd.extend(["--device", ota_address])
+
+        # Total timeout covers both compile + OTA
+        total_timeout = timeout_seconds + OTA_TIMEOUT
+        run_log, run_ok = _run_subprocess(
+            run_cmd,
             cwd=tmp_dir,
-            timeout=timeout_seconds,
-            label="compile",
+            timeout=total_timeout,
+            label="compile+OTA",
             env=subprocess_env,
             job_id=job_id,
         )
 
-        if not compile_ok:
-            # log=None tells the server to use the streamed log
-            _submit_result(job_id, "failed", log=None, ota_result=None)
-            return
-
-        # Compile succeeded — report success first
-        _submit_result(job_id, "success", log=None, ota_result=None)
-
-        # ---------------------------------------------------------------
-        # OTA phase (with one retry on failure)
-        # ---------------------------------------------------------------
-        ota_result = "failed"
-        ota_logs: list[str] = []
-        for attempt in range(2):
-            if attempt > 0:
-                logger.info("OTA failed, retrying in 5s (attempt %d/2)", attempt + 1)
-                _report_status(job_id, "OTA Retry")
-                time.sleep(5)
-            _report_status(job_id, "OTA Upgrade")
-            upload_cmd = [esphome_bin, "upload", target_path]
-            # If ota_address is set (e.g. after a rename), target the old device address
-            ota_address = job.get("ota_address")
-            if ota_address:
-                upload_cmd.extend(["--device", ota_address])
-            ota_log, ota_ok = _run_subprocess(
-                upload_cmd,
-                cwd=tmp_dir,
-                timeout=OTA_TIMEOUT,
-                label=f"OTA upload (attempt {attempt + 1})",
-                env=subprocess_env,
-                job_id=job_id,
-            )
-            ota_logs.append(ota_log)
-            if ota_ok:
-                ota_result = "success"
-                break
-            if ota_log.endswith("TIMED OUT"):
-                break  # Don't retry timeouts
-
-        # Run network diagnostics on OTA failure to help debug
-        if ota_result == "failed":
-            diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
-            if diag:
-                ota_logs.append("\n--- Network Diagnostics ---\n" + diag)
-
-        logger.info("OTA result for job %s: %s", job_id, ota_result)
-        # log=None tells the server to use the streamed log for the OTA phase
-        _submit_ota_result(job_id, ota_result, None)
+        if run_ok:
+            _submit_result(job_id, "success", log=None, ota_result="success")
+        else:
+            # Determine if compile or OTA failed from log content
+            log_lower = run_log.lower()
+            if "successfully compiled" in log_lower or "successfully uploaded" in log_lower:
+                # Compile succeeded but OTA may have failed
+                _submit_result(job_id, "success", log=None, ota_result=None)
+                # Check if OTA specifically failed
+                if "ota" in log_lower and ("failed" in log_lower or "timed out" in log_lower):
+                    _submit_ota_result(job_id, "failed", None)
+                    # Run network diagnostics on OTA failure
+                    diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
+                    if diag:
+                        _flush_log_text(job_id, "\n--- Network Diagnostics ---\n" + diag)
+                else:
+                    _submit_ota_result(job_id, "failed", None)
+            else:
+                _submit_result(job_id, "failed", log=None, ota_result=None)
 
     finally:
         _log_context.current_target = None
@@ -849,6 +827,18 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             logger.debug("Cleaned up temp dir %s", tmp_dir)
         except Exception:
             pass
+
+
+def _colorize_log_line(line: str) -> str:
+    """Add ANSI color codes to ESPHome log lines based on level prefix."""
+    stripped = line.lstrip()
+    if stripped.startswith("INFO "):
+        return f"\033[32m{line}\033[0m"  # green
+    if stripped.startswith("WARNING "):
+        return f"\033[33m{line}\033[0m"  # yellow/orange
+    if stripped.startswith("ERROR "):
+        return f"\033[31m{line}\033[0m"  # red
+    return line
 
 
 def _run_subprocess(
@@ -917,8 +907,10 @@ def _run_subprocess(
             if not chunk:
                 break
             text = chunk.decode("utf-8", errors="replace")
-            log_chunks.append(text)
-            flush_buffer.append(text)
+            # Colorize log lines for xterm.js display
+            colored = "\n".join(_colorize_log_line(l) for l in text.split("\n"))
+            log_chunks.append(colored)
+            flush_buffer.append(colored)
             now = time.monotonic()
             if now - last_flush >= FLUSH_INTERVAL:
                 _flush_log()
@@ -936,6 +928,14 @@ def _run_subprocess(
     log = "".join(log_chunks)
     logger.info("%s finished: returncode=%d", label, proc.returncode)
     return log, success
+
+
+def _flush_log_text(job_id: str, text: str) -> None:
+    """Send a chunk of log text to the server for live streaming."""
+    try:
+        post(f"/api/v1/jobs/{job_id}/log", {"lines": text}, timeout=5)
+    except Exception:
+        pass
 
 
 def _report_status(job_id: str, status_text: str) -> None:

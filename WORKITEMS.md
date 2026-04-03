@@ -165,3 +165,16 @@ Details: `~/.claude/plans/happy-munching-moonbeam.md`
 - [ ] **PY.4 Consistency & polish** — standardize error handling, type hints, CLAUDE.md updates
 
 Details: `~/.claude/plans/wild-bubbling-cat.md`
+
+---
+
+## Design System Adoption (shadcn/ui)
+
+- [ ] **DS.0 Foundation** — install Tailwind v4 + shadcn init (zinc theme), map existing CSS variables, no visual changes
+- [ ] **DS.1 New components use shadcn** — all new UI features (device wizard, diff viewer, AI chat) built with shadcn
+- [ ] **DS.2 Migrate shared primitives** — buttons, badges, dropdowns, toast, dialog
+- [ ] **DS.3 Migrate modals** — LogModal, EditorModal, ConnectWorkerModal, DeviceLogModal
+- [ ] **DS.4 Migrate tables and tabs** — tab content, search/filter inputs
+- [ ] **DS.5 Remove old CSS** — delete migrated classes from theme.css
+
+Details: `~/.claude/plans/hashed-wobbling-firefly.md`
