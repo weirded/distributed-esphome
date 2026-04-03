@@ -860,7 +860,7 @@ async def restart_device(request: web.Request) -> web.Response:
                     for entity in entities[0]:
                         if hasattr(entity, "object_id") and "restart" in getattr(entity, "object_id", "").lower():
                             if hasattr(entity, "key"):
-                                await client.button_command(entity.key)  # type: ignore[func-returns-value]
+                                client.button_command(entity.key)
                                 logger.info("Restarted %s via native API (key=%d)", filename, entity.key)
                                 return web.json_response({"ok": True, "method": "native_api"})
                 finally:
