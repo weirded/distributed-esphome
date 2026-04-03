@@ -184,7 +184,7 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onLogs, onToas
   const getTargetValue = (t: Target): string => {
     if (sort.col === 'device') return t.friendly_name || t.device_name || stripYaml(t.target);
     if (sort.col === 'status') return t.online == null ? 'unknown' : t.online ? 'online' : 'offline';
-    if (sort.col === 'ha') return t.ha_configured ? (t.ha_connected === true ? 'connected' : t.ha_connected === false ? 'disconnected' : 'configured') : '';
+    if (sort.col === 'ha') return t.ha_configured ? 'yes' : '';
     if (sort.col === 'ip') return t.ip_address || '';
     if (sort.col === 'running') return t.running_version || '';
     return '';
@@ -483,18 +483,9 @@ function TargetRow({
   const displayName = t.friendly_name || t.device_name || stripYaml(t.target);
   const showIpLink = t.has_web_server && t.online && t.ip_address;
 
-  let haCell: React.ReactNode;
-  if (t.ha_configured) {
-    if (t.ha_connected === true) {
-      haCell = <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}><span className="dot dot-online"></span>Connected</span>;
-    } else if (t.ha_connected === false) {
-      haCell = <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}><span className="dot dot-offline"></span>Disconnected</span>;
-    } else {
-      haCell = <span style={{ color: 'var(--text-muted)' }}>Configured</span>;
-    }
-  } else {
-    haCell = <span style={{ color: 'var(--text-muted)' }}>—</span>;
-  }
+  const haCell: React.ReactNode = t.ha_configured
+    ? <span style={{ color: 'var(--success)' }}>Yes</span>
+    : <span style={{ color: 'var(--text-muted)' }}>—</span>;
 
   return (
     <tr>

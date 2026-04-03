@@ -999,6 +999,39 @@ async def clear_queue(request: web.Request) -> web.Response:
     return web.json_response({"cleared": cleared})
 
 
+@routes.get("/ui/api/debug/ha-status")
+async def debug_ha_status(request: web.Request) -> web.Response:
+    """Debug endpoint: show HA entity status keys and matching info per target."""
+    cfg = _cfg(request)
+    ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
+    targets = scan_configs(cfg.config_dir)
+
+    result: dict = {
+        "ha_entity_status_keys": sorted(ha_entity_status.keys()),
+        "ha_entity_count": len(ha_entity_status),
+        "targets": {},
+    }
+    for target in targets:
+        meta = get_device_metadata(cfg.config_dir, target)
+        ha_configured, ha_connected = _ha_status_for_target(ha_entity_status, target, meta)
+        candidates = []
+        friendly = meta.get("friendly_name")
+        if friendly:
+            candidates.append(_normalize_for_ha(friendly))
+        raw_name = meta.get("device_name_raw")
+        if raw_name:
+            candidates.append(_normalize_for_ha(raw_name))
+        candidates.append(_normalize_for_ha(target.replace(".yaml", "")))
+        result["targets"][target] = {
+            "friendly_name": meta.get("friendly_name"),
+            "device_name_raw": meta.get("device_name_raw"),
+            "candidates": candidates,
+            "ha_configured": ha_configured,
+            "ha_connected": ha_connected,
+        }
+    return web.json_response(result)
+
+
 @routes.get("/ui/api/secret-keys")
 async def get_secret_keys(request: web.Request) -> web.Response:
     """Return list of secret key names from secrets.yaml (values are never sent)."""

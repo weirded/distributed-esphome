@@ -26,7 +26,7 @@ export function DeviceLogModal({ target, onClose }: Props) {
       fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
       theme: {
         background: '#0d1117',
-        foreground: '#a3e635',
+        foreground: '#e2e8f0',
         cursor: '#0d1117',
       },
       convertEol: true,

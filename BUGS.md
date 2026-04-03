@@ -157,3 +157,9 @@
 79. FIXED (1.1.0-dev.26) - Editor diff uses Monaco's diff API with prefix/suffix fallback (replaced custom LCS).
 
 80. FIXED (1.1.0-dev.26) - Switched from separate compile+upload to `esphome run --no-logs` (single process, same as native ESPHome UI).
+
+81. FIXED (1.1.0-dev.27) - Terminal default text color changed from green to white (#e2e8f0).
+
+82. FIXED (1.1.0-dev.27) - HA column now shows only "Yes" / "—" (configured or not). _status connectivity still feeds into online/offline column via 4.2c.
+
+83. INVESTIGATING (1.1.0-dev.27) - Added debug endpoint GET /ui/api/debug/ha-status showing entity status keys, per-target matching candidates, and match results. Deploy and hit that endpoint to identify mismatches.
