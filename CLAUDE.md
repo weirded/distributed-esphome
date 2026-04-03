@@ -120,6 +120,13 @@ Worker config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 
 **Changelog is NOT updated during development on `develop`.** The WORKITEMS.md and BUGS.md files track progress with version numbers. The changelog is written once at release time.
 
+## Documentation
+
+When adding new features, changing configuration options, or modifying user-visible behavior, keep these docs in sync with the implementation:
+
+- `README.md` — public-facing project overview, installation, architecture, configuration tables, and repository layout
+- `ha-addon/DOCS.md` — user-facing documentation shown in the Home Assistant add-on panel
+
 ## Design Specification
 
 `PRD.md` is the product requirements document for the full ESPHome dashboard replacement. `WORKITEMS.md` tracks implementation progress.

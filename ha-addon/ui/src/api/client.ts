@@ -242,6 +242,17 @@ export async function deleteTarget(filename: string, archive = true): Promise<vo
   }
 }
 
+export async function restartDevice(filename: string): Promise<void> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/restart`,
+    { method: 'POST' },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
 export async function renameTarget(
   filename: string,
   newName: string,

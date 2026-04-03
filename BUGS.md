@@ -114,3 +114,14 @@
 
 58. INVESTIGATING (1.1.0-dev.22) - Added diagnostic INFO log on first HA poll cycle showing total states, status sensors found, and matching details. Deploy and check logs to identify root cause.
 
+59. FIXED (1.1.0-dev.23) - HA state slow to populate. First poll was delayed 30s; now polls immediately on startup.
+
+60. FIXED (1.1.0-dev.23) - Restart device button in hamburger menu. Calls HA REST API button.press on button.<name>_restart entity.
+
+61. FIXED (1.1.0-dev.23) - Logs button moved to hamburger menu as "Live Logs".
+
+62. FIXED (1.1.0-dev.23) - Hamburger menu icon changed to vertical ellipsis (&#8942;), styled as plain text not button.
+
+63. FIXED (1.1.0-dev.23) - Device polling now uses asyncio.gather for concurrent status checks instead of sequential.
+
+

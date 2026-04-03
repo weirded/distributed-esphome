@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getApiKey } from '../api/client';
+import { getApiKey, restartDevice } from '../api/client';
 import type { Device, Target } from '../types';
 import { stripYaml } from '../utils';
 import { useSortable } from '../hooks/useSortable';
@@ -337,11 +337,13 @@ function DeviceMenu({
   onToast,
   onDelete,
   onRename,
+  onLogs,
 }: {
   target: Target;
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string) => void;
   onRename: (target: string) => void;
+  onLogs: (target: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -369,6 +371,21 @@ function DeviceMenu({
     }
   }
 
+  async function handleRestart() {
+    setOpen(false);
+    try {
+      await restartDevice(t.target);
+      onToast(`Restarting ${stripYaml(t.target)}...`, 'success');
+    } catch (err) {
+      onToast('Restart failed: ' + (err as Error).message, 'error');
+    }
+  }
+
+  function handleLogs() {
+    setOpen(false);
+    onLogs(t.target);
+  }
+
   function handleRename() {
     setOpen(false);
     onRename(t.target);
@@ -381,28 +398,44 @@ function DeviceMenu({
 
   return (
     <div className="action-menu-wrap" ref={wrapRef}>
-      <button
-        className="action-menu-btn btn-sm"
+      <span
+        className="action-menu-trigger"
         onClick={() => setOpen(o => !o)}
         title="More actions"
       >
-        &middot;&middot;&middot;
-      </button>
+        &#8942;
+      </span>
       <div className={`action-menu-dropdown${open ? ' open' : ''}`}>
+        <button
+          className="action-menu-item"
+          onClick={handleLogs}
+          disabled={!t.online}
+          title={t.online ? 'Stream live device logs' : 'Device is offline'}
+        >
+          Live Logs
+        </button>
+        <button
+          className="action-menu-item"
+          onClick={handleRestart}
+          disabled={!t.online}
+          title={t.online ? 'Restart this device' : 'Device is offline'}
+        >
+          Restart Device
+        </button>
         <button
           className="action-menu-item"
           onClick={handleCopyApiKey}
           disabled={!t.has_api_key}
           title={t.has_api_key ? 'Copy API encryption key' : 'No API key configured'}
         >
-          &#128273; Copy API Key
+          Copy API Key
         </button>
         <button
           className="action-menu-item"
           onClick={handleRename}
           title="Rename this device config"
         >
-          &#9998; Rename
+          Rename
         </button>
         <button
           className="action-menu-item"
@@ -410,7 +443,7 @@ function DeviceMenu({
           title="Delete this device config"
           style={{ color: 'var(--danger, #ef4444)' }}
         >
-          &#128465; Delete
+          Delete
         </button>
       </div>
     </div>
@@ -497,10 +530,7 @@ function TargetRow({
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
           <button className={`${upgradeBtnCls} btn-sm`} onClick={() => onCompile([t.target])}>Upgrade</button>
           <button className="btn-secondary btn-sm" onClick={() => onEdit(t.target)}>Edit</button>
-          {t.online && (
-            <button className="btn-secondary btn-sm" onClick={() => onLogs(t.target)} title="Stream live logs from this device">Logs</button>
-          )}
-          <DeviceMenu target={t} onToast={onToast} onDelete={onDelete} onRename={onRename} />
+          <DeviceMenu target={t} onToast={onToast} onDelete={onDelete} onRename={onRename} onLogs={onLogs} />
         </div>
       </td>
     </tr>

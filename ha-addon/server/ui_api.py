@@ -753,6 +753,47 @@ async def get_api_key(request: web.Request) -> web.Response:
     return web.json_response({"error": "No API key found"}, status=404)
 
 
+@routes.post("/ui/api/targets/{filename}/restart")
+async def restart_device(request: web.Request) -> web.Response:
+    """Restart an ESPHome device by pressing its HA restart button entity.
+
+    Uses the HA REST API: POST /api/services/button/press
+    with entity_id = button.<norm_name>_restart
+    """
+    import os  # noqa: PLC0415
+
+    filename = request.match_info["filename"]
+    meta = get_device_metadata(_cfg(request).config_dir, filename)
+    raw_name: str = meta.get("device_name_raw") or filename.replace(".yaml", "")
+    norm_name = raw_name.replace("-", "_").replace(" ", "_").lower()
+    entity_id = f"button.{norm_name}_restart"
+
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return web.json_response({"error": "No SUPERVISOR_TOKEN available"}, status=500)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "http://supervisor/core/api/services/button/press",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"entity_id": entity_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    logger.info("Restarted device %s via %s", filename, entity_id)
+                    return web.json_response({"ok": True, "entity_id": entity_id})
+                body = await resp.text()
+                logger.warning("Restart failed for %s: HTTP %d — %s", entity_id, resp.status, body)
+                return web.json_response(
+                    {"error": f"HA returned HTTP {resp.status}", "entity_id": entity_id},
+                    status=502,
+                )
+    except Exception as exc:
+        logger.warning("Restart failed for %s: %s", entity_id, exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+
 @routes.post("/ui/api/retry")
 async def retry_jobs(request: web.Request) -> web.Response:
     """Re-enqueue failed/timed_out jobs.

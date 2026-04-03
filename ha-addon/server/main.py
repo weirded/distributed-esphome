@@ -117,7 +117,9 @@ async def ha_entity_poller(app: web.Application) -> None:
     first_poll = True
 
     while True:
-        await asyncio.sleep(30)
+        # Poll immediately on first iteration, then every 30s
+        if not first_poll:
+            await asyncio.sleep(30)
         try:
             async with aiohttp.ClientSession() as session:
                 # /api/states is the only REST endpoint that works from an add-on.

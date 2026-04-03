@@ -251,11 +251,14 @@ class DevicePoller:
             async with self._lock:
                 snapshot = dict(self._devices)
 
+            # Query all devices concurrently for fast initial status
+            tasks = []
             for name, dev in snapshot.items():
-                # Prefer use_address from config, fall back to mDNS IP
                 addr = self._address_overrides.get(name) or dev.ip_address
                 if addr:
-                    await self._query_device(name, addr)
+                    tasks.append(self._query_device(name, addr))
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
             await asyncio.sleep(self._poll_interval)
 
