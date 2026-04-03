@@ -455,9 +455,9 @@ function TargetRow({
   let haCell: React.ReactNode;
   if (t.ha_configured) {
     if (t.ha_connected === true) {
-      haCell = <><span className="dot dot-online"></span>Connected</>;
+      haCell = <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}><span className="dot dot-online"></span>Connected</span>;
     } else if (t.ha_connected === false) {
-      haCell = <><span className="dot dot-offline"></span>Disconnected</>;
+      haCell = <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}><span className="dot dot-offline"></span>Disconnected</span>;
     } else {
       haCell = <span style={{ color: 'var(--text-muted)' }}>Configured</span>;
     }
