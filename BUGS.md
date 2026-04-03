@@ -163,3 +163,9 @@
 82. FIXED (1.1.0-dev.27) - HA column now shows only "Yes" / "—" (configured or not). _status connectivity still feeds into online/offline column via 4.2c.
 
 83. INVESTIGATING (1.1.0-dev.27) - Added debug endpoint GET /ui/api/debug/ha-status showing entity status keys, per-target matching candidates, and match results. Deploy and hit that endpoint to identify mismatches.
+
+84. FIXED (1.1.0-dev.28) - Light mode connect worker form inputs. Changed hardcoded #0d1117 to var(--bg).
+
+85. FIXED (1.1.0-dev.28) - Timezone mismatch causing different config_hash. Server now sends its TZ in job response; worker sets TZ in subprocess env so ESPHome detects the correct timezone.
+
+86. FIXED (1.1.0-dev.28) - OTA retry restored. If esphome run fails after compile success, retries with esphome upload after 5s delay.

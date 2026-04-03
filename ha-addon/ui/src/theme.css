@@ -440,7 +440,7 @@ input[type="checkbox"] {
 }
 .connect-form input, .connect-form select {
   width: 100%;
-  background: #0d1117;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
@@ -455,7 +455,7 @@ input[type="checkbox"] {
 .connect-form select option { background: var(--surface2); }
 .docker-cmd-wrap { position: relative; }
 .docker-cmd {
-  background: #0d1117;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;

@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.1.0-dev.27"
+CLIENT_VERSION = "1.1.0-dev.28"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -731,6 +731,13 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         logger.debug("Could not create pio dir %s (%s); using default PLATFORMIO_CORE_DIR", pio_dir, exc)
         subprocess_env = dict(os.environ)
 
+    # Match server timezone so ESPHome produces identical config_hash.
+    # Mismatched TZ → different hash → unnecessary clean rebuild → different firmware binary.
+    server_tz = job.get("server_timezone")
+    if server_tz:
+        subprocess_env["TZ"] = server_tz
+        logger.debug("Using server timezone: %s", server_tz)
+
     # Install ESPHome version (BEFORE starting the timeout timer)
     if ESPHOME_BIN:
         esphome_bin = ESPHOME_BIN
@@ -801,22 +808,42 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         if run_ok:
             _submit_result(job_id, "success", log=None, ota_result="success")
         else:
-            # Determine if compile or OTA failed from log content
             log_lower = run_log.lower()
-            if "successfully compiled" in log_lower or "successfully uploaded" in log_lower:
-                # Compile succeeded but OTA may have failed
+            compile_succeeded = "successfully compiled" in log_lower
+            ota_failed = compile_succeeded and ("failed" in log_lower or "timed out" in log_lower)
+
+            if not compile_succeeded:
+                # Compile itself failed
+                _submit_result(job_id, "failed", log=None, ota_result=None)
+            else:
+                # Compile succeeded — report that, then retry OTA
                 _submit_result(job_id, "success", log=None, ota_result=None)
-                # Check if OTA specifically failed
-                if "ota" in log_lower and ("failed" in log_lower or "timed out" in log_lower):
-                    _submit_ota_result(job_id, "failed", None)
-                    # Run network diagnostics on OTA failure
-                    diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
-                    if diag:
-                        _flush_log_text(job_id, "\n--- Network Diagnostics ---\n" + diag)
+
+                if ota_failed:
+                    # Retry OTA with just `esphome upload` (firmware already compiled)
+                    _flush_log_text(job_id, "\n--- OTA failed, retrying in 5s ---\n")
+                    time.sleep(5)
+                    _report_status(job_id, "OTA Retry")
+                    upload_cmd = [esphome_bin, "upload", target_path, "--no-logs"]
+                    if ota_address:
+                        upload_cmd.extend(["--device", ota_address])
+                    retry_log, retry_ok = _run_subprocess(
+                        upload_cmd,
+                        cwd=tmp_dir,
+                        timeout=OTA_TIMEOUT,
+                        label="OTA retry",
+                        env=subprocess_env,
+                        job_id=job_id,
+                    )
+                    if retry_ok:
+                        _submit_ota_result(job_id, "success", None)
+                    else:
+                        _submit_ota_result(job_id, "failed", None)
+                        diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
+                        if diag:
+                            _flush_log_text(job_id, "\n--- Network Diagnostics ---\n" + diag)
                 else:
                     _submit_ota_result(job_id, "failed", None)
-            else:
-                _submit_result(job_id, "failed", log=None, ota_result=None)
 
     finally:
         _log_context.current_target = None
