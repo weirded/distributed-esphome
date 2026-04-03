@@ -137,15 +137,11 @@ def _ha_status_for_target(
     Returns (False, None) when no match is found.
     """
     # 1. MAC address match (authoritative — doesn't depend on naming)
+    #    HA connections store MACs as "aa:bb:cc:dd:ee:ff" (lowercase with colons).
+    #    Device poller MACs from aioesphomeapi are "AA:BB:CC:DD:EE:FF" (uppercase).
     if device_mac and ha_mac_set:
-        normalized_mac = device_mac.upper().replace(":", "")
-        if normalized_mac in ha_mac_set or device_mac.upper() in ha_mac_set:
-            # Device is in HA by MAC. Try to find connectivity from name matching.
-            # Fall through to name matching for connected state.
-            pass  # Will try name matching below for connectivity, but mark configured
-            mac_confirmed = True
-        else:
-            mac_confirmed = False
+        mac_lower = device_mac.lower()
+        mac_confirmed = mac_lower in ha_mac_set
     else:
         mac_confirmed = False
 

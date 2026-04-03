@@ -148,22 +148,22 @@ async def ha_entity_poller(app: web.Application) -> None:
                     logger.warning("Template API call failed", exc_info=True)
 
                 # 1b. Get MAC addresses for ESPHome devices via template API.
-                # Returns a dict of {mac_address: entity_id} for matching by MAC.
+                # ESPHome devices store MACs in device connections (not identifiers):
+                #   connections = [["mac", "50:02:91:3c:11:43"]]
                 ha_mac_set: set[str] = set()
                 if esphome_entity_ids:
                     try:
-                        # Build a Jinja template that extracts MAC from device identifiers
-                        # for each ESPHome entity. ESPHome identifiers look like {("esphome", "AABBCCDDEEFF")}.
                         tmpl = (
-                            "{%- set ns = namespace(macs=[]) -%}"
+                            "{%- set ns = namespace(macs=[], seen=[]) -%}"
                             "{%- for eid in integration_entities('esphome') -%}"
                             "  {%- set did = device_id(eid) -%}"
-                            "  {%- if did -%}"
-                            "    {%- set ids = device_attr(did, 'identifiers') -%}"
-                            "    {%- if ids -%}"
-                            "      {%- for id_tuple in ids -%}"
-                            "        {%- if id_tuple[0] == 'esphome' -%}"
-                            "          {%- set ns.macs = ns.macs + [id_tuple[1]] -%}"
+                            "  {%- if did and did not in ns.seen -%}"
+                            "    {%- set ns.seen = ns.seen + [did] -%}"
+                            "    {%- set conns = device_attr(did, 'connections') -%}"
+                            "    {%- if conns -%}"
+                            "      {%- for conn in conns -%}"
+                            "        {%- if conn[0] == 'mac' -%}"
+                            "          {%- set ns.macs = ns.macs + [conn[1]] -%}"
                             "        {%- endif -%}"
                             "      {%- endfor -%}"
                             "    {%- endif -%}"
@@ -182,7 +182,7 @@ async def ha_entity_poller(app: web.Application) -> None:
                                 try:
                                     parsed_macs = _json.loads(raw_macs)
                                     if isinstance(parsed_macs, list):
-                                        ha_mac_set = {str(m).upper() for m in parsed_macs}
+                                        ha_mac_set = {str(m).lower() for m in parsed_macs}
                                 except (_json.JSONDecodeError, TypeError):
                                     pass
                     except Exception:
