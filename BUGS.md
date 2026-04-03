@@ -162,7 +162,7 @@
 
 82. FIXED (1.1.0-dev.27) - HA column now shows only "Yes" / "—" (configured or not). _status connectivity still feeds into online/offline column via 4.2c.
 
-83. INVESTIGATING (1.1.0-dev.27) - Added debug endpoint GET /ui/api/debug/ha-status showing entity status keys, per-target matching candidates, and match results. Deploy and hit that endpoint to identify mismatches.
+83. FIXED (1.1.0-dev.30) - HA matching for devices with non-standard HA entity names. Root cause: Screek sensors register with firmware names containing MAC fragments (e.g. screek_humen_sensor_1u_c76926). Fix: added MAC fragment match (last 3 bytes of device MAC scanned against entity keys). Also fixed _normalize_for_ha to strip special chars like & and collapse underscores.
 
 84. FIXED (1.1.0-dev.28) - Light mode connect worker form inputs. Changed hardcoded #0d1117 to var(--bg).
 

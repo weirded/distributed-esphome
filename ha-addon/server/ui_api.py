@@ -108,8 +108,16 @@ async def get_server_info(request: web.Request) -> web.Response:
 
 
 def _normalize_for_ha(name: str) -> str:
-    """Normalize a name to match HA entity_id conventions (underscores, lowercase)."""
-    return name.replace("-", "_").replace(" ", "_").lower()
+    """Normalize a name to match HA entity_id conventions (underscores, lowercase).
+
+    HA entity IDs strip special characters like &, ', etc. and collapse
+    multiple underscores.
+    """
+    import re  # already imported at module level
+    normalized = name.replace("-", "_").replace(" ", "_").lower()
+    normalized = re.sub(r"[^a-z0-9_]", "", normalized)  # strip non-alphanumeric
+    normalized = re.sub(r"_+", "_", normalized)  # collapse multiple underscores
+    return normalized.strip("_")
 
 
 def _ha_status_for_target(
@@ -167,7 +175,17 @@ def _ha_status_for_target(
             if key.startswith(prefix) or key == norm_name:
                 return True, entry.get("connected")
 
-    # 3. If MAC confirmed but name didn't match, still mark as configured
+    # 3. MAC fragment match — some devices register with HA using internal names
+    #    that include MAC fragments (e.g. screek_humen_sensor_1u_c76926 contains
+    #    the last 3 bytes of MAC 84:FC:E6:C7:69:26 as "c76926").
+    if device_mac:
+        mac_suffix = device_mac.upper().replace(":", "")[-6:].lower()  # last 3 bytes
+        if mac_suffix and len(mac_suffix) == 6:
+            for key, entry in ha_entity_status.items():
+                if mac_suffix in key:
+                    return True, entry.get("connected")
+
+    # 4. If MAC confirmed via HA device identifiers but name didn't match
     if mac_confirmed:
         return True, None
 
