@@ -150,6 +150,12 @@ cd ha-addon/ui && npx vite         # dev server
 - **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, etc.) must use shadcn/ui components. Don't hand-roll components that shadcn already provides.
 - **Use library components as intended.** When using shadcn/ui, Tailwind, or any library, leverage their built-in functionality rather than disabling features and reimplementing them. If a library component doesn't fit, adapt our code to work with it — don't strip and replace it. Take the easy/intended path, not hacky workarounds.
 - **Prefer composition over override.** Adjust layout/spacing to accommodate library behavior rather than adding `showCloseButton={false}` and rolling a custom close button.
+- **Server state in SWR, UI state in React.** SWR is the cache for server data — read from it, don't copy it into `useState`. Lift state only as high as needed.
+- **Shared TypeScript types for API responses.** Define types once for what the server returns and use them across components. No `any` or inline ad-hoc shapes.
+- **Tailwind utility classes in JSX, not custom CSS.** Only use CSS files for things Tailwind can't express (animations, complex selectors). No `@apply`. Use `cn()` (shadcn merge utility) for conditional classes, not string concatenation.
+- **One component per file, colocate related code.** Types, helpers, and constants used by a single component live near that component, not in a global utils grab-bag.
+- **Semantic HTML.** `<button>` not `<div onClick>`, `<table>` for tabular data. shadcn handles much of this — don't undermine it with custom markup.
+- **All API calls go through `api/client.ts`.** Components never call `fetch` directly.
 
 ## Project Tracking
 

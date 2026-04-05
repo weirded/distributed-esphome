@@ -180,6 +180,10 @@ Theme: **Full replacement for the stock ESPHome dashboard.** Every feature the b
 
 - [ ] **4.1d Web Serial logs** — browser-side USB serial log viewer (Web Serial API)
 
+### Live Log Tail After Update
+
+- [ ] **4.5 Auto-connect device logs after OTA** — when viewing a job's log modal, automatically connect to the device's native API log stream after OTA completes, like `esphome run` does (compile → upload → tail logs)
+
 ### Build Management
 
 - [ ] **5.1 Clean build artifacts** — dispatch `esphome clean` to worker, per-device and clean-all
