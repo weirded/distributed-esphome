@@ -721,10 +721,17 @@ function DeviceMenu({
         {onlineWorkers.length > 0 && (
           <>
             <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
-            <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Upgrade on...</div>
-            {onlineWorkers.map(w => (
-              <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
-            ))}
+            <div className="group/sub relative">
+              <div className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-sm cursor-default hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]">
+                Upgrade on...
+                <span className="ml-auto text-xs">&#9656;</span>
+              </div>
+              <div className="invisible group-hover/sub:visible absolute left-full top-0 ml-1 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10">
+                {onlineWorkers.map(w => (
+                  <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
+                ))}
+              </div>
+            </div>
           </>
         )}
       </div>
