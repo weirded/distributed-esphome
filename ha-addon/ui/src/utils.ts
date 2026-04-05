@@ -1,3 +1,10 @@
+export function timeAgo(isoString: string): string {
+  const ago = Math.round((Date.now() - new Date(isoString).getTime()) / 1000);
+  if (ago < 60) return ago + 's ago';
+  if (ago < 3600) return Math.floor(ago / 60) + 'm ago';
+  return Math.floor(ago / 3600) + 'h ago';
+}
+
 export function stripYaml(s: string | undefined | null): string {
   return s ? s.replace(/\.ya?ml$/i, '') : (s ?? '');
 }
@@ -37,6 +44,15 @@ export function isJobRetryable(job: { state: string; ota_result?: string }): boo
   return isJobFailed(job);
 }
 
+const BADGE_BASE = 'inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide';
+const BADGE_VARIANTS: Record<string, string> = {
+  pending:   `${BADGE_BASE} bg-[#374151] text-[#9ca3af]`,
+  working:   `${BADGE_BASE} bg-[#1e3a5f] text-[#60a5fa]`,
+  success:   `${BADGE_BASE} bg-[#14532d] text-[#4ade80]`,
+  failed:    `${BADGE_BASE} bg-[#450a0a] text-[#f87171]`,
+  timed_out: `${BADGE_BASE} bg-[#431407] text-[#fb923c]`,
+};
+
 export function getJobBadge(job: {
   state: string;
   ota_only?: boolean;
@@ -45,30 +61,30 @@ export function getJobBadge(job: {
   status_text?: string;
 }): { label: string; cls: string } {
   if (job.state === 'pending' && job.validate_only) {
-    return { label: 'Validate', cls: 'badge badge-pending' };
+    return { label: 'Validate', cls: BADGE_VARIANTS.pending };
   } else if (job.state === 'pending' && job.ota_only) {
-    return { label: 'OTA Retry', cls: 'badge badge-timed_out' };
+    return { label: 'OTA Retry', cls: BADGE_VARIANTS.timed_out };
   } else if (job.state === 'pending') {
-    return { label: 'Pending', cls: 'badge badge-pending' };
+    return { label: 'Pending', cls: BADGE_VARIANTS.pending };
   } else if (job.state === 'working' && job.validate_only) {
-    return { label: job.status_text || 'Validating', cls: 'badge badge-working' };
+    return { label: job.status_text || 'Validating', cls: BADGE_VARIANTS.working };
   } else if (job.state === 'working') {
-    return { label: job.status_text || 'Working', cls: 'badge badge-working' };
+    return { label: job.status_text || 'Working', cls: BADGE_VARIANTS.working };
   } else if (job.state === 'failed') {
-    return { label: 'Failed', cls: 'badge badge-failed' };
+    return { label: 'Failed', cls: BADGE_VARIANTS.failed };
   } else if (job.state === 'success' && job.validate_only) {
-    return { label: 'Valid', cls: 'badge badge-success' };
+    return { label: 'Valid', cls: BADGE_VARIANTS.success };
   } else if (job.state === 'success') {
     if (job.ota_result === 'success') {
-      return { label: 'Success', cls: 'badge badge-success' };
+      return { label: 'Success', cls: BADGE_VARIANTS.success };
     } else if (job.ota_result === 'failed') {
-      return { label: 'OTA Failed', cls: 'badge badge-timed_out' };
+      return { label: 'OTA Failed', cls: BADGE_VARIANTS.timed_out };
     } else {
-      return { label: 'OTA Pending', cls: 'badge badge-working' };
+      return { label: 'OTA Pending', cls: BADGE_VARIANTS.working };
     }
   } else if (job.state === 'timed_out') {
-    return { label: 'Timed Out', cls: 'badge badge-timed_out' };
+    return { label: 'Timed Out', cls: BADGE_VARIANTS.timed_out };
   } else {
-    return { label: job.state, cls: 'badge badge-' + job.state };
+    return { label: job.state, cls: BADGE_VARIANTS[job.state] || BADGE_VARIANTS.pending };
   }
 }

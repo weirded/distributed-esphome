@@ -11,14 +11,19 @@ LABEL \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
 
+# Install build dependencies for the local worker (ESPHome needs git for packages,
+# gcc/libffi for PlatformIO toolchain setup)
+RUN apk add --no-cache git gcc musl-dev libffi-dev openssl-dev
+
 WORKDIR /app
 COPY server/requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY server/ .
 COPY VERSION /app/VERSION
 
-# Bundle client code so the server can serve it to remote clients for auto-update
+# Bundle client code and install its dependencies for the local worker
 COPY client/ /app/client/
+RUN pip3 install --no-cache-dir -r /app/client/requirements.txt
 
 ENTRYPOINT []
 CMD ["python3", "/app/main.py"]

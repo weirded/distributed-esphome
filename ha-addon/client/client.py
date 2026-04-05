@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.2.0-dev.3"
+CLIENT_VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -222,6 +222,21 @@ def collect_system_info() -> dict:
 
     os_version = os.environ.get("HOST_PLATFORM") or _get_os_version()
 
+    # Disk space on the build volume
+    disk_total: Optional[str] = None
+    disk_free: Optional[str] = None
+    disk_pct: Optional[int] = None
+    try:
+        st = os.statvfs(_ESPHOME_VERSIONS_DIR)
+        total = st.f_frsize * st.f_blocks
+        free = st.f_frsize * st.f_bavail
+        used_pct = round((1 - free / total) * 100) if total > 0 else None
+        disk_total = _format_memory(total)
+        disk_free = _format_memory(free)
+        disk_pct = used_pct
+    except Exception:
+        pass
+
     info: dict = {
         "cpu_arch": platform.machine(),
         "os_version": os_version,
@@ -231,6 +246,9 @@ def collect_system_info() -> dict:
         "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
         "perf_score": _CPU_PERF_SCORE,
         "cpu_usage": _get_cpu_usage(),
+        "disk_total": disk_total,
+        "disk_free": disk_free,
+        "disk_used_pct": disk_pct,
     }
     return info
 

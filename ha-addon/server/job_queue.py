@@ -158,6 +158,8 @@ class JobQueue:
             logger.exception("Failed to load queue from %s; starting fresh", self._queue_file)
             return
 
+        pruned = 0
+        cutoff = datetime.now(timezone.utc)
         for d in data:
             job = Job.from_dict(d)
             # Restart recovery: working jobs reset to pending (worker is gone)
@@ -165,8 +167,23 @@ class JobQueue:
                 job.state = JobState.PENDING
                 job.assigned_client_id = None
                 job.assigned_at = None
+            # Prune terminal jobs older than 1 hour on startup
+            if job.state in (JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT):
+                try:
+                    created = job.created_at
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if (cutoff - created).total_seconds() > 3600:
+                        pruned += 1
+                        continue  # skip adding to queue
+                except Exception:
+                    pruned += 1
+                    continue
             self._jobs[job.id] = job
 
+        if pruned:
+            logger.info("Pruned %d old terminal jobs on startup", pruned)
+            self._persist()
         logger.info("Loaded %d jobs from %s", len(self._jobs), self._queue_file)
 
     # ------------------------------------------------------------------
@@ -245,9 +262,6 @@ class JobQueue:
 
         Returns the claimed Job or None if the queue is empty.
         """
-        if faster_idle_worker_exists:
-            return None
-
         now = _utcnow()
         async with self._lock:
             for job in self._jobs.values():
@@ -255,6 +269,9 @@ class JobQueue:
                     continue
                 # Pinned jobs can only be claimed by the designated worker
                 if job.pinned_client_id and job.pinned_client_id != client_id:
+                    continue
+                # Defer to faster workers — but never defer pinned jobs
+                if faster_idle_worker_exists and not job.pinned_client_id:
                     continue
                 job.state = JobState.WORKING
                 job.assigned_client_id = client_id
@@ -398,8 +415,9 @@ class JobQueue:
                 if not (is_failed or is_ota_failed or is_success):
                     continue
                 target = job.target
-                # Pin OTA retries to the worker that compiled the firmware
-                pin_to = job.assigned_client_id if is_ota_failed else None
+                # Pin OTA retries to the worker that compiled the firmware.
+                # Also preserve any user-requested pin from "Upgrade on..." action.
+                pin_to = job.assigned_client_id if is_ota_failed else job.pinned_client_id
                 # Remove all terminal jobs for this target (including the one being retried)
                 stale = [
                     jid for jid, j in self._jobs.items()
@@ -461,6 +479,30 @@ class JobQueue:
             for j in self._jobs.values()
             if j.state in (JobState.PENDING, JobState.WORKING)
         )
+
+    async def prune_old_terminal(self, max_age_seconds: int = 3600) -> int:
+        """Remove terminal jobs older than *max_age_seconds*. Returns count removed."""
+        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT}
+        cutoff = datetime.now(timezone.utc)
+        async with self._lock:
+            to_remove = []
+            for job_id, job in self._jobs.items():
+                if job.state not in terminal:
+                    continue
+                try:
+                    created = job.created_at if isinstance(job.created_at, datetime) else datetime.fromisoformat(str(job.created_at))
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    age = (cutoff - created).total_seconds()
+                    if age > max_age_seconds:
+                        to_remove.append(job_id)
+                except Exception:
+                    to_remove.append(job_id)  # can't parse date → prune it
+            for job_id in to_remove:
+                del self._jobs[job_id]
+            if to_remove:
+                self._persist()
+            return len(to_remove)
 
     async def remove_jobs(self, job_ids: list[str]) -> int:
         """Remove terminal jobs by ID. Returns count removed."""

@@ -1,11 +1,14 @@
 # Work Items — ESPHome Dashboard Replacement
 
-Sequenced for incremental delivery. Each item is independently shippable.
+Organized by release. Each item is independently shippable within its release.
 Mark items `[x]` when complete.
 
 ---
 
-## Foundation (already done)
+## Completed (1.0.0 + 1.1.0)
+
+<details>
+<summary>Foundation, quick wins, editor, validation, device lifecycle, live logs, HA integration</summary>
 
 - [x] React + Vite + TypeScript scaffolding
 - [x] Port existing UI to React components (Devices, Queue, Workers tabs)
@@ -14,126 +17,93 @@ Mark items `[x]` when complete.
 - [x] Fix polling interval explosion bug
 - [x] Fix queue state handling (success = compile + OTA both done)
 - [x] Fix button disabled states
-
----
-
-## Quick Wins (small, high-value, no backend changes)
-
-- [x] **6.1 Device search/filter bar** — client-side filter across all columns, persists across polls
+- [x] **6.1 Device search/filter bar** — client-side filter across all columns
 - [x] **4.3 Device web server links** — make IP clickable when device is online
-- [x] **4.4 Show API encryption key** — copy-to-clipboard button per device + server endpoint
+- [x] **4.4 Show API encryption key** — copy-to-clipboard button per device
 - [x] **6.4 Export logs** — download button in log modal saves terminal content as .txt
 - [x] **1.3 Secrets editor** — "Secrets" button in header opens secrets.yaml in Monaco editor
 - [x] **6.2 Dark/light theme toggle** — CSS variables for both themes, persist in localStorage
+- [x] **1.1a–d Monaco YAML autocomplete** — ESPHome schema, completions, inline validation, !include/!secret/!lambda
+- [x] **1.2a–c Config validation** — server endpoint, validate_only job type, Validate button in editor
+- [x] **2.2 Rename device** — `POST /ui/api/targets/{f}/rename`, updates esphome.name + filename
+- [x] **2.3 Delete device** — `DELETE /ui/api/targets/{f}` with archive, confirmation dialog
+- [x] **4.1a–c Live device logs** — WebSocket endpoint, encryption handling, DeviceLogModal with xterm.js
+- [x] **4.2a–c HA integration** — poll entity registry, status badges, connected state as online signal
+
+</details>
 
 ---
 
-## Editor Improvements
+## Completed in 1.2.0 (so far)
 
-- [x] **1.1a Load ESPHome JSON schema** (1.1.0-dev.9) — fetch from json.esphome.io, cached in module-level variable
-- [x] **1.1b Monaco YAML autocomplete** (1.1.0-dev.9) — custom CompletionItemProvider walks schema graph for context-aware completions
-- [x] **1.1c Inline validation** (1.1.0-dev.9) — warning markers for unknown top-level keys, debounced 500ms
-- [x] **1.1d Support !include, !secret, !lambda** (1.1.0-dev.9) — !secret autocompletes from secrets.yaml, !-prefixed values skip validation
+<details>
+<summary>Worker UX, metadata, disk management, shadcn foundation, UI polish</summary>
 
----
+- [x] Configurable parallel job slots from UI (+/- controls, pushed via heartbeat)
+- [x] Queue shows friendly device names with filename and timestamp
+- [x] Upgrade All skips known-offline devices
+- [x] Pin jobs to specific worker ("Upgrade on..." submenu)
+- [x] Docker Compose worker file
+- [x] Configurable device columns (area, project, comment) with column picker
+- [x] Disk space management — workers report usage, version manager auto-evicts when low
+- [x] **DS.0** Install Tailwind v4 + shadcn init, map CSS variables
+- [x] **DS.1** New components use shadcn (DropdownMenu for column picker, hamburger, upgrade)
+- [x] Toast migrated to Sonner
+- [x] ESPHome version selector migrated to shadcn DropdownMenu
+- [x] Search boxes added to Queue and Workers tabs
+- [x] Queue buttons grouped into shadcn dropdowns (Retry, Clear)
+- [x] Validation jobs filtered from queue display
 
-## Config Validation
-
-- [x] **1.2a Server endpoint** (1.1.0-dev.10) — `POST /ui/api/validate` dispatches validation job
-- [x] **1.2b Job type: validate_only** (1.1.0-dev.10) — worker runs `esphome config` (2-5s) instead of compile+OTA
-- [x] **1.2c Validate button in editor** (1.1.0-dev.10) — triggers validation, switches to queue tab, badge shows "Validating"/"Valid"
-
----
-
-## Device Lifecycle
-
-- [x] **2.3 Delete device** (1.1.0-dev.16) — `DELETE /ui/api/targets/{f}` with archive, confirmation dialog, hamburger menu
-- [x] **2.2 Rename device** (1.1.0-dev.16) — `POST /ui/api/targets/{f}/rename`, updates esphome.name + filename
-- [ ] **2.1a Create device: empty template** — wizard modal with name, platform, board, WiFi from secrets
-- [ ] **2.1b Create device: clone existing** — duplicate a config with new name
-- [ ] **2.1c Create device: import from URL** — fetch config from GitHub/project URL
+</details>
 
 ---
 
-## Live Device Logs
+## 1.2.0 — Design System + Editor (current release)
 
-- [x] **4.1a Server endpoint** (1.1.0-dev.18) — `GET /ui/api/targets/{f}/logs/ws` WebSocket, connects via aioesphomeapi
-- [x] **4.1b Handle encryption** (1.1.0-dev.18) — passes noise_psk from extracted keys
-- [x] **4.1c Logs button on device row** (1.1.0-dev.18) — DeviceLogModal with xterm.js, opens for online devices
-- [ ] **4.1d Web Serial logs** — browser-side USB serial log viewer (Web Serial API)
+Theme: **Complete the shadcn/ui migration and ship the file tree editor.** These are the two most visible improvements for users — a polished, consistent UI and the ability to edit include files.
 
----
+### Design System Migration
 
-## Firmware Download & Flashing
+- [x] **DS.2a Buttons** (1.2.0-dev.25) — shadcn Button with warn/success variants, all 33 instances migrated
+- [x] **DS.2b Badges** (1.2.0-dev.30) — `getJobBadge()` returns Tailwind classes, removed `.badge-*` CSS
+- [x] **DS.2c Inputs/Selects** (1.2.0-dev.30) — search boxes and ConnectWorkerModal form fields use Tailwind classes
+- [x] **DS.2d Status dots** (1.2.0-dev.20) — shared `StatusDot` component
+- [x] **DS.3 Modals** (1.2.0-dev.23) — all 5 modals use shadcn Dialog; Tailwind preflight re-enabled (1.2.0-dev.24)
+- [x] **DS.4a Tab bar** (1.2.0-dev.31) — Tailwind classes in App.tsx, removed `.tab-*` CSS
+- [x] **DS.4b Panels** (1.2.0-dev.32) — Tailwind classes, removed `.panel-*` CSS
+- [x] **DS.4c Version badge** (1.2.0-dev.32) — Tailwind classes, removed `.version-badge` CSS
+- [x] **DS.4e Version dropdown** (1.2.0-dev.18) — shadcn DropdownMenu
+- [x] **DS.5 Cleanup** — Toast.tsx, App.css, index.css, Vite SVGs deleted; old modal/button/badge/tab/panel CSS removed
 
-- [ ] **3.1a Worker extracts firmware binary** — read .bin after compile, POST to server
-- [ ] **3.1b Server stores firmware** — `/data/firmware/<target>/`, metadata endpoint
-- [ ] **3.1c Download button on device row** — `GET /ui/api/targets/{f}/firmware`
-- [ ] **3.2a Web Serial flashing** — esp-web-tools integration, manifest endpoint
-- [ ] **3.2b Server serial flashing** — list ports on HA host, esptool.py flash endpoint
+**DS migration complete.** Tailwind preflight enabled. All interactive components use shadcn/Base UI. Remaining CSS: table styling, editor/xterm structural classes, status dots.
 
----
+### UI Cleanup
 
-## HA Integration
+- [x] **UI.1 Extract shared utilities** (1.2.0-dev.35) — `timeAgo()` to utils.ts, terminal helpers to utils/terminal.ts
+- [x] **UI.2 Structural fixes** (1.2.0-dev.35) — deleted usePolling.ts, useWebSocket.ts; removed redundant Escape handlers (Dialog handles natively)
+- [x] **UI.3 Add frontend section to CLAUDE.md** (1.2.0-dev.35)
 
-- [x] **4.2a Background task** (1.1.0-dev.19) — poll HA entity registry every 30s for ESPHome device status
-- [x] **4.2b Device status in UI** (1.1.0-dev.19) — show "In HA" badge (configured/connected) in Devices tab
-- [x] **4.2c Influence online/offline** (1.1.0-dev.20) — use HA connected state as additional online signal
+### TanStack Table
 
----
+Replace hand-rolled table logic with TanStack Table (`@tanstack/react-table`). Headless — renders through existing shadcn Table components.
 
-## Config Diff
+- [x] **TT.1 DevicesTab** (1.2.0-dev.37) — TanStack column defs, sorting, column visibility (localStorage), row selection. Deleted useSortable, SortableHeader, DOM-query checkbox pattern.
+- [x] **TT.2 QueueTab** (1.2.0-dev.37) — TanStack sorting with custom stateSort fn, row selection. Deleted QueueRow component (rendering inline in column defs).
+- [x] **TT.3 WorkersTab** (1.2.0-dev.38) — TanStack sorting, local-worker pinned to top post-sort. Multi-row slot expansion outside TanStack.
+- Deleted: `useSortable.ts`, `SortableHeader.tsx`, `hooks/` directory
 
-- [ ] **1.5a Store config snapshot** — save YAML at compile time to `/data/config_snapshots/`
-- [ ] **1.5b Diff endpoint** — return unified diff between current and last-compiled
-- [ ] **1.5c Diff viewer in editor** — Monaco diff editor or inline diff display
+### Other 1.2.0
 
----
-
-## AI/LLM Editor
-
-- [ ] **1.4a Server config** — add-on options for LLM provider, API key, model, endpoint
-- [ ] **1.4b Completion endpoint** — `POST /ui/api/ai/complete` proxies to LLM with YAML context
-- [ ] **1.4c Inline ghost text** — display LLM suggestions as Monaco inline completions
-- [ ] **1.4d Chat endpoint** — `POST /ui/api/ai/chat` for natural language → YAML
-- [ ] **1.4e Chat panel in editor** — side panel for prompting, accept/reject generated changes
+- [x] **LIB.4 SWR for UI data fetching** (1.2.0-dev.39) — replaced 5 manual setInterval loops with useSWR hooks (auto cache/dedup/stale-while-revalidate). Removed fetchersRef, useCallback fetchers.
+- [x] **6.5 Streamer mode** (1.2.0-dev.39) — toggle in header blurs IPs, tokens, docker commands via `.sensitive` class + CSS `filter: blur()`. Persisted in localStorage.
 
 ---
 
-## Device Organization
+## 1.3.0 — Quality + Testing
 
-- [ ] **6.3 Device groups/tags** — JSON sidecar metadata, filter/group UI in Devices tab
-- [ ] **6.6 Bulk operations** — extend multi-select: bulk delete, bulk validate, bulk tag
-- [ ] **2.4 Device adoption/import** — discover unconfigured devices, adopt with project URL
+Theme: **Harden the codebase.** Fill test coverage gaps, add CI, clean up Python code, add Playwright browser tests. No new features — focus on reliability and maintainability.
 
----
-
-## Build Operations
-
-- [ ] **5.1 Clean build artifacts** — dispatch `esphome clean` to worker, per-device and clean-all
-- [ ] **5.2 Build cache status** — workers report cache stats, display in UI
-- [ ] **5.4 Notification hooks** — webhook URL for job success/failure (Slack/Discord)
-
----
-
-## Polish
-
-- [ ] **6.5 Streamer mode** — toggle masks IPs, keys, tokens (CSS blur)
-
----
-
-## CI / GitHub Actions
-
-- [ ] **CI.1 Run E2E tests in CI** — they use fake server/binary, no reason to skip
-- [ ] **CI.2 Add test coverage reporting** — `pytest-cov`
-- [ ] **CI.3 Add ruff linting**
-- [ ] **CI.4 Add frontend build+lint job**
-
-Details: `~/.claude/plans/hashed-wobbling-firefly.md` (Phase 0A), `~/.claude/plans/wild-bubbling-cat.md` (Phase 6), `~/.claude/plans/happy-munching-moonbeam.md` (Step 6)
-
----
-
-## Test Suite Improvements
+### Test Suite
 
 126 existing tests are all genuine and valuable. Main gaps: api.py, ui_api.py, main.py (1,780 lines) have zero coverage.
 
@@ -143,38 +113,132 @@ Details: `~/.claude/plans/hashed-wobbling-firefly.md` (Phase 0A), `~/.claude/pla
 - [ ] **T.3 UI API tests** (~23) — targets, compile, config CRUD, rename, queue management
 - [ ] **T.4 Extend existing module tests** (~15) — scanner metadata, queue pinning, poller cache
 
-Details: `~/.claude/plans/hashed-wobbling-firefly.md`
+### Playwright Browser Tests
 
----
+End-to-end testing of the web UI using Playwright.
 
-## UI Audit & Cleanup
+- [ ] **PW.1 Playwright setup** — install Playwright, configure test runner, add to CI. Test against a mock server or the real server with fixture data.
+- [ ] **PW.2 Smoke tests** — page loads, all three tabs render, header elements present
+- [ ] **PW.3 Device tab interactions** — search/filter, column picker, sort, multi-select, upgrade button states
+- [ ] **PW.4 Queue tab interactions** — job badges, retry/cancel/clear actions, log modal opens
+- [ ] **PW.5 Workers tab interactions** — slot controls, enable/disable, connect worker modal
+- [ ] **PW.6 Editor modal** — open, edit YAML, save, validate, dirty state warning
+- [ ] **PW.7 Theme and responsiveness** — dark/light toggle, narrow viewport behavior
 
-- [ ] **UI.1 Extract shared utilities** — `timeAgo()`, `useTerminal`, `downloadTerminalLog()`, `useEscapeKey`, overlay click handler
-- [ ] **UI.2 Structural fixes** — delete unused `usePolling`, use `useWebSocket` in DeviceLogModal, utility CSS classes
-- [ ] **UI.3 Add frontend section to CLAUDE.md**
+### CI / GitHub Actions
 
-Details: `~/.claude/plans/happy-munching-moonbeam.md`
+- [ ] **CI.1 Run E2E tests in CI** — they use fake server/binary, no reason to skip
+- [ ] **CI.2 Add test coverage reporting** — `pytest-cov`
+- [ ] **CI.3 Add ruff linting**
+- [ ] **CI.4 Add frontend build+lint job**
+- [ ] **CI.5 Run Playwright tests in CI** — headless browser in GitHub Actions
 
----
-
-## Python Codebase Cleanup
+### Python Codebase Cleanup
 
 - [ ] **PY.1 Server DRY cleanup** — extract helpers.py, consolidate auth logic, DevicePoller public accessors
 - [ ] **PY.2 Client cleanup** — heartbeat helper, run_job() cleanup, env var validation, logging for silent exceptions
 - [ ] **PY.3 Version manager thread safety** — wait timeout, error propagation to waiters
 - [ ] **PY.4 Consistency & polish** — standardize error handling, type hints, CLAUDE.md updates
 
-Details: `~/.claude/plans/wild-bubbling-cat.md`
+### Client Library Adoption
+
+LIB.1–3 require a new Docker image (`psutil` needs C compilation). LIB.0 adds detection so the server/UI warns when the worker image is too old.
+
+- [ ] **LIB.0 Client image version detection** — `IMAGE_VERSION` baked into Docker image, `MIN_IMAGE_VERSION` on server, heartbeat gates auto-update, UI warning badge
+- [ ] **LIB.1 `psutil` for client system info** — replace ~200 lines of /proc/cpuinfo parsing with cross-platform API
+- [ ] **LIB.2 `tenacity` for client retry logic** — decorator-based retries + exponential backoff
+- [ ] **LIB.3 `pyyaml` for client network diagnostics** — replace fragile regex YAML parsing
 
 ---
 
-## Design System Adoption (shadcn/ui)
+## 1.4.0 — ESPHome Dashboard Parity
 
-- [ ] **DS.0 Foundation** — install Tailwind v4 + shadcn init (zinc theme), map existing CSS variables, no visual changes
-- [ ] **DS.1 New components use shadcn** — all new UI features (device wizard, diff viewer, AI chat) built with shadcn
-- [ ] **DS.2 Migrate shared primitives** — buttons, badges, dropdowns, toast, dialog
-- [ ] **DS.3 Migrate modals** — LogModal, EditorModal, ConnectWorkerModal, DeviceLogModal
-- [ ] **DS.4 Migrate tables and tabs** — tab content, search/filter inputs
-- [ ] **DS.5 Remove old CSS** — delete migrated classes from theme.css
+Theme: **Full replacement for the stock ESPHome dashboard.** Every feature the built-in UI has, this has too — plus everything we've already added on top. After this release, there's no reason to use the stock dashboard.
 
-Details: `~/.claude/plans/hashed-wobbling-firefly.md`
+### Create Device
+
+- [ ] **2.1a Create device: empty template** — wizard modal with name, platform, board, WiFi from secrets
+- [ ] **2.1b Create device: clone existing** — duplicate a config with new name
+
+### Firmware Download & Flashing
+
+- [ ] **3.1a Worker extracts firmware binary** — read .bin after compile, POST to server
+- [ ] **3.1b Server stores firmware** — `/data/firmware/<target>/`, metadata endpoint
+- [ ] **3.1c Download button on device row** — `GET /ui/api/targets/{f}/firmware`
+- [ ] **3.2a Web Serial flashing** — esp-web-tools integration, manifest endpoint
+- [ ] **3.2b Server serial flashing** — list ports on HA host, esptool.py flash endpoint
+
+### Web Serial Logs
+
+- [ ] **4.1d Web Serial logs** — browser-side USB serial log viewer (Web Serial API)
+
+### Build Management
+
+- [ ] **5.1 Clean build artifacts** — dispatch `esphome clean` to worker, per-device and clean-all
+
+### Device Adoption
+
+- [ ] **2.4 Device adoption/import** — discover unconfigured devices, adopt with project URL
+
+---
+
+## 1.5.0 — Organization + Intelligence
+
+Theme: **Power-user features that go beyond stock ESPHome.** Better ways to manage large device fleets, track config changes, and get AI assistance.
+
+### File Tree Editor
+
+Browse and edit any file in the ESPHome config directory, including subdirectories. VS Code-style file tree sidebar in the editor modal.
+
+- [ ] **FT.1 `GET /ui/api/files`** — recursive directory listing, returns flat `[{path, size, binary}]`
+- [ ] **FT.2 `GET /ui/api/files/{path:.+}`** — read file by relative path (path traversal prevention)
+- [ ] **FT.3 `POST /ui/api/files/{path:.+}`** — write file (invalidates config cache for .yaml)
+- [ ] **FT.4 Install `@headless-tree/core` + `@headless-tree/react`** — headless tree library
+- [ ] **FT.5 `FileTree.tsx` component** — flat list → tree, expand/collapse, active highlight, binary grayed out
+- [ ] **FT.6 Sidebar layout** — editor body flex row: `[file tree 240px] | [monaco flex-1]`, sidebar toggle
+- [ ] **FT.7 File switching** — dirty check → load/save, language detection by extension
+- [ ] **FT.8 Conditional buttons** — Save & Upgrade/Validate/Rename only for entry-point YAML; includes get Save only
+- [ ] **FT.9 API functions** — `listFiles()`, `readFile()`, `writeFile()` in client.ts
+
+### Device Organization
+
+- [ ] **6.3 Device groups/tags** — JSON sidecar metadata, filter/group UI in Devices tab
+- [ ] **6.6 Bulk operations** — extend multi-select: bulk delete, bulk validate, bulk tag
+
+### Config Diff
+
+- [ ] **1.5a Store config snapshot** — save YAML at compile time to `/data/config_snapshots/`
+- [ ] **1.5b Diff endpoint** — return unified diff between current and last-compiled
+- [ ] **1.5c Diff viewer in editor** — Monaco diff editor or inline diff display
+
+### Import
+
+- [ ] **2.1c Create device: import from URL** — fetch config from GitHub/project URL
+
+### AI/LLM Editor
+
+- [ ] **1.4a Server config** — add-on options for LLM provider, API key, model, endpoint
+- [ ] **1.4b Completion endpoint** — `POST /ui/api/ai/complete` proxies to LLM with YAML context
+- [ ] **1.4c Inline ghost text** — display LLM suggestions as Monaco inline completions
+- [ ] **1.4d Chat endpoint** — `POST /ui/api/ai/chat` for natural language → YAML
+- [ ] **1.4e Chat panel in editor** — side panel for prompting, accept/reject generated changes
+
+---
+
+## Future — Advanced Features
+
+Items with less certainty on scope or priority. Will be shaped into a release when the time comes.
+
+### Build Operations
+
+- [ ] **5.2 Build cache status** — workers report cache stats, display in UI
+- [ ] **5.4 Notification hooks** — webhook URL for job success/failure (Slack/Discord)
+
+### Remote Compilation (Backlog #1)
+
+- [ ] Allow compiling on VPS servers not on the local network (firmware download + separate OTA step)
+- [ ] Possibly GitHub Actions integration for builds
+
+### Git Integration (Backlog #2)
+
+- [ ] Git functionality for configs — version history, commit, push/pull

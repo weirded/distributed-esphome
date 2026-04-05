@@ -150,6 +150,9 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
       - friendly_name:  str | None  — esphome.friendly_name (substitutions resolved)
       - device_name:    str | None  — esphome.name formatted as title case
       - comment:        str | None  — esphome.comment
+      - area:           str | None  — esphome.area
+      - project_name:   str | None  — esphome.project.name
+      - project_version:str | None  — esphome.project.version
       - has_web_server: bool        — True if the web_server component is present
     """
     result: dict = {
@@ -157,12 +160,27 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         "device_name": None,
         "device_name_raw": None,  # raw esphome.name value (hyphens/underscores preserved)
         "comment": None,
+        "area": None,
+        "project_name": None,
+        "project_version": None,
         "has_web_server": False,
     }
     config = _resolve_esphome_config(config_dir, target)
-    if config is None:
-        return result
+    if config is not None:
+        _extract_metadata(config, result)
 
+    # Fallback: if full resolution failed or left gaps, try raw YAML for
+    # literal fields (area, comment, project) that don't need substitution.
+    if config is None or result["area"] is None:
+        raw_config = _load_raw_yaml(config_dir, target)
+        if raw_config is not None:
+            _fill_missing_metadata(raw_config, result)
+
+    return result
+
+
+def _extract_metadata(config: dict, result: dict) -> None:
+    """Extract all metadata fields from a fully resolved ESPHome config."""
     esphome_block = config.get("esphome") or {}
     if isinstance(esphome_block, dict):
         friendly = esphome_block.get("friendly_name")
@@ -175,12 +193,106 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         comment = esphome_block.get("comment")
         if comment:
             result["comment"] = str(comment)
+        area = esphome_block.get("area")
+        if area:
+            result["area"] = str(area)
+        project = esphome_block.get("project")
+        if isinstance(project, dict):
+            pname = project.get("name")
+            if pname:
+                result["project_name"] = str(pname)
+            pver = project.get("version")
+            if pver:
+                result["project_version"] = str(pver)
 
-    # Detect presence of the web_server component (enables the IP → HTTP link in UI)
+    # Detect presence of the web_server component
     if config.get("web_server") is not None:
         result["has_web_server"] = True
 
-    return result
+
+def _is_literal(value: str) -> bool:
+    """Return True if value is a literal string (no unresolved ${substitutions})."""
+    return "${" not in value
+
+
+def _load_raw_yaml(config_dir: str, target: str) -> Optional[dict]:
+    """Load a YAML file with a permissive loader (ignores !include, !secret, etc.)."""
+    try:
+        import yaml  # noqa: PLC0415
+
+        class _PermissiveLoader(yaml.SafeLoader):
+            pass
+
+        def _passthrough(loader, node):  # type: ignore
+            if isinstance(node, yaml.ScalarNode):
+                return loader.construct_scalar(node)
+            if isinstance(node, yaml.SequenceNode):
+                return loader.construct_sequence(node)
+            if isinstance(node, yaml.MappingNode):
+                return loader.construct_mapping(node)
+            return None
+
+        _PermissiveLoader.add_constructor(None, _passthrough)  # type: ignore[arg-type]
+
+        raw_path = Path(config_dir) / target
+        with open(raw_path, encoding="utf-8") as f:
+            config = yaml.load(f, Loader=_PermissiveLoader)  # noqa: S506
+        return config if isinstance(config, dict) else None
+    except Exception:
+        return None
+
+
+def _resolve_simple_subs(value: str, subs: dict) -> str:
+    """Resolve simple ${key} substitutions from a dict. Returns the value with substitutions applied."""
+    import re  # noqa: PLC0415
+    def _replace(m: re.Match) -> str:
+        key = m.group(1)
+        return str(subs.get(key, m.group(0)))
+    return re.sub(r'\$\{(\w+)\}', _replace, value)
+
+
+def _fill_missing_metadata(raw_config: dict, result: dict) -> None:
+    """Fill gaps in result from raw (unresolved) YAML.
+
+    Resolves simple ${key} substitutions from the substitutions block.
+    Never overwrites values already set by the full ESPHome resolution.
+    """
+    subs = raw_config.get("substitutions") or {}
+    if not isinstance(subs, dict):
+        subs = {}
+
+    def _resolve(val: str) -> Optional[str]:
+        """Resolve substitutions and return the value if it's fully resolved."""
+        if not val:
+            return None
+        resolved = _resolve_simple_subs(str(val), subs)
+        return resolved if _is_literal(resolved) else None
+
+    esphome_block = raw_config.get("esphome") or {}
+    if isinstance(esphome_block, dict):
+        if result["friendly_name"] is None:
+            result["friendly_name"] = _resolve(esphome_block.get("friendly_name") or "")
+        if result["device_name"] is None:
+            raw_name = _resolve(esphome_block.get("name") or "")
+            if raw_name:
+                result["device_name_raw"] = raw_name
+                result["device_name"] = raw_name.replace("_", " ").replace("-", " ").title()
+        if result["comment"] is None:
+            result["comment"] = _resolve(esphome_block.get("comment") or "")
+        if result["area"] is None:
+            result["area"] = _resolve(esphome_block.get("area") or "")
+        if result["project_name"] is None:
+            project = esphome_block.get("project")
+            if isinstance(project, dict):
+                result["project_name"] = _resolve(project.get("name") or "")
+                if result["project_version"] is None:
+                    result["project_version"] = _resolve(project.get("version") or "")
+
+    # Check substitutions for area as last resort
+    if result["area"] is None:
+        sub_area = subs.get("area")
+        if sub_area and _is_literal(str(sub_area)):
+            result["area"] = str(sub_area)
 
 
 def get_friendly_name(config_dir: str, target: str) -> Optional[str]:

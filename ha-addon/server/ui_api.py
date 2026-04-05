@@ -251,6 +251,9 @@ async def get_targets(request: web.Request) -> web.Response:
             "friendly_name": meta["friendly_name"],
             "device_name": meta["device_name"],
             "comment": meta["comment"],
+            "area": meta["area"],
+            "project_name": meta["project_name"],
+            "project_version": meta["project_version"],
             "online": effective_online,
             "running_version": dev.running_version if dev else None,
             "compilation_time": dev.compilation_time if dev else None,
@@ -711,6 +714,79 @@ async def delete_target(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+@routes.get("/ui/api/archive")
+async def list_archive(request: web.Request) -> web.Response:
+    """List archived YAML config files."""
+    cfg = _cfg(request)
+    archive_dir = Path(cfg.config_dir) / ".archive"
+    if not archive_dir.exists():
+        return web.json_response([])
+    files = []
+    for f in sorted(archive_dir.iterdir()):
+        if f.suffix in (".yaml", ".yml") and f.is_file():
+            files.append({
+                "filename": f.name,
+                "size": f.stat().st_size,
+                "archived_at": f.stat().st_mtime,
+            })
+    return web.json_response(files)
+
+
+@routes.post("/ui/api/archive/{filename}/restore")
+async def restore_archive(request: web.Request) -> web.Response:
+    """Restore an archived config file back to the config directory."""
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    config_dir = Path(cfg.config_dir)
+    archive_dir = config_dir / ".archive"
+    src = (archive_dir / filename).resolve()
+
+    try:
+        src.relative_to(archive_dir.resolve())
+    except ValueError:
+        return web.json_response({"error": "Invalid filename"}, status=400)
+
+    if not src.exists():
+        return web.json_response({"error": "Archived file not found"}, status=404)
+
+    dest = config_dir / filename
+    if dest.exists():
+        return web.json_response({"error": f"{filename} already exists in config directory"}, status=409)
+
+    try:
+        src.rename(dest)
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+    logger.info("Restored config %s from archive", filename)
+    return web.json_response({"ok": True})
+
+
+@routes.delete("/ui/api/archive/{filename}")
+async def delete_archived(request: web.Request) -> web.Response:
+    """Permanently delete an archived config file."""
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    archive_dir = Path(cfg.config_dir) / ".archive"
+    path = (archive_dir / filename).resolve()
+
+    try:
+        path.relative_to(archive_dir.resolve())
+    except ValueError:
+        return web.json_response({"error": "Invalid filename"}, status=400)
+
+    if not path.exists():
+        return web.json_response({"error": "File not found"}, status=404)
+
+    try:
+        path.unlink()
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+    logger.info("Permanently deleted archived config %s", filename)
+    return web.json_response({"ok": True})
+
+
 @routes.post("/ui/api/targets/{filename}/rename")
 async def rename_target(request: web.Request) -> web.Response:
     """Rename a YAML config file and update the esphome.name field within it."""
@@ -989,8 +1065,8 @@ async def set_worker_parallel_jobs(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     value = body.get("max_parallel_jobs")
-    if not isinstance(value, int) or value < 1 or value > 32:
-        return web.json_response({"error": "max_parallel_jobs must be 1-32"}, status=400)
+    if not isinstance(value, int) or value < 0 or value > 32:
+        return web.json_response({"error": "max_parallel_jobs must be 0-32"}, status=400)
     worker.requested_max_parallel_jobs = value
     logger.info("Worker %s (%s): requested max_parallel_jobs set to %d", client_id, worker.hostname, value)
     return web.json_response({"ok": True, "max_parallel_jobs": value})

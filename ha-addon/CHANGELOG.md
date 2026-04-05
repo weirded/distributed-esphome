@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.2.0
+
+Design system overhaul, TanStack Table, SWR data fetching, and 60+ bug fixes.
+
+**shadcn/ui Design System**
+- Full adoption of shadcn/ui with Tailwind CSS v4 and Base UI primitives
+- All modals migrated to shadcn Dialog (Editor, Log, Device Log, Rename, Delete, Connect Worker)
+- All buttons migrated to shadcn Button with warn/success/destructive variants
+- All dropdown menus use shadcn DropdownMenu (column picker, hamburger, upgrade, queue actions, ESPHome version selector)
+- Toast notifications via Sonner
+- Status indicators via shared StatusDot component
+- Badges, tabs, panels, inputs all converted to Tailwind utility classes
+- Consistent dark/light theme via CSS variable mapping
+
+**TanStack Table**
+- All three tables (Devices, Queue, Workers) use @tanstack/react-table
+- Built-in column sorting, column visibility, and row selection
+- Removed hand-rolled useSortable hook, SortableHeader component, DOM-query checkbox patterns
+
+**SWR Data Fetching**
+- Replaced 5 manual setInterval polling loops with useSWR hooks
+- Automatic cache, deduplication, and stale-while-revalidate
+- Immediate revalidation after actions (compile, retry, cancel)
+
+**Worker Management**
+- Built-in local worker runs inside the add-on container (0 slots by default, increase via UI)
+- Worker slots adjustable 0-32 (0 = paused); removed separate Disable/Enable toggle
+- Debounced +/- slot controls for rapid adjustment
+- Disk space reporting with color warnings (orange >80%, red >90%)
+- Auto-eviction of unused ESPHome versions when disk is low
+- Local worker highlighted with "built-in" badge, pinned to top of list
+- Docker Compose file for easy worker deployment
+
+**UI Improvements**
+- Configurable device table columns (Area, Comment, Project) with gear icon picker
+- Consolidated device header: search + Upgrade dropdown + column picker in one row
+- Queue buttons grouped into Retry and Clear dropdowns
+- Search boxes on all three tabs (Devices, Queue, Workers)
+- Streamer mode: toggle blurs IPs, tokens, and sensitive data
+- Copy to Clipboard button on log modals with toast feedback
+- Close button on all modals (shadcn Dialog native)
+- "Running" column renamed to "Version"
+- Validation jobs filtered from queue display
+- Empty tabs show "0" badge instead of blank
+
+**Backend**
+- Archive management: list, restore, and permanently delete archived configs
+- Terminal job auto-pruning (>1 hour old)
+- Pinned worker preserved on retry (not just OTA failures)
+- YAML metadata fallback: permissive loader for configs with git packages, simple substitution resolution
+- Server Dockerfile installs git + build deps for local worker compilation
+
+**Bug Fixes**
+- 60+ fixes across bugs #90-#150 (see BUGS.md for details)
+
 ## 1.1.0
 Major update: React UI rewrite, ESPHome dashboard-grade features, Home Assistant integration.
 

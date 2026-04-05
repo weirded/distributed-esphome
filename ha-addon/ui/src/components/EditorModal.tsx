@@ -2,7 +2,12 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import * as yaml from 'js-yaml';
 import { useEffect, useRef, useState } from 'react';
 import { getEsphomeSchema, getSecretKeys, getTargetContent, saveTargetContent } from '../api/client';
-import type { ToastType } from './Toast';
+import {
+  Dialog,
+  DialogContent,
+} from './ui/dialog';
+import { Button } from './ui/button';
+type ToastType = 'info' | 'success' | 'error';
 
 // ESPHome uses custom YAML tags that standard parsers reject. Register them so
 // js-yaml can parse ESPHome configs without throwing on !include, !secret, etc.
@@ -244,10 +249,11 @@ let _validationTimer: ReturnType<typeof setTimeout> | null = null;
 // Track dirty-line decorations (module-level so the callback closure can access it)
 let _dirtyDecorationIds: string[] = [];
 
-export function EditorModal({ target, onClose, onToast, onValidate, onCompile, onRename, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
+export function EditorModal({ target, onClose, onToast, onValidate, onCompile, onRename: _onRename, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
+  void _onRename; // kept in Props interface for API compatibility
   const isOpen = target !== null;
   const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
   const savedContentRef = useRef('');
@@ -289,20 +295,6 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
     loadComponentList().catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
-
-  // Keyboard handler
-  useEffect(() => {
-    if (!isOpen) return;
-    function handler(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [isOpen, onClose]);
-
-  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.target === e.currentTarget) onClose();
-  }
 
   async function updateDirtyDecorations(editor: Parameters<OnMount>[0]) {
     const model = editor.getModel();
@@ -507,28 +499,28 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
     }
   }
 
+  if (!isOpen) return null;
+
   return (
-    <div
-      id="editor-modal"
-      className={`editor-overlay${isOpen ? ' open' : ''}`}
-      onClick={handleOverlayClick}
-    >
-      <div className="editor-modal">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="dialog-xl" style={{ background: monacoTheme === 'vs' ? '#ffffff' : '#1e1e1e', border: monacoTheme === 'vs' ? '1px solid var(--border)' : '1px solid #3c3c3c' }}>
         <div className="editor-header">
           <h3>{target || ''}</h3>
-          <button className="btn-primary btn-sm" onClick={handleSave}>Save</button>
+          <Button size="sm" onClick={handleSave}>Save</Button>
           {onCompile && target && target !== 'secrets.yaml' && (
-            <button
-              className="btn-success btn-sm"
+            <Button
+              variant="success"
+              size="sm"
               onClick={handleSaveAndUpgrade}
               title="Save and trigger firmware compile + OTA"
             >
               Save &amp; Upgrade
-            </button>
+            </Button>
           )}
           {onValidate && target && target !== 'secrets.yaml' && (
-            <button
-              className="btn-secondary btn-sm"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={async () => {
                 if (!editorRef.current || !target) return;
                 const value = editorRef.current.getValue();
@@ -545,52 +537,40 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
               title="Save and validate config via esphome config (2-5s)"
             >
               Validate
-            </button>
+            </Button>
           )}
-          {onRename && target && target !== 'secrets.yaml' && (
-            <button
-              className="btn-secondary btn-sm"
-              onClick={() => { onRename(target); onClose(); }}
-              title="Rename this device"
-            >
-              Rename
-            </button>
-          )}
-          <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="monaco-container">
-          {!loading && isOpen && (
-            <Editor
-              height="100%"
-              defaultLanguage="yaml"
-              value={content}
-              theme={monacoTheme}
-              options={{
-                fontSize: 13,
-                lineNumbers: 'on',
-                minimap: { enabled: false },
-                wordWrap: 'on',
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 2,
-                insertSpaces: true,
-                quickSuggestions: { other: true, strings: true, comments: false },
-                suggestOnTriggerCharacters: true,
-                wordBasedSuggestions: 'off',
-                acceptSuggestionOnCommitCharacter: true,
-                hover: { enabled: true },
-                glyphMargin: true,
-              }}
-              onMount={handleEditorDidMount}
-            />
-          )}
+          <Editor
+            height="100%"
+            defaultLanguage="yaml"
+            value={content}
+            theme={monacoTheme}
+            options={{
+              fontSize: 13,
+              lineNumbers: 'on',
+              minimap: { enabled: false },
+              wordWrap: 'on',
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              tabSize: 2,
+              insertSpaces: true,
+              quickSuggestions: { other: true, strings: true, comments: false },
+              suggestOnTriggerCharacters: true,
+              wordBasedSuggestions: 'off',
+              acceptSuggestionOnCommitCharacter: true,
+              hover: { enabled: true },
+              glyphMargin: true,
+            }}
+            onMount={handleEditorDidMount}
+          />
         </div>
         {dirtyLineCount > 0 && (
           <div className="editor-footer">
             {dirtyLineCount} line{dirtyLineCount !== 1 ? 's' : ''} changed
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

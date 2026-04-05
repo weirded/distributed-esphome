@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -84,14 +86,23 @@ async def auth_middleware(request: web.Request, handler):
 # ---------------------------------------------------------------------------
 
 async def timeout_checker(app: web.Application) -> None:
-    """Background task: check for timed-out jobs every 30 seconds."""
+    """Background task: check for timed-out jobs every 30 seconds.
+    Also prunes terminal jobs older than 1 hour to keep the queue tidy."""
     queue: JobQueue = app["queue"]
+    prune_counter = 0
     while True:
         await asyncio.sleep(30)
         try:
             timed_out = await queue.check_timeouts()
             if timed_out:
                 logger.info("Timeout checker: processed %d timed-out jobs", len(timed_out))
+            # Prune old finished jobs every ~5 minutes (every 10th cycle)
+            prune_counter += 1
+            if prune_counter >= 10:
+                prune_counter = 0
+                pruned = await queue.prune_old_terminal(max_age_seconds=3600)
+                if pruned:
+                    logger.info("Pruned %d old terminal jobs", pruned)
         except Exception:
             logger.exception("Error in timeout checker")
 
@@ -503,8 +514,39 @@ def create_app() -> web.Application:
         app["pypi_version_refresher_task"] = asyncio.create_task(pypi_version_refresher(app))
         app["ha_entity_poller_task"] = asyncio.create_task(ha_entity_poller(app))
 
+        # Start local worker if client code is bundled
+        local_worker_script = Path("/app/client/client.py")
+        if local_worker_script.exists():
+            import subprocess as sp  # noqa: PLC0415
+            local_env = {
+                **os.environ,
+                "SERVER_URL": f"http://127.0.0.1:{cfg.port}",
+                "SERVER_TOKEN": cfg.token,
+                "MAX_PARALLEL_JOBS": "0",  # paused by default — increase via UI
+                "ESPHOME_VERSIONS_DIR": "/data/esphome-versions",
+                "HOSTNAME": "local-worker",
+            }
+            proc = sp.Popen(
+                [sys.executable, str(local_worker_script)],
+                env=local_env,
+                stdout=sp.DEVNULL,
+                stderr=sp.DEVNULL,
+            )
+            app["local_worker_proc"] = proc
+            logger.info("Started local worker (PID %d, 0 slots — increase via Workers tab)", proc.pid)
+
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down ESPHome Distributed Build Server")
+
+        # Stop local worker
+        proc = app.get("local_worker_proc")
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+            logger.info("Local worker stopped")
 
         for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task"):
             task = app.get(task_name)

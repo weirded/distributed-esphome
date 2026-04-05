@@ -1,15 +1,9 @@
+import { toast } from 'sonner';
 import type { Device, EsphomeVersions, Job, ServerInfo, Target, Worker } from '../types';
 
 // Version sentinel for auto-reload detection
 let _initialAddonVersion: string | null = null;
 let _reloadScheduled = false;
-
-type ToastFn = (msg: string, type?: 'info' | 'success' | 'error') => void;
-let _toastFn: ToastFn | null = null;
-
-export function setToastFn(fn: ToastFn) {
-  _toastFn = fn;
-}
 
 export function buildWsUrl(path: string): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -26,7 +20,7 @@ export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Re
   if (sv && _initialAddonVersion && sv !== _initialAddonVersion && !_reloadScheduled) {
     _reloadScheduled = true;
     console.log('Server version changed (header):', _initialAddonVersion, '→', sv);
-    _toastFn?.('New server version — reloading...', 'info');
+    toast.info('New server version — reloading...');
     setTimeout(() => location.reload(), 1000);
   }
   return r;
@@ -246,6 +240,33 @@ export async function getEsphomeSchema(): Promise<string[]> {
   if (!r.ok) return [];
   const data = await r.json() as { components?: string[] };
   return data.components || [];
+}
+
+export interface ArchivedConfig {
+  filename: string;
+  size: number;
+  archived_at: number;
+}
+
+export async function getArchivedConfigs(): Promise<ArchivedConfig[]> {
+  const r = await apiFetch('./ui/api/archive');
+  return await r.json() as ArchivedConfig[];
+}
+
+export async function restoreArchivedConfig(filename: string): Promise<void> {
+  const r = await apiFetch(`./ui/api/archive/${encodeURIComponent(filename)}/restore`, { method: 'POST' });
+  if (!r.ok) {
+    const data = await r.json() as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
+export async function deleteArchivedConfig(filename: string): Promise<void> {
+  const r = await apiFetch(`./ui/api/archive/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+  if (!r.ok) {
+    const data = await r.json() as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
 }
 
 export async function deleteTarget(filename: string, archive = true): Promise<void> {

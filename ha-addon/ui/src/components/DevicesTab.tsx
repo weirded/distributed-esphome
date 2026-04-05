@@ -1,9 +1,76 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  flexRender,
+  createColumnHelper,
+  type SortingState,
+  type VisibilityState,
+  type RowSelectionState,
+} from '@tanstack/react-table';
 import { getApiKey, restartDevice } from '../api/client';
 import type { Device, Target, Worker } from '../types';
-import { stripYaml } from '../utils';
-import { useSortable } from '../hooks/useSortable';
-import { SortableHeader } from './SortableHeader';
+import { stripYaml, timeAgo } from '../utils';
+import { StatusDot } from './StatusDot';
+import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from './ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from './ui/dialog';
+
+/* ---- Column configuration ---- */
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project';
+
+interface OptionalColumnDef {
+  id: OptionalColumnId;
+  label: string;
+  defaultVisible: boolean;
+}
+
+const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
+  { id: 'status', label: 'Status', defaultVisible: true },
+  { id: 'ha', label: 'HA', defaultVisible: true },
+  { id: 'ip', label: 'IP', defaultVisible: true },
+  { id: 'running', label: 'Version', defaultVisible: true },
+  { id: 'area', label: 'Area', defaultVisible: false },
+  { id: 'comment', label: 'Comment', defaultVisible: false },
+  { id: 'project', label: 'Project', defaultVisible: false },
+];
+
+const STORAGE_KEY = 'device-columns';
+
+function loadColumnVisibility(): VisibilityState {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const visible = new Set<string>(JSON.parse(stored) as string[]);
+      return Object.fromEntries(OPTIONAL_COLUMNS.map(c => [c.id, visible.has(c.id)]));
+    }
+  } catch { /* ignore */ }
+  return Object.fromEntries(OPTIONAL_COLUMNS.map(c => [c.id, c.defaultVisible]));
+}
+
+function saveColumnVisibility(state: VisibilityState) {
+  const visible = OPTIONAL_COLUMNS.filter(c => state[c.id] !== false).map(c => c.id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(visible));
+}
 
 interface Props {
   targets: Target[];
@@ -16,13 +83,6 @@ interface Props {
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string, archive: boolean) => void;
   onRename: (oldTarget: string, newName: string) => void;
-}
-
-function timeAgo(isoString: string): string {
-  const ago = Math.round((Date.now() - new Date(isoString).getTime()) / 1000);
-  if (ago < 60) return ago + 's ago';
-  if (ago < 3600) return Math.floor(ago / 60) + 'm ago';
-  return Math.floor(ago / 3600) + 'h ago';
 }
 
 function matchesFilter(filter: string, ...fields: (string | null | undefined)[]): boolean {
@@ -42,13 +102,12 @@ export function RenameModal({ currentName, onConfirm, onClose }: {
   useEffect(() => { inputRef.current?.select(); }, []);
 
   return (
-    <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 480, height: 'auto' }}>
-        <div className="modal-header">
-          <div className="modal-header-left"><h3>Rename Device</h3></div>
-          <button className="modal-close" onClick={onClose}>&#x2715;</button>
-        </div>
-        <div className="modal-body" style={{ padding: 18 }}>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent >
+        <DialogHeader>
+          <DialogTitle>Rename Device</DialogTitle>
+        </DialogHeader>
+        <div style={{ padding: '16px' }}>
           <label style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6, display: 'block' }}>
             New device name
           </label>
@@ -63,19 +122,19 @@ export function RenameModal({ currentName, onConfirm, onClose }: {
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
             This will update the config file, rename it, and compile + upgrade the device with the new name via OTA.
           </p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-            <button className="btn-secondary btn-sm" onClick={onClose}>Cancel</button>
-            <button
-              className="btn-primary btn-sm"
-              disabled={!name.trim() || name.trim() === stripYaml(currentName)}
-              onClick={() => onConfirm(name.trim())}
-            >
-              Rename &amp; Upgrade
-            </button>
-          </div>
         </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button
+            size="sm"
+            disabled={!name.trim() || name.trim() === stripYaml(currentName)}
+            onClick={() => onConfirm(name.trim())}
+          >
+            Rename &amp; Upgrade
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -84,209 +143,429 @@ function DeleteModal({ target, onConfirm, onClose }: {
   onConfirm: (archive: boolean) => void;
   onClose: () => void;
 }) {
+  const [confirmPermanent, setConfirmPermanent] = useState(false);
+
   return (
-    <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 480, height: 'auto' }}>
-        <div className="modal-header">
-          <div className="modal-header-left"><h3>Delete Device</h3></div>
-          <button className="modal-close" onClick={onClose}>&#x2715;</button>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent >
+        <DialogHeader>
+          <DialogTitle>Delete Device</DialogTitle>
+        </DialogHeader>
+        <div style={{ padding: '16px' }}>
+          {!confirmPermanent ? (
+            <>
+              <p>Are you sure you want to delete <strong>{stripYaml(target)}</strong>?</p>
+            </>
+          ) : (
+            <p style={{ color: 'var(--danger)' }}>
+              This will <strong>permanently delete</strong> {stripYaml(target)}. This cannot be undone.
+            </p>
+          )}
         </div>
-        <div className="modal-body" style={{ padding: 18 }}>
-          <p>Are you sure you want to delete <strong>{stripYaml(target)}</strong>?</p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-            <button className="btn-secondary btn-sm" onClick={onClose}>Cancel</button>
-            <button className="btn-warn btn-sm" onClick={() => onConfirm(true)}>
-              Archive
-            </button>
-            <button className="btn-danger btn-sm" onClick={() => onConfirm(false)}>
-              Delete Permanently
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          {!confirmPermanent ? (
+            <>
+              <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+              <Button variant="warn" size="sm" onClick={() => onConfirm(true)}>Archive</Button>
+              <Button variant="destructive" size="sm" onClick={() => setConfirmPermanent(true)}>Delete Permanently</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setConfirmPermanent(false)}>Back</Button>
+              <Button variant="destructive" size="sm" onClick={() => onConfirm(false)}>Yes, Delete Forever</Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
   const [filter, setFilter] = useState('');
-  const { sort, handleSort, sortedItems } = useSortable();
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  // Track checked state in a ref — we read DOM directly to avoid re-render loops
-  const tbodyRef = useRef<HTMLTableSectionElement>(null);
-  const selectAllRef = useRef<HTMLInputElement>(null);
-
-  const getChecked = useCallback((): string[] => {
-    if (!tbodyRef.current) return [];
-    return Array.from(tbodyRef.current.querySelectorAll<HTMLInputElement>('.target-cb:checked'))
-      .map(cb => cb.value);
-  }, []);
-
-  function handleSelectAll(e: React.ChangeEvent<HTMLInputElement>) {
-    tbodyRef.current?.querySelectorAll<HTMLInputElement>('.target-cb').forEach(cb => {
-      cb.checked = e.target.checked;
-    });
-  }
-
-  function handleCompileSelected() {
-    const selected = getChecked();
-    if (selected.length === 0) return;
-    onCompile(selected);
-  }
+  // Persist column visibility to localStorage whenever it changes
+  useEffect(() => {
+    saveColumnVisibility(columnVisibility);
+  }, [columnVisibility]);
 
   // Build a set of device names that are already shown as managed targets
   // to prevent duplicates when compile_target mapping has a race condition
-  const managedDeviceNames = new Set<string>();
-  for (const t of targets) {
-    // The device_name from the target's resolved config (title-cased)
-    if (t.device_name) managedDeviceNames.add(t.device_name.toLowerCase().replace(/ /g, '-').replace(/ /g, '_'));
-    // The filename stem
-    managedDeviceNames.add(stripYaml(t.target).toLowerCase());
-  }
-  const managedIPs = new Set(targets.map(t => t.ip_address).filter(Boolean) as string[]);
-  const unmanaged = devices.filter(d =>
-    !d.compile_target &&
-    !managedDeviceNames.has(d.name.toLowerCase()) &&
-    !(d.ip_address && managedIPs.has(d.ip_address))
+  const managedDeviceNames = useMemo(() => {
+    const s = new Set<string>();
+    for (const t of targets) {
+      if (t.device_name) s.add(t.device_name.toLowerCase().replace(/ /g, '-').replace(/ /g, '_'));
+      s.add(stripYaml(t.target).toLowerCase());
+    }
+    return s;
+  }, [targets]);
+
+  const managedIPs = useMemo(() =>
+    new Set(targets.map(t => t.ip_address).filter(Boolean) as string[]),
+    [targets]
   );
-  const defaultSortedTargets = [...targets].sort((a, b) => a.target.localeCompare(b.target));
-  const defaultSortedUnmanaged = [...unmanaged].sort((a, b) => a.name.localeCompare(b.name));
 
-  const baseFilteredTargets = filter
-    ? defaultSortedTargets.filter(t =>
-        matchesFilter(
-          filter,
-          t.friendly_name,
-          t.device_name,
-          stripYaml(t.target),
-          t.target,
-          t.online == null ? 'unknown' : t.online ? 'online' : 'offline',
-          t.ip_address,
-          t.running_version,
-        )
+  const unmanaged = useMemo(() =>
+    [...devices]
+      .filter(d =>
+        !d.compile_target &&
+        !managedDeviceNames.has(d.name.toLowerCase()) &&
+        !(d.ip_address && managedIPs.has(d.ip_address))
       )
-    : defaultSortedTargets;
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [devices, managedDeviceNames, managedIPs]
+  );
 
-  const baseFilteredUnmanaged = filter
-    ? defaultSortedUnmanaged.filter(d =>
-        matchesFilter(
-          filter,
-          d.name,
-          stripYaml(d.name),
-          d.online ? 'online' : 'offline',
-          d.ip_address,
-          d.running_version,
-        )
+  // Filter targets before passing to TanStack (filter state owned here, not in TanStack)
+  const filteredTargets = useMemo(() => {
+    const sorted = [...targets].sort((a, b) => a.target.localeCompare(b.target));
+    if (!filter) return sorted;
+    return sorted.filter(t =>
+      matchesFilter(
+        filter,
+        t.friendly_name,
+        t.device_name,
+        stripYaml(t.target),
+        t.target,
+        t.online == null ? 'unknown' : t.online ? 'online' : 'offline',
+        t.ip_address,
+        t.running_version,
+        t.area,
+        t.comment,
+        t.project_name,
       )
-    : defaultSortedUnmanaged;
+    );
+  }, [targets, filter]);
 
-  // Apply column sort on top of filter
-  const getTargetValue = (t: Target): string => {
-    if (sort.col === 'device') return t.friendly_name || t.device_name || stripYaml(t.target);
-    if (sort.col === 'status') return t.online == null ? 'unknown' : t.online ? 'online' : 'offline';
-    if (sort.col === 'ha') return t.ha_configured ? 'yes' : '';
-    if (sort.col === 'ip') return t.ip_address || '';
-    if (sort.col === 'running') return t.running_version || '';
-    return '';
-  };
-  const getUnmanagedValue = (d: Device): string => {
-    if (sort.col === 'device') return d.name;
-    if (sort.col === 'status') return d.online ? 'online' : 'offline';
-    if (sort.col === 'ha') return '';
-    if (sort.col === 'ip') return d.ip_address || '';
-    if (sort.col === 'running') return d.running_version || '';
-    return '';
-  };
+  const filteredUnmanaged = useMemo(() => {
+    if (!filter) return unmanaged;
+    return unmanaged.filter(d =>
+      matchesFilter(
+        filter,
+        d.name,
+        stripYaml(d.name),
+        d.online ? 'online' : 'offline',
+        d.ip_address,
+        d.running_version,
+      )
+    );
+  }, [unmanaged, filter]);
 
-  const filteredTargets = sort.dir
-    ? sortedItems(baseFilteredTargets, getTargetValue)
-    : baseFilteredTargets;
-  const filteredUnmanaged = sort.dir
-    ? sortedItems(baseFilteredUnmanaged, getUnmanagedValue)
-    : baseFilteredUnmanaged;
+  const columnHelper = createColumnHelper<Target>();
+
+  const columns = useMemo(() => [
+    columnHelper.display({
+      id: 'select',
+      enableHiding: false,
+      header: ({ table }) => (
+        <input
+          type="checkbox"
+          checked={table.getIsAllRowsSelected()}
+          ref={el => {
+            if (el) el.indeterminate = table.getIsSomeRowsSelected();
+          }}
+          onChange={table.getToggleAllRowsSelectedHandler()}
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          className="target-cb"
+          value={row.original.target}
+          checked={row.getIsSelected()}
+          onChange={row.getToggleSelectedHandler()}
+        />
+      ),
+    }),
+    columnHelper.accessor(
+      row => row.friendly_name || row.device_name || stripYaml(row.target),
+      {
+        id: 'device',
+        enableHiding: false,
+        header: ({ column }) => (
+          <SortHeader label="Device" column={column} />
+        ),
+        cell: ({ row: { original: t } }) => (
+          <>
+            <span className="device-name">{t.friendly_name || t.device_name || stripYaml(t.target)}</span>
+            <div className="device-filename">{stripYaml(t.target)}</div>
+          </>
+        ),
+        sortingFn: 'alphanumeric',
+      }
+    ),
+    columnHelper.accessor(
+      row => row.online == null ? 'unknown' : row.online ? 'online' : 'offline',
+      {
+        id: 'status',
+        header: ({ column }) => <SortHeader label="Status" column={column} />,
+        cell: ({ row: { original: t } }) => {
+          const lastSeenEl = t.last_seen
+            ? <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>
+            : null;
+          if (t.online == null) return <StatusDot status="checking" />;
+          if (t.online) return <><StatusDot status="online" />{lastSeenEl}</>;
+          return <><StatusDot status="offline" />{lastSeenEl}</>;
+        },
+        sortingFn: 'alphanumeric',
+      }
+    ),
+    columnHelper.accessor(
+      row => row.ha_configured ? 'yes' : '',
+      {
+        id: 'ha',
+        header: ({ column }) => <SortHeader label="HA" column={column} />,
+        cell: ({ row: { original: t } }) => (
+          <span style={{ fontSize: 12 }}>
+            {t.ha_configured
+              ? <span style={{ color: 'var(--success)' }}>Yes</span>
+              : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+          </span>
+        ),
+        sortingFn: 'alphanumeric',
+      }
+    ),
+    columnHelper.accessor(row => row.ip_address || '', {
+      id: 'ip',
+      header: ({ column }) => <SortHeader label="IP" column={column} />,
+      cell: ({ row: { original: t } }) => {
+        const showIpLink = t.has_web_server && t.online && t.ip_address;
+        return (
+          <span style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
+            {showIpLink
+              ? (
+                <a
+                  href={`http://${t.ip_address}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="ip-link"
+                >
+                  {t.ip_address}<span style={{ fontSize: 10 }}>&#8599;</span>
+                </a>
+              )
+              : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
+          </span>
+        );
+      },
+      sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(row => row.running_version || '', {
+      id: 'running',
+      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span style={{ fontSize: 12 }}>
+          {t.running_version || '—'}
+          {t.config_modified && <div className="config-modified">config changed</div>}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(row => row.area || '', {
+      id: 'area',
+      header: ({ column }) => <SortHeader label="Area" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span style={{ fontSize: 12 }}>
+          {t.area || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(row => row.comment || '', {
+      id: 'comment',
+      header: ({ column }) => <SortHeader label="Comment" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+          {t.comment || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(
+      row => row.project_name ? (row.project_version ? `${row.project_name} ${row.project_version}` : row.project_name) : '',
+      {
+        id: 'project',
+        header: ({ column }) => <SortHeader label="Project" column={column} />,
+        cell: ({ row: { original: t } }) => {
+          const projectStr = t.project_name
+            ? (t.project_version ? `${t.project_name} ${t.project_version}` : t.project_name)
+            : '—';
+          return (
+            <span style={{ fontSize: 12 }}>
+              {projectStr === '—' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : projectStr}
+            </span>
+          );
+        },
+        sortingFn: 'alphanumeric',
+      }
+    ),
+    columnHelper.display({
+      id: 'actions',
+      enableHiding: false,
+      cell: ({ row: { original: t } }) => {
+        const upgradeVariant = t.needs_update ? 'success' : 'secondary';
+        return (
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <Button variant={upgradeVariant as 'success' | 'secondary'} size="sm" onClick={() => onCompile([t.target])}>Upgrade</Button>
+            <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
+            <DeviceMenu
+              target={t}
+              workers={workers}
+              onToast={onToast}
+              onDelete={setDeleteTarget}
+              onRename={setRenameTarget}
+              onLogs={onLogs}
+              onCompileOnWorker={onCompileOnWorker}
+            />
+          </div>
+        );
+      },
+    }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [workers, onCompile, onCompileOnWorker, onEdit, onLogs, onToast]);
+
+  const table = useReactTable({
+    data: filteredTargets,
+    columns,
+    state: {
+      sorting,
+      columnVisibility,
+      rowSelection,
+    },
+    onSortingChange: setSorting,
+    onColumnVisibilityChange: (updater) => {
+      setColumnVisibility(prev => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        saveColumnVisibility(next);
+        return next;
+      });
+    },
+    onRowSelectionChange: setRowSelection,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getRowId: row => row.target,
+  });
+
+  const selectedTargets = table.getSelectedRowModel().rows.map(r => r.original.target);
+
+  function handleCompileSelected() {
+    if (selectedTargets.length === 0) return;
+    onCompile(selectedTargets);
+  }
+
+  // Column visibility for unmanaged rows — derive from TanStack state
+  const isVisible = useCallback((col: OptionalColumnId) => columnVisibility[col] !== false, [columnVisibility]);
+
+  // Count visible optional columns to compute colspan for empty row
+  const visibleOptionalCount = OPTIONAL_COLUMNS.filter(c => isVisible(c.id)).length;
+  // Total cols: select + device + optional + actions = 3 + visibleOptionalCount
+  const totalColSpan = 3 + visibleOptionalCount;
 
   const hasResults = filteredTargets.length > 0 || filteredUnmanaged.length > 0;
 
   return (
-    <div className="tab-panel active" id="tab-devices">
-      <div className="panel">
-        <div className="panel-header">
-          <h2>Devices</h2>
-          <div className="actions">
-            <button
-              className="btn-primary btn-sm"
-              onClick={() => {
-                const onlineTargets = targets.filter(t => t.online !== false).map(t => t.target);
-                if (onlineTargets.length > 0) onCompile(onlineTargets);
-              }}
-              title="Compile and OTA all online devices (skips known-offline)"
-            >
-              Upgrade All
-            </button>
-            <button className="btn-secondary btn-sm" onClick={handleCompileSelected}>Upgrade Selected</button>
-            <button className="btn-success btn-sm" onClick={() => onCompile('outdated')} disabled={!targets.some(t => t.needs_update)}>Upgrade Outdated</button>
-          </div>
-        </div>
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>
-          <div style={{ position: 'relative', maxWidth: 320 }}>
+    <div className="block" id="tab-devices">
+      <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] bg-[var(--surface2)] px-4 py-3">
+          <h2 className="text-[13px] font-semibold uppercase tracking-wide text-[var(--text-muted)] mr-1">Devices</h2>
+          <div className="relative max-w-[280px]">
             <input
               type="text"
               value={filter}
               onChange={e => setFilter(e.target.value)}
               placeholder="Search devices..."
-              style={{
-                width: '100%',
-                background: 'var(--surface2)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius)',
-                color: 'var(--text)',
-                fontSize: 13,
-                padding: '5px 28px 5px 10px',
-                outline: 'none',
-              }}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-2.5 py-1 pr-7 text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]"
             />
             {filter && (
               <button
                 onClick={() => setFilter('')}
-                style={{
-                  position: 'absolute',
-                  right: 6,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  cursor: 'pointer',
-                  padding: '0 2px',
-                  fontSize: 14,
-                  lineHeight: 1,
-                }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 border-none bg-transparent text-sm leading-none text-[var(--text-muted)] cursor-pointer px-0.5"
                 title="Clear filter"
               >
                 &times;
               </button>
             )}
           </div>
+          <div className="actions">
+            {/* Upgrade dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--accent-hover)] cursor-pointer">
+                Upgrade &#9662;
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[180px]">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={() => {
+                    const all = targets.map(t => t.target);
+                    if (all.length > 0) onCompile(all);
+                  }}>
+                    Upgrade All
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => {
+                    const onlineTargets = targets.filter(t => t.online !== false).map(t => t.target);
+                    if (onlineTargets.length > 0) onCompile(onlineTargets);
+                  }}>
+                    Upgrade All Online
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => onCompile('outdated')}
+                    disabled={!targets.some(t => t.needs_update)}
+                  >
+                    Upgrade Outdated
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleCompileSelected}>
+                    Upgrade Selected
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Column picker (gear icon) */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-base text-[var(--text)] hover:bg-[var(--border)] cursor-pointer" title="Toggle columns">
+                &#9881;
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Columns</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {OPTIONAL_COLUMNS.map(col => (
+                    <DropdownMenuCheckboxItem
+                      key={col.id}
+                      checked={isVisible(col.id)}
+                      onCheckedChange={() => table.getColumn(col.id)?.toggleVisibility()}
+                    >
+                      {col.label}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
         <div className="table-wrap">
           <table>
             <thead>
-              <tr>
-                <th><input type="checkbox" ref={selectAllRef} onChange={handleSelectAll} /></th>
-                <SortableHeader label="Device" col="device" sort={sort} onSort={handleSort} />
-                <SortableHeader label="Status" col="status" sort={sort} onSort={handleSort} />
-                <SortableHeader label="HA" col="ha" sort={sort} onSort={handleSort} />
-                <SortableHeader label="IP" col="ip" sort={sort} onSort={handleSort} />
-                <SortableHeader label="Running" col="running" sort={sort} onSort={handleSort} />
-                <th></th>
-              </tr>
+              {table.getHeaderGroups().map(headerGroup => (
+                <tr key={headerGroup.id}>
+                  {headerGroup.headers.map(header => (
+                    <th key={header.id}>
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    </th>
+                  ))}
+                </tr>
+              ))}
             </thead>
-            <tbody ref={tbodyRef}>
+            <tbody>
               {!hasResults ? (
                 <tr className="empty-row">
-                  <td colSpan={7}>
+                  <td colSpan={totalColSpan}>
                     {filter
                       ? 'No devices match your search'
                       : 'No devices found — ensure ESPHome configs are in /config/esphome/'}
@@ -294,22 +573,17 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                 </tr>
               ) : (
                 <>
-                  {filteredTargets.map(t => (
-                    <TargetRow
-                      key={t.target}
-                      target={t}
-                      workers={workers}
-                      onCompile={onCompile}
-                      onCompileOnWorker={onCompileOnWorker}
-                      onEdit={onEdit}
-                      onLogs={onLogs}
-                      onToast={onToast}
-                      onDelete={setDeleteTarget}
-                      onRename={setRenameTarget}
-                    />
+                  {table.getRowModel().rows.map(row => (
+                    <tr key={row.id}>
+                      {row.getVisibleCells().map(cell => (
+                        <td key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
                   ))}
                   {filteredUnmanaged.map(d => (
-                    <UnmanagedRow key={d.name} device={d} />
+                    <UnmanagedRow key={d.name} device={d} isVisible={isVisible} />
                   ))}
                 </>
               )}
@@ -345,6 +619,22 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
   );
 }
 
+// Inline sort header used in column defs — renders ▲/▼ indicators
+function SortHeader({ label, column }: { label: string; column: { getIsSorted: () => false | 'asc' | 'desc'; toggleSorting: (desc?: boolean) => void; getCanSort: () => boolean } }) {
+  const sorted = column.getIsSorted();
+  const indicator = sorted === 'asc' ? ' \u25b2' : sorted === 'desc' ? ' \u25bc' : '';
+  const title = sorted === 'asc' ? 'Click to sort descending' : sorted === 'desc' ? 'Click to reset sort' : 'Click to sort ascending';
+  return (
+    <span
+      onClick={() => column.toggleSorting(sorted === 'asc')}
+      style={{ cursor: 'pointer', userSelect: 'none' }}
+      title={title}
+    >
+      {label}{indicator}
+    </span>
+  );
+}
+
 function DeviceMenu({
   target: t,
   workers,
@@ -362,23 +652,7 @@ function DeviceMenu({
   onLogs: (target: string) => void;
   onCompileOnWorker: (target: string, clientId: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  // Close on click outside
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
   async function handleCopyApiKey() {
-    setOpen(false);
     try {
       const key = await getApiKey(t.target);
       await navigator.clipboard.writeText(key);
@@ -389,7 +663,6 @@ function DeviceMenu({
   }
 
   async function handleRestart() {
-    setOpen(false);
     try {
       await restartDevice(t.target);
       onToast(`Restarting ${stripYaml(t.target)}...`, 'success');
@@ -398,178 +671,78 @@ function DeviceMenu({
     }
   }
 
-  function handleLogs() {
-    setOpen(false);
-    onLogs(t.target);
-  }
-
-  function handleRename() {
-    setOpen(false);
-    onRename(t.target);
-  }
-
-  function handleDelete() {
-    setOpen(false);
-    onDelete(t.target);
-  }
+  const onlineWorkers = [...workers]
+    .filter(w => w.online && !w.disabled && (w.max_parallel_jobs ?? 0) > 0)
+    .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
 
   return (
-    <div className="action-menu-wrap" ref={wrapRef}>
-      <span
+    <DropdownMenu>
+      <DropdownMenuTrigger
         className="action-menu-trigger"
-        onClick={() => setOpen(o => !o)}
         title="More actions"
       >
         &#8942;
-      </span>
-      <div className={`action-menu-dropdown${open ? ' open' : ''}`}>
-        <button
-          className="action-menu-item"
-          onClick={handleLogs}
-          title="Stream live device logs"
-        >
-          Live Logs
-        </button>
-        <button
-          className="action-menu-item"
-          onClick={handleRestart}
-          title="Restart this device"
-        >
-          Restart Device
-        </button>
-        {workers.filter(w => w.online && !w.disabled).length > 0 && (
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {/* Device actions */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Device</DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => onLogs(t.target)}>
+            Live Logs
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleRestart}>
+            Restart
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleCopyApiKey} disabled={!t.has_api_key}>
+            Copy API Key
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+
+        <DropdownMenuSeparator />
+
+        {/* Config actions */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Config</DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => onRename(t.target)}>
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onClick={() => onDelete(t.target)}>
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+
+        {/* Upgrade on worker submenu */}
+        {onlineWorkers.length > 0 && (
           <>
-            <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
-            <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Upgrade on...
-            </div>
-            {workers.filter(w => w.online && !w.disabled).map(w => (
-              <button
-                key={w.client_id}
-                className="action-menu-item"
-                onClick={() => { setOpen(false); onCompileOnWorker(t.target, w.client_id); }}
-                title={`Compile and OTA via ${w.hostname}`}
-              >
-                {w.hostname}
-              </button>
-            ))}
-            <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>Upgrade on...</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {onlineWorkers.map(w => (
+                    <DropdownMenuItem
+                      key={w.client_id}
+                      onClick={() => onCompileOnWorker(t.target, w.client_id)}
+                    >
+                      {w.hostname}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuGroup>
           </>
         )}
-        <button
-          className="action-menu-item"
-          onClick={handleCopyApiKey}
-          disabled={!t.has_api_key}
-          title={t.has_api_key ? 'Copy API encryption key' : 'No API key configured'}
-        >
-          Copy API Key
-        </button>
-        <button
-          className="action-menu-item"
-          onClick={handleRename}
-          title="Rename this device config"
-        >
-          Rename
-        </button>
-        <button
-          className="action-menu-item"
-          onClick={handleDelete}
-          title="Delete this device config"
-          style={{ color: 'var(--danger, #ef4444)' }}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function TargetRow({
-  target: t,
-  workers,
-  onCompile,
-  onCompileOnWorker,
-  onEdit,
-  onLogs,
-  onToast,
-  onDelete,
-  onRename,
-}: {
-  target: Target;
-  workers: Worker[];
-  onCompile: (targets: string[]) => void;
-  onCompileOnWorker: (target: string, clientId: string) => void;
-  onEdit: (target: string) => void;
-  onLogs: (target: string) => void;
-  onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
-  onDelete: (target: string) => void;
-  onRename: (target: string) => void;
-}) {
-  let lastSeenEl: React.ReactNode = null;
-  if (t.last_seen) {
-    lastSeenEl = <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>;
-  }
-
-  let statusEl: React.ReactNode;
-  if (t.online == null) {
-    statusEl = <><span className="dot dot-checking"></span><span style={{ color: 'var(--text-muted)' }}>Checking...</span></>;
-  } else if (t.online) {
-    statusEl = <><span className="dot dot-online"></span>Online{lastSeenEl}</>;
-  } else {
-    statusEl = <><span className="dot dot-offline"></span>Offline{lastSeenEl}</>;
-  }
-
-  const upgradeBtnCls = t.needs_update ? 'btn-success' : 'btn-secondary';
-  const displayName = t.friendly_name || t.device_name || stripYaml(t.target);
-  const showIpLink = t.has_web_server && t.online && t.ip_address;
-
-  const haCell: React.ReactNode = t.ha_configured
-    ? <span style={{ color: 'var(--success)' }}>Yes</span>
-    : <span style={{ color: 'var(--text-muted)' }}>—</span>;
-
-  return (
-    <tr>
-      <td><input type="checkbox" className="target-cb" value={t.target} /></td>
-      <td>
-        <span className="device-name">{displayName}</span>
-        <div className="device-filename">{stripYaml(t.target)}</div>
-        {t.comment && <div className="device-comment">{t.comment}</div>}
-      </td>
-      <td>{statusEl}</td>
-      <td style={{ fontSize: 12 }}>{haCell}</td>
-      <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
-        {showIpLink
-          ? (
-            <a
-              href={`http://${t.ip_address}`}
-              target="_blank"
-              rel="noopener"
-              className="ip-link"
-            >
-              {t.ip_address}<span style={{ fontSize: 10 }}>&#8599;</span>
-            </a>
-          )
-          : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
-      </td>
-      <td style={{ fontSize: 12 }}>
-        {t.running_version || '—'}
-        {t.config_modified && <div className="config-modified">config changed</div>}
-      </td>
-      <td>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <button className={`${upgradeBtnCls} btn-sm`} onClick={() => onCompile([t.target])}>Upgrade</button>
-          <button className="btn-secondary btn-sm" onClick={() => onEdit(t.target)}>Edit</button>
-          <DeviceMenu target={t} workers={workers} onToast={onToast} onDelete={onDelete} onRename={onRename} onLogs={onLogs} onCompileOnWorker={onCompileOnWorker} />
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function UnmanagedRow({ device: d }: { device: Device }) {
+function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (col: OptionalColumnId) => boolean }) {
   const statusEl = d.online
-    ? <><span className="dot dot-online"></span>Online</>
-    : <><span className="dot dot-offline"></span>Offline</>;
+    ? <StatusDot status="online" />
+    : <StatusDot status="offline" />;
+
+  const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>;
 
   // Unmanaged devices (no config) don't have web_server info — never link their IP
   return (
@@ -579,12 +752,17 @@ function UnmanagedRow({ device: d }: { device: Device }) {
         <span className="device-name" style={{ color: 'var(--text-muted)' }}>{stripYaml(d.name)}</span>
         <div className="device-filename" style={{ color: '#6b7280' }}>No config</div>
       </td>
-      <td>{statusEl}</td>
-      <td style={{ fontSize: 12 }}><span style={{ color: 'var(--text-muted)' }}>—</span></td>
-      <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
-        <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
-      </td>
-      <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>
+      {isVisible('status') && <td>{statusEl}</td>}
+      {isVisible('ha') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ip') && (
+        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
+          <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
+        </td>
+      )}
+      {isVisible('running') && <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>}
+      {isVisible('area') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('comment') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('project') && <td style={{ fontSize: 12 }}>{dash}</td>}
       <td></td>
     </tr>
   );

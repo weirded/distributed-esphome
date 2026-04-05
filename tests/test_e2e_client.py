@@ -87,11 +87,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_json()
         srv: FakeServer = self.server._fake  # type: ignore[attr-defined]
 
-        if self.path == "/api/v1/clients/register":
+        if self.path in ("/api/v1/clients/register", "/api/v1/workers/register"):
             srv.register_calls.append(body)
             self._respond(200, {"client_id": srv.client_id})
 
-        elif self.path == "/api/v1/clients/heartbeat":
+        elif self.path in ("/api/v1/clients/heartbeat", "/api/v1/workers/heartbeat"):
             srv.heartbeat_calls.append(body)
             self._respond(200, {"ok": True})
 
@@ -194,11 +194,11 @@ def esphome_ok(tmp_path) -> str:
 
 @pytest.fixture()
 def esphome_compile_fail(tmp_path) -> str:
-    """Fake esphome: compile exits 1; upload would succeed."""
+    """Fake esphome: run/compile exits 1; upload would succeed."""
     p = tmp_path / "esphome"
     p.write_text(
         '#!/bin/sh\n'
-        'if [ "$1" = "compile" ]; then echo "ERROR: compile failed"; exit 1; fi\n'
+        'if [ "$1" = "run" ] || [ "$1" = "compile" ]; then echo "ERROR: compile failed"; exit 1; fi\n'
         'echo "fake esphome $*"; exit 0\n'
     )
     p.chmod(0o755)
@@ -207,10 +207,11 @@ def esphome_compile_fail(tmp_path) -> str:
 
 @pytest.fixture()
 def esphome_ota_fail(tmp_path) -> str:
-    """Fake esphome: compile succeeds; upload exits 1."""
+    """Fake esphome: run fails after compile success (OTA failure); upload also fails."""
     p = tmp_path / "esphome"
     p.write_text(
         '#!/bin/sh\n'
+        'if [ "$1" = "run" ]; then echo "INFO Successfully compiled program."; echo "ERROR: OTA failed"; exit 1; fi\n'
         'if [ "$1" = "upload" ]; then echo "ERROR: OTA failed"; exit 1; fi\n'
         'echo "fake esphome $*"; exit 0\n'
     )
@@ -271,16 +272,18 @@ class TestSuccessfulJob:
         compile_result = fake_server.result_calls[0]
         assert compile_result["status"] == "success"
 
-    def test_ota_result_posted_after_compile(self, fake_server, esphome_ok):
+    def test_ota_result_posted_with_compile(self, fake_server, esphome_ok):
+        """esphome run succeeds → single result with status=success and ota_result=success."""
         target = "living_room.yaml"
         job = _make_job("job-001", target, _simple_bundle(target))
 
         with _patched(fake_server):
             client_mod.run_job(fake_server.client_id, job, FakeVersionManager(esphome_ok))
 
-        assert len(fake_server.result_calls) == 2
-        ota_result = fake_server.result_calls[1]
-        assert ota_result["ota_result"] == "success"
+        assert len(fake_server.result_calls) == 1
+        result = fake_server.result_calls[0]
+        assert result["status"] == "success"
+        assert result["ota_result"] == "success"
 
 
 class TestCompileFailure:
@@ -311,28 +314,21 @@ class TestCompileFailure:
             client_mod.run_job(fake_server.client_id, job, FakeVersionManager(esphome_compile_fail))
 
         # Log is streamed via /log endpoint, not in the result body
-        assert "compile failed" in fake_server.streamed_log
+        assert "compile failed" in fake_server.streamed_log.lower()
 
 
 class TestOtaFailure:
-    def test_compile_success_posted_first(self, fake_server, esphome_ota_fail):
-        target = "sensor.yaml"
-        job = _make_job("job-003", target, _simple_bundle(target))
-
-        with _patched(fake_server):
-            client_mod.run_job(fake_server.client_id, job, FakeVersionManager(esphome_ota_fail))
-
-        assert fake_server.result_calls[0]["status"] == "success"
-
     def test_ota_failure_reported(self, fake_server, esphome_ota_fail):
+        """esphome run fails after compile success → retries upload → reports ota_result=failed."""
         target = "sensor.yaml"
         job = _make_job("job-003", target, _simple_bundle(target))
 
         with _patched(fake_server):
             client_mod.run_job(fake_server.client_id, job, FakeVersionManager(esphome_ota_fail))
 
-        assert len(fake_server.result_calls) == 2
-        assert fake_server.result_calls[1]["ota_result"] == "failed"
+        result = fake_server.result_calls[0]
+        assert result["status"] == "success"
+        assert result["ota_result"] == "failed"
 
 
 class TestBundleEdgeCases:
@@ -377,8 +373,9 @@ class TestPollCycle:
 
             client_mod.run_job(fake_server.client_id, job, FakeVersionManager(esphome_ok))
 
+        assert len(fake_server.result_calls) == 1
         assert fake_server.result_calls[0]["status"] == "success"
-        assert fake_server.result_calls[1]["ota_result"] == "success"
+        assert fake_server.result_calls[0]["ota_result"] == "success"
 
     def test_no_job_returns_204(self, fake_server):
         """Server returns 204 when the queue is empty."""
@@ -465,11 +462,12 @@ class TestRealEspHomeCompile:
         with _patched(fake_server), patch.object(client_mod, "OTA_TIMEOUT", 10):
             client_mod.run_job(fake_server.client_id, job, real_version_manager)
 
-        assert len(fake_server.result_calls) == 2, (
-            "Expected compile result + OTA result; got: "
-            + str([c.get("status") or c.get("ota_result") for c in fake_server.result_calls])
+        assert len(fake_server.result_calls) >= 1, (
+            "Expected at least one result call; got: "
+            + str([c for c in fake_server.result_calls])
         )
-        assert "ota_result" in fake_server.result_calls[1]
+        # With esphome run, result includes ota_result in the same call
+        assert "ota_result" in fake_server.result_calls[0]
 
     def test_compile_log_is_non_empty(self, fake_server, real_version_manager):
         """The compile log captured from esphome stdout is returned to the server."""

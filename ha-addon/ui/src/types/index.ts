@@ -18,6 +18,9 @@ export interface Target {
   device_name?: string;
   friendly_name?: string;
   comment?: string;
+  area?: string;
+  project_name?: string;
+  project_version?: string;
   ip_address?: string;
   running_version?: string;
   online?: boolean | null;
@@ -51,6 +54,9 @@ export interface SystemInfo {
   uptime?: string;
   perf_score?: number;
   cpu_usage?: number;
+  disk_total?: string;
+  disk_free?: string;
+  disk_used_pct?: number;
 }
 
 export interface Worker {
