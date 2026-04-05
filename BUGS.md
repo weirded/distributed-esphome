@@ -134,14 +134,7 @@
 
 156. FIXED (1.2.0-dev.42) - Local worker slot count lost on restart. Persisted to /data/local_worker_slots. Server reads on startup, UI writes on change.
 
-157. FIXED (1.2.0-dev.51) - Local worker PlatformIO failures. Root cause: Alpine base image lacks glibc needed by PlatformIO toolchains. Fix: switched add-on base image from Alpine to Debian Bookworm (ghcr.io/home-assistant/*-base-debian:bookworm). Gives native glibc, gcc, Python venv support. Image is larger but local compilation works.
-
-158. Issue on local-worker: 
-
-INFO Version mismatch for tool-esptoolpy: 1.30000.201119 != 5.1.2
-INFO Reinstalling tool-esptoolpy due to version mismatch
-Error: Failed to install Python dependencies (exit code: 1)
-Error: Failed to install Python dependencies into penv
+157-158. FIXED (1.2.0-dev.60) - Local worker compilation failures. Root cause: Alpine base image's musl libc can't run PlatformIO's glibc cross-compiler toolchains (segfault with gcompat). Fix: hardcoded `FROM python:3.11-slim` (Debian) in Dockerfile — same proven base as the client image. HA Supervisor overrides BUILD_FROM arg, so hardcoding was necessary. Includes gcc, libffi-dev, libssl-dev, git.
 
 
 
