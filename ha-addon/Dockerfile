@@ -1,8 +1,7 @@
-ARG BUILD_FROM=python:3.11-slim
+FROM python:3.11-slim
+
 ARG BUILD_ARCH
 ARG BUILD_VERSION
-
-FROM $BUILD_FROM
 
 LABEL \
     io.hass.name="ESPHome Distributed Build Server" \
