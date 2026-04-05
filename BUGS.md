@@ -134,6 +134,8 @@
 
 156. FIXED (1.2.0-dev.42) - Local worker slot count lost on restart. Persisted to /data/local_worker_slots. Server reads on startup, UI writes on change.
 
+157. FIXED (1.2.0-dev.51) - Local worker PlatformIO failures. Root cause: Alpine base image lacks glibc needed by PlatformIO toolchains. Fix: switched add-on base image from Alpine to Debian Bookworm (ghcr.io/home-assistant/*-base-debian:bookworm). Gives native glibc, gcc, Python venv support. Image is larger but local compilation works.
+
 ---
 
 <details>

@@ -1,6 +1,6 @@
 build_from:
-  aarch64: "ghcr.io/home-assistant/aarch64-base-python:3.13-alpine3.22"
-  amd64: "ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.22"
-  armhf: "ghcr.io/home-assistant/armhf-base-python:3.13-alpine3.22"
-  armv7: "ghcr.io/home-assistant/armv7-base-python:3.13-alpine3.22"
-  i386: "ghcr.io/home-assistant/i386-base-python:3.13-alpine3.22"
+  aarch64: "ghcr.io/home-assistant/aarch64-base-debian:bookworm"
+  amd64: "ghcr.io/home-assistant/amd64-base-debian:bookworm"
+  armhf: "ghcr.io/home-assistant/armhf-base-debian:bookworm"
+  armv7: "ghcr.io/home-assistant/armv7-base-debian:bookworm"
+  i386: "ghcr.io/home-assistant/i386-base-debian:bookworm"
