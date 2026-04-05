@@ -134,6 +134,8 @@
 
 156. FIXED (1.2.0-dev.42) - Local worker slot count lost on restart. Persisted to /data/local_worker_slots. Server reads on startup, UI writes on change.
 
+157. DEFERRED - Local worker removed from 1.2.0. HA add-on Alpine base image lacks PlatformIO toolchain deps. Feature moved to future release. Use external Docker workers.
+
 ---
 
 <details>

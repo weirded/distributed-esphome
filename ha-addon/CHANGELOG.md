@@ -2,11 +2,6 @@
 
 ## 1.2.0
 
-**Built-in Local Worker** ([#4](https://github.com/weirded/distributed-esphome/issues/4))
-- The add-on now includes a built-in build worker — no external Docker container required to get started
-- Starts paused (0 slots); increase via the Workers tab to activate
-- Great for HaOS setups where adding Docker containers is difficult
-
 **Choose Which Worker Compiles** ([#5](https://github.com/weirded/distributed-esphome/issues/5))
 - New "Upgrade on..." submenu in the device menu lets you pin a compile job to a specific worker
 - Useful for debugging or when certain configs only work on specific hardware

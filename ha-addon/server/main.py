@@ -514,47 +514,12 @@ def create_app() -> web.Application:
         app["pypi_version_refresher_task"] = asyncio.create_task(pypi_version_refresher(app))
         app["ha_entity_poller_task"] = asyncio.create_task(ha_entity_poller(app))
 
-        # Start local worker if client code is bundled
-        local_worker_script = Path("/app/client/client.py")
-        if local_worker_script.exists():
-            import subprocess as sp  # noqa: PLC0415
-            # Restore persisted slot count (default 0 on first run)
-            local_slots_file = Path("/data/local_worker_slots")
-            local_slots = "0"
-            try:
-                if local_slots_file.exists():
-                    local_slots = local_slots_file.read_text().strip() or "0"
-            except Exception:
-                pass
-            local_env = {
-                **os.environ,
-                "SERVER_URL": f"http://127.0.0.1:{cfg.port}",
-                "SERVER_TOKEN": cfg.token,
-                "MAX_PARALLEL_JOBS": local_slots,
-                "ESPHOME_VERSIONS_DIR": "/data/esphome-versions",
-                "HOSTNAME": "local-worker",
-            }
-            proc = sp.Popen(
-                [sys.executable, str(local_worker_script)],
-                env=local_env,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-            )
-            app["local_worker_proc"] = proc
-            logger.info("Started local worker (PID %d, %s slots)", proc.pid, local_slots)
+        # Local worker disabled — HA add-on Alpine image lacks PlatformIO toolchain
+        # dependencies (glibc, C compiler toolchains). Use external Docker workers instead.
+        # See: https://github.com/weirded/distributed-esphome/issues/4
 
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down ESPHome Distributed Build Server")
-
-        # Stop local worker
-        proc = app.get("local_worker_proc")
-        if proc and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                proc.kill()
-            logger.info("Local worker stopped")
 
         for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task"):
             task = app.get(task_name)
