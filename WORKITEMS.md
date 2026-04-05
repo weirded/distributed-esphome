@@ -151,6 +151,12 @@ LIB.1–3 require a new Docker image (`psutil` needs C compilation). LIB.0 adds 
 - [ ] **LIB.2 `tenacity` for client retry logic** — decorator-based retries + exponential backoff
 - [ ] **LIB.3 `pyyaml` for client network diagnostics** — replace fragile regex YAML parsing
 
+### Quality Gates (CLAUDE.md)
+
+Capstone for the 1.3 release: codify the standards established by all the above work into CLAUDE.md so future releases don't regress.
+
+- [ ] **QG.1 Codify quality standards in CLAUDE.md** — document enforceable rules covering: constants over magic strings, test coverage requirements for new code, ruff/lint compliance, error handling patterns, naming conventions, frontend TypeScript standards, and any other conventions established during 1.3 cleanup. This is the last 1.3 task — written after everything else lands so it reflects the actual state of the codebase.
+
 ---
 
 ## 1.4.0 — ESPHome Dashboard Parity

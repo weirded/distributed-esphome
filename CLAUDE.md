@@ -147,7 +147,8 @@ cd ha-addon/ui && npx vite         # dev server
 
 ## Design Principles
 
-- **Use library components as intended.** When using shadcn/ui, Tailwind, or any library, leverage their built-in functionality rather than disabling features and reimplementing them. If a library component doesn't fit, adapt our code to work with it — don't strip and replace it.
+- **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, etc.) must use shadcn/ui components. Don't hand-roll components that shadcn already provides.
+- **Use library components as intended.** When using shadcn/ui, Tailwind, or any library, leverage their built-in functionality rather than disabling features and reimplementing them. If a library component doesn't fit, adapt our code to work with it — don't strip and replace it. Take the easy/intended path, not hacky workarounds.
 - **Prefer composition over override.** Adjust layout/spacing to accommodate library behavior rather than adding `showCloseButton={false}` and rolling a custom close button.
 
 ## Project Tracking

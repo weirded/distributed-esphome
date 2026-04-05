@@ -23,9 +23,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
 } from './ui/dropdown-menu';
 import {
   Dialog,
@@ -186,6 +183,8 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [menuTarget, setMenuTarget] = useState<Target | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
@@ -403,8 +402,31 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
         sortingFn: 'alphanumeric',
       }
     ),
+    columnHelper.display({
+      id: 'actions',
+      enableHiding: false,
+      cell: ({ row: { original: t } }) => {
+        const upgradeVariant = t.needs_update ? 'success' : 'secondary';
+        return (
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <Button variant={upgradeVariant as 'success' | 'secondary'} size="sm" onClick={() => onCompile([t.target])}>Upgrade</Button>
+            <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
+            <span
+              className="action-menu-trigger"
+              title="More actions"
+              onClick={(e) => {
+                if (menuTarget?.target === t.target) { setMenuTarget(null); setMenuPos(null); return; }
+                const rect = e.currentTarget.getBoundingClientRect();
+                setMenuPos({ top: rect.bottom + 4, left: rect.right });
+                setMenuTarget(t);
+              }}
+            >&#8942;</span>
+          </div>
+        );
+      },
+    }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], []);
+  ], [workers, onCompile, onCompileOnWorker, onEdit, onLogs, onToast]);
 
   const table = useReactTable({
     data: filteredTargets,
@@ -551,99 +573,15 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                 </tr>
               ) : (
                 <>
-                  {table.getSortedRowModel().rows.map(row => {
-                    const t = row.original;
-                    const upgradeVariant = t.needs_update ? 'success' : 'secondary';
-                    const lastSeenEl = t.last_seen
-                      ? <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>
-                      : null;
-                    const showIpLink = t.has_web_server && t.online && t.ip_address;
-                    const projectStr = t.project_name
-                      ? (t.project_version ? `${t.project_name} ${t.project_version}` : t.project_name)
-                      : null;
-                    return (
-                      <tr key={row.id}>
-                        <td>
-                          <input
-                            type="checkbox"
-                            className="target-cb"
-                            value={t.target}
-                            checked={row.getIsSelected()}
-                            onChange={row.getToggleSelectedHandler()}
-                          />
+                  {table.getRowModel().rows.map(row => (
+                    <tr key={row.id}>
+                      {row.getVisibleCells().map(cell => (
+                        <td key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
-                        <td>
-                          <span className="device-name">{t.friendly_name || t.device_name || stripYaml(t.target)}</span>
-                          <div className="device-filename">{stripYaml(t.target)}</div>
-                        </td>
-                        {isVisible('status') && (
-                          <td>
-                            {t.online == null
-                              ? <StatusDot status="checking" />
-                              : t.online
-                                ? <><StatusDot status="online" />{lastSeenEl}</>
-                                : <><StatusDot status="offline" />{lastSeenEl}</>}
-                          </td>
-                        )}
-                        {isVisible('ha') && (
-                          <td style={{ fontSize: 12 }}>
-                            {t.ha_configured
-                              ? <span style={{ color: 'var(--success)' }}>Yes</span>
-                              : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                          </td>
-                        )}
-                        {isVisible('ip') && (
-                          <td>
-                            <span style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
-                              {showIpLink
-                                ? <a href={`http://${t.ip_address}`} target="_blank" rel="noopener" className="ip-link">
-                                    {t.ip_address}<span style={{ fontSize: 10 }}>&#8599;</span>
-                                  </a>
-                                : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
-                            </span>
-                          </td>
-                        )}
-                        {isVisible('running') && (
-                          <td style={{ fontSize: 12 }}>
-                            {t.running_version || '—'}
-                            {t.config_modified && <div className="config-modified">config changed</div>}
-                          </td>
-                        )}
-                        {isVisible('area') && (
-                          <td style={{ fontSize: 12 }}>
-                            {t.area || <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                          </td>
-                        )}
-                        {isVisible('comment') && (
-                          <td style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {t.comment || <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                          </td>
-                        )}
-                        {isVisible('project') && (
-                          <td style={{ fontSize: 12 }}>
-                            {projectStr
-                              ? projectStr
-                              : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                          </td>
-                        )}
-                        <td>
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                            <Button variant={upgradeVariant as 'success' | 'secondary'} size="sm" onClick={() => onCompile([t.target])}>Upgrade</Button>
-                            <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
-                            <DeviceMenu
-                              target={t}
-                              workers={workers}
-                              onToast={onToast}
-                              onDelete={(tgt) => setDeleteTarget(tgt)}
-                              onRename={(tgt) => setRenameTarget(tgt)}
-                              onLogs={(tgt) => onLogs(tgt)}
-                              onCompileOnWorker={(tgt, w) => onCompileOnWorker(tgt, w)}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                      ))}
+                    </tr>
+                  ))}
                   {filteredUnmanaged.map(d => (
                     <UnmanagedRow key={d.name} device={d} isVisible={isVisible} />
                   ))}
@@ -678,6 +616,19 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
         />
       )}
 
+      {menuTarget && menuPos && (
+        <DeviceMenu
+          target={menuTarget}
+          workers={workers}
+          position={menuPos}
+          onToast={onToast}
+          onDelete={(t) => { setMenuTarget(null); setMenuPos(null); setDeleteTarget(t); }}
+          onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
+          onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
+          onCompileOnWorker={(t, w) => { setMenuTarget(null); setMenuPos(null); onCompileOnWorker(t, w); }}
+          onClose={() => { setMenuTarget(null); setMenuPos(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -701,20 +652,30 @@ function SortHeader({ label, column }: { label: string; column: { getIsSorted: (
 function DeviceMenu({
   target: t,
   workers,
+  position,
   onToast,
   onDelete,
   onRename,
   onLogs,
   onCompileOnWorker,
+  onClose,
 }: {
   target: Target;
   workers: Worker[];
+  position: { top: number; left: number };
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string) => void;
   onRename: (target: string) => void;
   onLogs: (target: string) => void;
   onCompileOnWorker: (target: string, clientId: string) => void;
+  onClose: () => void;
 }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   async function handleCopyApiKey() {
     try {
       const key = await getApiKey(t.target);
@@ -739,45 +700,42 @@ function DeviceMenu({
     .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="action-menu-trigger" title="More actions">
-        &#8942;
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[160px]">
-        <DropdownMenuLabel>Device</DropdownMenuLabel>
-        <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => onLogs(t.target)}>Live Logs</DropdownMenuItem>
-          <DropdownMenuItem onClick={handleRestart}>Restart</DropdownMenuItem>
-          <DropdownMenuItem disabled={!t.has_api_key} onClick={handleCopyApiKey}>Copy API Key</DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Config</DropdownMenuLabel>
-        <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => onRename(t.target)}>Rename</DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => onDelete(t.target)}
-            className="text-[var(--destructive)] focus:text-[var(--destructive)]"
-          >
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
+    <>
+      {/* Backdrop to close on outside click */}
+      <div className="fixed inset-0 z-50" onClick={onClose} />
+      <div
+        className="fixed z-50 min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
+        style={{ top: position.top, left: position.left, transform: 'translateX(-100%)' }}
+      >
+        <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Device</div>
+        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onLogs(t.target)}>Live Logs</button>
+        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={handleRestart}>Restart</button>
+        <button className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_api_key ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`} onClick={handleCopyApiKey}>Copy API Key</button>
+
+        <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
+
+        <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Config</div>
+        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
+        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
+
         {onlineWorkers.length > 0 && (
           <>
-            <DropdownMenuSeparator />
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Upgrade on...</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
+            <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
+            <div className="group/sub relative">
+              <div className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-sm cursor-default hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]">
+                Upgrade on...
+                <span className="ml-auto text-xs">&#9666;</span>
+              </div>
+              <div className="invisible group-hover/sub:visible absolute right-full top-0 mr-1 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10">
                 {onlineWorkers.map(w => (
-                  <DropdownMenuItem key={w.client_id} onClick={() => onCompileOnWorker(t.target, w.client_id)}>
-                    {w.hostname}
-                  </DropdownMenuItem>
+                  <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
                 ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
+              </div>
+            </div>
           </>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </div>
+    </>
   );
 }
 
