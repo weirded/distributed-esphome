@@ -5,17 +5,12 @@ Uses aiohttp.test_utils.TestClient/TestServer directly (no pytest-aiohttp requir
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
-
-from app_config import AppConfig  # noqa: E402
-from main import auth_middleware  # noqa: E402
+from app_config import AppConfig
+from main import auth_middleware
 
 
 # ---------------------------------------------------------------------------

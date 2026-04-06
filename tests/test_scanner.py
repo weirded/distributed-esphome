@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import io
-import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 
-# Make server code importable
-sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
-
-from scanner import create_bundle, get_esphome_version, scan_configs  # noqa: E402
+from scanner import create_bundle, get_esphome_version, scan_configs
 
 FIXTURES = Path(__file__).parent / "fixtures" / "esphome_configs"
 

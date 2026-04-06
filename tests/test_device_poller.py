@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Make server code importable
-sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
-
-# Patch heavy optional dependencies before importing device_poller
+# Patch heavy optional dependencies before importing device_poller.
+# These are only needed at runtime (mDNS discovery, device API, ICMP ping)
+# and are not available in the test environment.
 sys.modules.setdefault("zeroconf", MagicMock())
 sys.modules.setdefault("zeroconf.asyncio", MagicMock())
 sys.modules.setdefault("aioesphomeapi", MagicMock())
-# Provide a minimal icmplib stub so _PING_AVAILABLE is True in tests.
-# Individual tests override async_ping via patch() as needed.
 _icmplib_stub = MagicMock()
 sys.modules.setdefault("icmplib", _icmplib_stub)
 
-from device_poller import Device, DevicePoller  # noqa: E402
+from device_poller import Device, DevicePoller
 
 
 # ---------------------------------------------------------------------------

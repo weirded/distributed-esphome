@@ -17,7 +17,6 @@ import base64
 import io
 import json
 import os
-import sys
 import tarfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -31,10 +30,8 @@ import pytest
 os.environ.setdefault("SERVER_URL", "http://127.0.0.1:1")
 os.environ.setdefault("SERVER_TOKEN", "test-token")
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "client"))
-
-import client as client_mod  # noqa: E402
-from version_manager import VersionManager  # noqa: E402
+import client as client_mod
+from version_manager import VersionManager
 
 
 # ---------------------------------------------------------------------------

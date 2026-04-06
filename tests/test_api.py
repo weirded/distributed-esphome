@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import sys
 import tarfile
 import uuid
 from pathlib import Path
@@ -18,13 +17,11 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
-
-import api as api_module  # noqa: E402
-from app_config import AppConfig  # noqa: E402
-from job_queue import JobQueue, JobState  # noqa: E402
-from main import auth_middleware  # noqa: E402
-from registry import WorkerRegistry  # noqa: E402
+import api as api_module
+from app_config import AppConfig
+from job_queue import JobQueue, JobState
+from main import auth_middleware
+from registry import WorkerRegistry
 
 # ---------------------------------------------------------------------------
 # Constants

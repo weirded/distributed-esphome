@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import threading
 import time
-from collections import OrderedDict
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Make client code importable
-sys.path.insert(0, str(Path(__file__).parent.parent / "client"))
-
-from version_manager import VersionManager  # noqa: E402
+from version_manager import VersionManager
 
 
 # ---------------------------------------------------------------------------
@@ -164,13 +159,13 @@ def test_ensure_version_updates_lru(tmp_path):
 # Subprocess timeout simulation (tests _run_subprocess indirectly)
 # ---------------------------------------------------------------------------
 
-def test_run_subprocess_success():
+def test_run_subprocess_success(tmp_path):
     """Import and test _run_subprocess directly."""
     import client as client_module  # noqa: PLC0415
 
     log, ok = client_module._run_subprocess(
         [sys.executable, "-c", "print('hello')"],
-        cwd="/tmp",
+        cwd=str(tmp_path),
         timeout=10,
         label="test",
     )
@@ -178,25 +173,25 @@ def test_run_subprocess_success():
     assert "hello" in log
 
 
-def test_run_subprocess_failure():
+def test_run_subprocess_failure(tmp_path):
     import client as client_module  # noqa: PLC0415
 
     log, ok = client_module._run_subprocess(
         [sys.executable, "-c", "import sys; sys.exit(1)"],
-        cwd="/tmp",
+        cwd=str(tmp_path),
         timeout=10,
         label="test-fail",
     )
     assert not ok
 
 
-def test_run_subprocess_timeout():
+def test_run_subprocess_timeout(tmp_path):
     """A process that sleeps longer than timeout should be killed and return TIMED OUT."""
     import client as client_module  # noqa: PLC0415
 
     log, ok = client_module._run_subprocess(
         [sys.executable, "-c", "import time; time.sleep(60)"],
-        cwd="/tmp",
+        cwd=str(tmp_path),
         timeout=1,
         label="test-timeout",
     )
@@ -204,12 +199,12 @@ def test_run_subprocess_timeout():
     assert "TIMED OUT" in log
 
 
-def test_run_subprocess_captures_output():
+def test_run_subprocess_captures_output(tmp_path):
     import client as client_module  # noqa: PLC0415
 
     log, ok = client_module._run_subprocess(
         [sys.executable, "-c", "print('stdout line'); import sys; print('stderr line', file=sys.stderr)"],
-        cwd="/tmp",
+        cwd=str(tmp_path),
         timeout=10,
         label="test-output",
     )
