@@ -33,7 +33,7 @@ run_compile_test() {
 
   docker run --rm \
     --entrypoint /bin/bash \
-    -v "${FIXTURES}:/config:ro" \
+    -v "${FIXTURES}:/config" \
     -v esphome-test-cache:/esphome-versions \
     -e ESPHOME_VERSION="${ESPHOME_VERSION}" \
     "${image}" \

@@ -67,7 +67,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint /bin/bash \
-            -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config:ro" \
+            -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config" \
             -v /tmp/esphome-compile-cache:/esphome-versions \
             esphome-dist-client \
             -c "pip install --no-cache-dir 'esphome==${{ env.ESPHOME_VERSION }}' && esphome compile /config/${{ matrix.target }}.yaml"
@@ -104,7 +104,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint /bin/bash \
-            -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config:ro" \
+            -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config" \
             -v /tmp/esphome-compile-cache:/esphome-versions \
             esphome-dist-server \
             -c "pip install --no-cache-dir 'esphome==${{ env.ESPHOME_VERSION }}' && esphome compile /config/${{ matrix.target }}.yaml"

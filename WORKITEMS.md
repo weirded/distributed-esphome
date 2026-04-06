@@ -160,6 +160,7 @@ LIB.1–3 require a new Docker image (`psutil` needs C compilation). LIB.0 adds 
 ### Bug Fixes
 
 - [ ] **BF.1 Duplicate devices with hyphens** (BUGS #159, GitHub #2) — `_map_target()` does exact string comparison but ESPHome normalizes hyphens to underscores for mDNS. Normalize before comparing.
+- [ ] **BF.2 OTA diagnostics reports wrong device** (BUGS #160, GitHub #15) — `_ota_network_diagnostics()` regex matches first `name:` in YAML (e.g. a neopixel light component) instead of `esphome.name`. Fix as part of LIB.3: use proper YAML parsing, not regex.
 
 ### Quality Gates (CLAUDE.md)
 
