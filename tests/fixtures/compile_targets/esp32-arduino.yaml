@@ -1,0 +1,13 @@
+esphome:
+  name: compile-test-esp32-arduino
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:

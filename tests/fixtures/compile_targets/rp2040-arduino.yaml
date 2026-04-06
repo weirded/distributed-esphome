@@ -1,0 +1,11 @@
+esphome:
+  name: compile-test-rp2040
+
+rp2040:
+  board: rpipicow
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
