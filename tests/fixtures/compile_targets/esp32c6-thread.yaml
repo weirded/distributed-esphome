@@ -9,5 +9,6 @@ esp32:
     type: esp-idf
 
 openthread:
+  network_key: "00112233445566778899aabbccddeeff"
 
 logger:

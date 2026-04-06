@@ -101,7 +101,7 @@ Worker config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 - `main` — stable releases only. Users install from this branch.
 
 **Day-to-day development (on `develop`):**
-- Bump the dev version after each turn: `bash scripts/bump-dev.sh` (auto-increments `-dev.N`)
+- **Bump the dev version at the end of every turn:** `bash scripts/bump-dev.sh` (auto-increments `-dev.N`). This is mandatory — never skip it.
 - Push to GitHub freely — CI runs tests, no GHCR images published
 - Deploy to hass-4 for testing: `./push-to-hass-4.sh`
 
@@ -163,3 +163,8 @@ cd ha-addon/ui && npx vite         # dev server
 - `BUGS.md` — numbered bug log with status (FIXED/IN PROGRESS/INVESTIGATING) and version tags
 - `RELEASE_CHECKLIST.md` — step-by-step release process (what Claude does vs. what the human does)
 - `PRD.md` — product requirements document for the full ESPHome dashboard replacement
+
+**Always update tracking files when completing work:**
+- When a work item from `WORKITEMS.md` is done, mark it `[x]` and add the version tag (e.g. `*(1.3.0-dev)*`)
+- When a bug from `BUGS.md` is fixed, update its status to `FIXED` and add the version (e.g. `FIXED in 1.2.0`)
+- Do this immediately after the work is complete, not deferred to later

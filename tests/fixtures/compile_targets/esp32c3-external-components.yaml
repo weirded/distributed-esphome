@@ -28,7 +28,6 @@ light:
     id: led_strip
     pin: GPIO8
     num_leds: 1
-    rmt_channel: 0
     chipset: WS2812
     rgb_order: GRB
     name: "Status LED"
