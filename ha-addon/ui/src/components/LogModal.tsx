@@ -2,8 +2,16 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildWsUrl, getJobLog } from '../api/client';
+import { copyTerminalText, downloadTerminalText } from '../utils/terminal';
 import type { Job, Worker } from '../types';
 import { fmtDuration, getJobBadge } from '../utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+import { Button } from './ui/button';
 
 interface Props {
   jobId: string | null;
@@ -12,11 +20,17 @@ interface Props {
   onClose: () => void;
   onRetry: (ids: string[]) => void;
   onEdit?: (target: string) => void;
+  stacked?: boolean;
 }
 
-export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit }: Props) {
+export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stacked }: Props) {
   const isOpen = jobId !== null;
   const containerRef = useRef<HTMLDivElement>(null);
+  const [containerMounted, setContainerMounted] = useState(false);
+  const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    setContainerMounted(!!node);
+  }, []);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,10 +96,10 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit }: Pr
     poll();
   }, []);
 
-  // Initialize terminal and connections when jobId changes
+  // Initialize terminal and connections when jobId changes or container mounts
   useEffect(() => {
     mountedRef.current = true;
-    if (!jobId || !containerRef.current) return;
+    if (!jobId || !containerMounted || !containerRef.current) return;
 
     // Clean up previous
     stopWs();
@@ -158,32 +172,9 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit }: Pr
       stopPolling();
       disposeTerminal();
     };
-    // We deliberately don't re-run when queue changes — only when jobId changes
+    // We deliberately don't re-run when queue changes — only when jobId/container changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, startPolling]);
-
-  // Keyboard handler
-  useEffect(() => {
-    if (!isOpen) return;
-    function handler(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [isOpen, onClose]);
-
-  // Only close on overlay click if mousedown also started on the overlay.
-  // This prevents closing when the user drags to select text and the drag
-  // ends outside the modal content area.
-  const mouseDownTargetRef = useRef<EventTarget | null>(null);
-  function handleOverlayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    mouseDownTargetRef.current = e.target;
-  }
-  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.target === e.currentTarget && mouseDownTargetRef.current === e.currentTarget) {
-      onClose();
-    }
-  }
+  }, [jobId, containerMounted, startPolling]);
 
   // Compute header contents from current job state
   let modalTitle = '';
@@ -208,70 +199,53 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit }: Pr
       metaEl = <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{meta}</span>;
     }
 
-    if (['failed', 'timed_out', 'success'].includes(job.state)) {
+    if (!job.validate_only && ['failed', 'timed_out', 'success'].includes(job.state)) {
       retryEl = (
-        <button
-          className="btn-warn btn-sm"
+        <Button
+          variant="warn"
+          size="sm"
           onClick={() => { onRetry([job.id]); onClose(); }}
         >
           Retry
-        </button>
+        </Button>
       );
     }
   }
 
-  function handleDownload() {
-    const term = termRef.current;
-    if (!term) return;
-    const buffer = term.buffer.active;
-    const lines: string[] = [];
-    for (let i = 0; i < buffer.length; i++) {
-      lines.push(buffer.getLine(i)?.translateToString() ?? '');
-    }
-    const text = lines.join('\n');
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    a.href = url;
-    a.download = `${job?.target ?? 'log'}-${ts}.log`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const handleCopy = () => copyTerminalText(termRef.current);
+  const handleDownload = () => downloadTerminalText(termRef.current, job?.target ?? 'log');
 
   return (
-    <div
-      id="log-modal"
-      className={`modal-overlay${isOpen ? ' open' : ''}`}
-      onMouseDown={handleOverlayMouseDown}
-      onClick={handleOverlayClick}
-    >
-      <div className="modal">
-        <div className="modal-header">
-          <div className="modal-header-left">
-            <h3>{modalTitle}</h3>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className={`dialog-lg${stacked ? ' stacked' : ''}`} style={stacked ? { zIndex: 500 } : undefined}>
+        <DialogHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+            <DialogTitle style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{modalTitle}</DialogTitle>
             {badgeEl}
             {metaEl}
             {retryEl}
           </div>
-          {onEdit && job && (
-            <button
-              className="btn-secondary btn-sm"
+          {onEdit && job && !job.validate_only && (
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => { onEdit(job.target); onClose(); }}
               title="Open config in editor"
             >
               Edit
-            </button>
+            </Button>
           )}
-          <button className="btn-secondary btn-sm" onClick={handleDownload} title="Download log">
+          <Button variant="secondary" size="sm" onClick={handleCopy} title="Copy log to clipboard">
+            Copy
+          </Button>
+          <Button variant="secondary" size="sm" onClick={handleDownload} title="Download log as file">
             &#8595; Download
-          </button>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          </Button>
+        </DialogHeader>
+        <div style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
+          <div ref={containerCallbackRef} className="xterm-container" style={{ width: '100%', height: '100%' }} />
         </div>
-        <div className="modal-body" style={{ padding: 0 }}>
-          <div ref={containerRef} className="xterm-container" style={{ width: '100%', height: '100%' }} />
-        </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

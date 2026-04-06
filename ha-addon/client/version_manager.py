@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 VERSIONS_BASE = Path(os.environ.get("ESPHOME_VERSIONS_DIR", "/esphome-versions"))
 MAX_ESPHOME_VERSIONS = int(os.environ.get("MAX_ESPHOME_VERSIONS", "3"))
+# Minimum free disk percentage before we start evicting versions
+MIN_FREE_DISK_PCT = int(os.environ.get("MIN_FREE_DISK_PCT", "10"))
 
 
 class VersionManager:
@@ -68,20 +70,50 @@ class VersionManager:
     def _is_installed(self, version: str) -> bool:
         return self._esphome_bin(version).exists()
 
-    def _evict_lru(self) -> None:
+    def _evict_lru(self, keep_version: str | None = None) -> bool:
         """Remove the least-recently-used version from disk and LRU cache.
 
         Must be called with self._lock held.
+        Skips *keep_version* if provided (the version about to be installed).
+        Returns True if a version was evicted, False if nothing to evict.
         """
-        if not self._lru:
-            return
-        version, path = next(iter(self._lru.items()))
-        logger.info("Evicting ESPHome version %s from %s", version, path)
+        for version, path in self._lru.items():
+            if version == keep_version:
+                continue
+            logger.info("Evicting ESPHome version %s from %s", version, path)
+            try:
+                shutil.rmtree(str(path), ignore_errors=True)
+            except Exception:
+                logger.exception("Failed to remove version dir %s", path)
+            del self._lru[version]
+            return True
+        return False
+
+    def _free_disk_pct(self) -> float | None:
+        """Return free disk percentage on the versions volume, or None on error."""
         try:
-            shutil.rmtree(str(path), ignore_errors=True)
+            st = os.statvfs(str(self._base))
+            total = st.f_frsize * st.f_blocks
+            free = st.f_frsize * st.f_bavail
+            return (free / total) * 100 if total > 0 else None
         except Exception:
-            logger.exception("Failed to remove version dir %s", path)
-        del self._lru[version]
+            return None
+
+    def _ensure_disk_space(self, keep_version: str | None = None) -> None:
+        """Evict LRU versions until free disk exceeds MIN_FREE_DISK_PCT.
+
+        Must be called with self._lock held.
+        """
+        while len(self._lru) > 1:  # always keep at least the current version
+            pct = self._free_disk_pct()
+            if pct is None or pct >= MIN_FREE_DISK_PCT:
+                break
+            logger.warning(
+                "Disk free %.1f%% < %d%% threshold — evicting unused ESPHome version",
+                pct, MIN_FREE_DISK_PCT,
+            )
+            if not self._evict_lru(keep_version=keep_version):
+                break
 
     def _install(self, version: str) -> None:
         """Create a venv and install esphome==version into it.
@@ -153,7 +185,9 @@ class VersionManager:
                 else:
                     # We'll do the install; evict if at capacity
                     while len(self._lru) >= self._max_versions:
-                        self._evict_lru()
+                        self._evict_lru(keep_version=version)
+                    # Also evict if disk is low
+                    self._ensure_disk_space(keep_version=version)
                     install_event = threading.Event()
                     self._installing[version] = install_event
 

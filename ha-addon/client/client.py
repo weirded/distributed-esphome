@@ -29,7 +29,7 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.1.0"
+CLIENT_VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # System information gathering (stdlib only — no psutil dependency)
@@ -222,6 +222,21 @@ def collect_system_info() -> dict:
 
     os_version = os.environ.get("HOST_PLATFORM") or _get_os_version()
 
+    # Disk space on the build volume
+    disk_total: Optional[str] = None
+    disk_free: Optional[str] = None
+    disk_pct: Optional[int] = None
+    try:
+        st = os.statvfs(_ESPHOME_VERSIONS_DIR)
+        total = st.f_frsize * st.f_blocks
+        free = st.f_frsize * st.f_bavail
+        used_pct = round((1 - free / total) * 100) if total > 0 else None
+        disk_total = _format_memory(total)
+        disk_free = _format_memory(free)
+        disk_pct = used_pct
+    except Exception:
+        pass
+
     info: dict = {
         "cpu_arch": platform.machine(),
         "os_version": os_version,
@@ -231,6 +246,9 @@ def collect_system_info() -> dict:
         "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
         "perf_score": _CPU_PERF_SCORE,
         "cpu_usage": _get_cpu_usage(),
+        "disk_total": disk_total,
+        "disk_free": disk_free,
+        "disk_used_pct": disk_pct,
     }
     return info
 
@@ -457,6 +475,12 @@ def register() -> str:
 # Heartbeat thread
 # ---------------------------------------------------------------------------
 
+def _restart_self() -> None:
+    """Restart the worker process in-place (preserving env vars)."""
+    logger.info("Restarting worker process...")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
     while not stop_event.is_set():
@@ -483,6 +507,16 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                         "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
                     )
                     _update_available.set()
+                # Check for max_parallel_jobs config change from UI
+                new_jobs = data.get("set_max_parallel_jobs")
+                if new_jobs is not None and isinstance(new_jobs, int) and new_jobs != MAX_PARALLEL_JOBS:
+                    logger.info(
+                        "Server requested max_parallel_jobs change: %d → %d — restarting",
+                        MAX_PARALLEL_JOBS, new_jobs,
+                    )
+                    # Write new value to env so it persists across restart
+                    os.environ["MAX_PARALLEL_JOBS"] = str(new_jobs)
+                    _restart_self()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             _on_server_unreachable(exc)
         except Exception as exc:
@@ -498,7 +532,10 @@ def extract_bundle(bundle_b64: str, dest_dir: str) -> None:
     """Decode and extract the base64 tar.gz bundle into dest_dir."""
     raw = base64.b64decode(bundle_b64)
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-        tar.extractall(path=dest_dir, filter="data")
+        try:
+            tar.extractall(path=dest_dir, filter="data")
+        except TypeError:
+            tar.extractall(path=dest_dir)  # Python < 3.12
     logger.debug("Bundle extracted to %s", dest_dir)
 
 

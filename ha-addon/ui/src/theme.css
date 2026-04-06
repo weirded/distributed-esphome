@@ -1,6 +1,22 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Streamer mode — blur sensitive data (IPs, tokens, keys, hostnames) */
+.streamer .sensitive { filter: blur(5px); transition: filter 0.2s; }
+.streamer .sensitive:hover { filter: blur(2px); }
+
+/* Preflight overrides — constrain logo height */
+header img {
+  height: 26px;
+  width: auto;
+  max-width: none;
+}
 
 :root {
+  /* ---- App theme variables (existing) ---- */
   --bg: #0f1117;
   --surface: #1a1d27;
   --surface2: #22263a;
@@ -16,6 +32,24 @@
   --orange: #f97316;
   --radius: 8px;
   --shadow: 0 2px 8px rgba(0,0,0,0.4);
+
+  /* ---- shadcn/ui variables (dark mode default — matches app theme) ---- */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface2);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: #fff;
+  --secondary: var(--surface2);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface2);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--accent);
 }
 
 [data-theme="light"] {
@@ -27,6 +61,7 @@
   --text-muted: #6c757d;
   /* accent, success, warn, danger, info, orange remain the same */
   --shadow: 0 2px 8px rgba(0,0,0,0.12);
+  /* shadcn variables follow app variables via var() references, no overrides needed */
 }
 
 body {
@@ -57,97 +92,9 @@ header {
   border-bottom-color: #2e3350;
   color: #e2e8f0;
 }
-[data-theme="light"] header .version-badge {
-  background: #22263a;
-  border-color: #2e3350;
-  color: #8892a4;
-}
-[data-theme="light"] header .version-badge:hover {
-  background: #2e3350;
-  color: #e2e8f0;
-}
 [data-theme="light"] header span { color: #8892a4; }
 [data-theme="light"] header .status-dot { background: #22c55e; }
 
-header .version-badge {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-
-/* ESPHome version dropdown in header */
-.esphome-version-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.esphome-version-wrap .version-badge {
-  cursor: pointer;
-  user-select: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.esphome-version-wrap .version-badge:hover {
-  background: var(--border);
-  color: var(--text);
-}
-.esphome-version-caret {
-  font-size: 8px;
-  opacity: 0.6;
-}
-.esphome-version-dropdown {
-  display: none;
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  z-index: 300;
-  min-width: 180px;
-  overflow: hidden;
-}
-.esphome-version-dropdown.open { display: block; }
-.esphome-version-dropdown .vd-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 12px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.esphome-version-dropdown .vd-item:hover { background: var(--border); }
-.esphome-version-dropdown .vd-item.active { color: var(--accent); font-weight: 600; }
-.esphome-version-dropdown .vd-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.esphome-version-dropdown .vd-header {
-  padding: 5px 12px 4px;
-  font-size: 10px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
-  cursor: default;
-}
-.esphome-version-dropdown .vd-loading {
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--text-muted);
-  text-align: center;
-}
 
 header .spacer { flex: 1; }
 
@@ -158,89 +105,17 @@ header .status-dot {
   flex-shrink: 0;
 }
 
-/* ---- Tab bar ---- */
-.tab-bar {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 0 20px;
-  display: flex;
-  gap: 0;
-  position: sticky;
-  top: 52px;
-  z-index: 90;
-  overflow-x: auto;
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 18px;
-  height: 44px;
-  background: none;
-  border: none;
-  border-bottom: 3px solid transparent;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: 0;
-  transition: color 0.15s, border-color 0.15s;
-  white-space: nowrap;
-}
-.tab:hover:not(:disabled) { color: var(--text); background: none; }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); }
-
-.tab-count {
-  display: inline-block;
-  background: var(--surface2);
-  color: var(--text-muted);
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-weight: 600;
-}
-.tab.active .tab-count { background: var(--accent); color: #fff; }
+/* Tab bar now uses Tailwind classes in App.tsx */
 
 /* ---- Main ---- */
 main {
-  max-width: 1400px;
-  margin: 0 auto;
   padding: 20px;
 }
 
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
 
 /* ---- Panel ---- */
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: var(--shadow);
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface2);
-}
-
-.panel-header h2 {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-right: 4px;
-}
-
-.panel-header .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
+/* Panels now use Tailwind classes */
+.actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 
 /* ---- Responsive tables ---- */
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -281,21 +156,7 @@ tr.clickable:hover td { background: var(--surface2); }
   font-size: 13px;
 }
 
-/* ---- Badges ---- */
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-}
-.badge-pending   { background: #374151; color: #9ca3af; }
-.badge-working   { background: #1e3a5f; color: #60a5fa; }
-.badge-success   { background: #14532d; color: #4ade80; }
-.badge-failed    { background: #450a0a; color: #f87171; }
-.badge-timed_out { background: #431407; color: #fb923c; }
+/* Badges now use Tailwind classes via getJobBadge() utility */
 
 .dot {
   display: inline-block;
@@ -312,42 +173,7 @@ tr.clickable:hover td { background: var(--surface2); }
 .needs-update-no  { color: var(--text-muted); }
 .config-modified  { color: var(--orange); font-size: 10px; font-weight: 600; }
 
-/* ---- Buttons ---- */
-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 13px;
-  border: none;
-  border-radius: var(--radius);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
-}
-button:disabled,
-button[disabled] {
-  opacity: 0.45 !important;
-  cursor: not-allowed !important;
-  pointer-events: none !important;
-}
-
-.btn-primary   { background: var(--accent); color: #fff; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-
-.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-.btn-secondary:hover:not(:disabled) { background: var(--border); }
-
-.btn-danger    { background: #7f1d1d; color: #fca5a5; }
-.btn-danger:hover:not(:disabled) { background: #991b1b; }
-
-.btn-warn      { background: #78350f; color: #fcd34d; }
-.btn-warn:hover:not(:disabled) { background: #92400e; }
-
-.btn-success   { background: #14532d; color: #4ade80; border: 1px solid #166534; }
-.btn-success:hover:not(:disabled) { background: #166534; }
-
-.btn-sm { padding: 4px 10px; font-size: 12px; }
+/* Buttons use shadcn <Button> component */
 
 /* ---- Checkboxes ---- */
 input[type="checkbox"] {
@@ -376,82 +202,11 @@ input[type="checkbox"] {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---- Modal overlay (shared) ---- */
-.modal-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.65);
-  z-index: 200;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-.modal-overlay.open { display: flex; }
+/* ---- Old modal classes removed — all modals now use shadcn Dialog ---- */
 
-.modal {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  width: 100%;
-  max-width: 960px;
-  height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.7);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface2);
-  gap: 10px;
-}
-.modal-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
-.modal-header h3 { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 2px 7px;
-  border-radius: var(--radius);
-  line-height: 1;
-  flex-shrink: 0;
-}
-.modal-close:hover { background: var(--border); color: var(--text); }
-.modal-body { flex: 1; overflow: auto; }
-
-/* ---- Connect worker modal ---- */
+/* ---- Connect worker modal grid ---- */
 .connect-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-bottom: 16px; }
 .connect-form .field-full { grid-column: 1 / -1; }
-.connect-form label {
-  display: block;
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-.connect-form input, .connect-form select {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-size: 13px;
-  padding: 7px 10px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-.connect-form input:focus, .connect-form select:focus { border-color: var(--accent); }
-.connect-form input[readonly] { color: var(--text-muted); cursor: default; }
-.connect-form select { cursor: pointer; }
 .connect-form select option { background: var(--surface2); }
 .docker-cmd-wrap { position: relative; }
 .docker-cmd {
@@ -462,7 +217,7 @@ input[type="checkbox"] {
   padding-right: 76px;
   font-size: 11.5px;
   font-family: monospace;
-  color: #e2e8f0;
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.6;
@@ -474,34 +229,14 @@ input[type="checkbox"] {
   right: 8px;
 }
 
-/* ---- Monaco editor modal ---- */
-.editor-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.8);
-  z-index: 400;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-.editor-overlay.open { display: flex; }
-.editor-modal {
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
-  border-radius: var(--radius);
-  width: 100%;
-  max-width: 1200px;
-  height: 90vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
-}
+/* Stacked dialog (log modal over editor) uses inline z-index via style prop */
+
+/* ---- Monaco editor (inside shadcn Dialog) ---- */
 .editor-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 10px 3rem 10px 16px;
   background: #2d2d2d;
   border-bottom: 1px solid #3c3c3c;
   border-radius: var(--radius) var(--radius) 0 0;
@@ -549,31 +284,7 @@ input[type="checkbox"] {
   background: var(--border);
 }
 
-/* ---- Toast ---- */
-#toast-container {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 999;
-}
-.toast {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  color: var(--text);
-  padding: 10px 14px;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  font-size: 13px;
-  max-width: 320px;
-  animation: slideIn 0.2s ease;
-}
-.toast.success { border-left-color: var(--success); }
-.toast.error   { border-left-color: var(--danger); }
-@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } }
+/* Toast is handled by Sonner — no custom styles needed here */
 
 /* xterm.js */
 .xterm-container {
@@ -581,11 +292,7 @@ input[type="checkbox"] {
   height: 100%;
 }
 
-/* ---- Hamburger / action menu ---- */
-.action-menu-wrap {
-  position: relative;
-  display: inline-block;
-}
+/* ---- Action menu trigger (used on shadcn DropdownMenuTrigger for the ⋮ button) ---- */
 .action-menu-trigger {
   color: var(--text-muted);
   font-size: 18px;
@@ -596,37 +303,6 @@ input[type="checkbox"] {
   user-select: none;
 }
 .action-menu-trigger:hover { color: var(--text); background: var(--surface2); }
-.action-menu-dropdown {
-  display: none;
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  z-index: 200;
-  min-width: 160px;
-  overflow: hidden;
-}
-.action-menu-dropdown.open { display: block; }
-.action-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  border-radius: 0;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-.action-menu-item:hover:not(:disabled) { background: var(--border); }
-.action-menu-item:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
 
 /* IP address link in devices table */
 .ip-link {
@@ -637,3 +313,45 @@ input[type="checkbox"] {
   gap: 3px;
 }
 .ip-link:hover { text-decoration: underline; }
+
+/* Dialog size variants */
+[data-slot="dialog-content"].dialog-lg {
+  max-width: 960px;
+  height: min(70vh, calc(100vh - 12rem));
+}
+
+[data-slot="dialog-content"].dialog-xl {
+  max-width: 1200px;
+  height: min(75vh, calc(100vh - 10rem));
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+

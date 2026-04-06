@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ServerInfo } from '../types';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+import { Button } from './ui/button';
 
 interface Props {
   serverInfo: ServerInfo;
@@ -97,10 +104,6 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
     shell,
   });
 
-  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.target === e.currentTarget) onClose();
-  }
-
   function handleCopy() {
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(dockerCmd).then(() => {
@@ -121,37 +124,36 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
   }
 
   return (
-    <div id="connect-modal" className="modal-overlay open" onClick={handleOverlayClick}>
-      <div className="modal" style={{ maxWidth: 720 }}>
-        <div className="modal-header">
-          <div className="modal-header-left">
-            <h3>Connect a Build Worker</h3>
-          </div>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body" style={{ padding: 18 }}>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent style={{ maxWidth: 720 }}>
+        <DialogHeader>
+          <DialogTitle>Connect a Build Worker</DialogTitle>
+        </DialogHeader>
+        <div style={{ padding: 18 }}>
           <div className="connect-form">
             <div>
-              <label>Server URL</label>
-              <select value={serverUrl} onChange={e => setServerUrl(e.target.value)}>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Server URL</label>
+              <select className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)] cursor-pointer" value={serverUrl} onChange={e => setServerUrl(e.target.value)}>
                 {urlOptions.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
             <div>
-              <label>Server Token</label>
-              <input type="text" value={serverInfo.token || ''} readOnly />
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Server Token</label>
+              <input className="sensitive w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)] text-[var(--text-muted)] cursor-default" type="text" value={serverInfo.token || ''} readOnly />
             </div>
             <div>
-              <label>Container Name</label>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Container Name</label>
               <input
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 type="text"
                 value={containerName}
                 onChange={e => setContainerName(e.target.value)}
               />
             </div>
             <div>
-              <label>Hostname</label>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Hostname</label>
               <input
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 type="text"
                 value={hostname}
                 placeholder="$(hostname)"
@@ -159,8 +161,9 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
               />
             </div>
             <div>
-              <label>Max Parallel Jobs</label>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Max Parallel Jobs</label>
               <input
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 type="number"
                 value={maxJobs}
                 min={1}
@@ -169,21 +172,23 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
               />
             </div>
             <div>
-              <label>ESPHome Seed Version</label>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">ESPHome Seed Version</label>
               <input
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 type="text"
                 value={seedVersion}
                 onChange={e => { seedUserEdited.current = true; setSeedVersion(e.target.value); }}
               />
             </div>
             <div>
-              <label>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">
                 Host Platform{' '}
                 <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none' }}>
                   (optional)
                 </span>
               </label>
               <input
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
                 type="text"
                 value={hostPlatform}
                 placeholder="e.g. macOS 15.3 (Apple M1 Pro)"
@@ -191,8 +196,8 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
               />
             </div>
             <div>
-              <label>Restart Policy</label>
-              <select value={restartPolicy} onChange={e => setRestartPolicy(e.target.value)}>
+              <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Restart Policy</label>
+              <select className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)] cursor-pointer" value={restartPolicy} onChange={e => setRestartPolicy(e.target.value)}>
                 <option value="unless-stopped">unless-stopped</option>
                 <option value="always">always</option>
                 <option value="no">no</option>
@@ -202,34 +207,36 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.03em' }}>Shell</span>
             <div style={{ display: 'flex', gap: 0, border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-              <button
-                className={shell === 'bash' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+              <Button
+                variant={shell === 'bash' ? 'default' : 'secondary'}
+                size="sm"
                 style={{ borderRadius: 0, border: 'none' }}
                 onClick={() => setShell('bash')}
               >
                 Bash
-              </button>
-              <button
-                className={shell === 'powershell' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+              </Button>
+              <Button
+                variant={shell === 'powershell' ? 'default' : 'secondary'}
+                size="sm"
                 style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)' }}
                 onClick={() => setShell('powershell')}
               >
                 PowerShell
-              </button>
+              </Button>
             </div>
           </div>
           <div className="docker-cmd-wrap">
-            <pre className="docker-cmd">{dockerCmd}</pre>
-            <button className="btn-secondary btn-sm docker-cmd-copy" onClick={handleCopy}>
+            <pre className="docker-cmd sensitive">{dockerCmd}</pre>
+            <Button variant="secondary" size="sm" className="docker-cmd-copy" onClick={handleCopy}>
               {copied ? 'Copied!' : 'Copy'}
-            </button>
+            </Button>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 12 }}>
             Run this command on any Docker host that has network access to your ESP devices (port 3232 for OTA).
             The worker will poll this server for build jobs, compile firmware, and push updates directly to your devices.
           </p>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

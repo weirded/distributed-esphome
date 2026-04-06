@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import {
   cancelJobs,
   clearQueue,
   compile,
   deleteTarget,
-  disableWorker,
+
   removeJobs,
   getDevices,
   getEsphomeVersions,
@@ -15,11 +16,11 @@ import {
   getWorkers,
   removeWorker,
   renameTarget,
+  setWorkerParallelJobs,
   retryAllFailed,
   retryJobs,
   setEsphomeVersion,
   setInitialAddonVersion,
-  setToastFn,
   validateConfig,
 } from './api/client';
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
@@ -29,9 +30,10 @@ import { EditorModal } from './components/EditorModal';
 import { EsphomeVersionDropdown } from './components/EsphomeVersionDropdown';
 import { LogModal } from './components/LogModal';
 import { QueueTab } from './components/QueueTab';
-import { ToastContainer, useToast } from './components/Toast';
+import { toast } from 'sonner';
+import { Toaster } from './components/ui/sonner';
 import { WorkersTab } from './components/WorkersTab';
-import type { Device, EsphomeVersions, Job, ServerInfo, Target, Worker } from './types';
+import type { Device, Job, Target, Worker } from './types';
 import { stripYaml } from './utils';
 import './theme.css';
 
@@ -56,7 +58,7 @@ function getTabCount(
     if (active) return `${active} active`;
     if (failed) return `${failed} failed`;
     if (queue.length) return `${queue.length} done`;
-    return '';
+    return '0';
   }
   if (tab === 'workers') {
     const online = workers.filter(c => c.online).length;
@@ -75,20 +77,47 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabName>(
     () => (sessionStorage.getItem('activeTab') as TabName) || 'devices',
   );
-  const [serverInfo, setServerInfo] = useState<ServerInfo>({ token: '', port: 8765 });
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [queue, setQueue] = useState<Job[]>([]);
-  const [workers, setWorkers] = useState<Worker[]>([]);
-  const [esphomeVersions, setEsphomeVersions] = useState<EsphomeVersions>({
-    selected: null,
-    detected: null,
-    available: [],
-  });
+  // Deep compare prevents re-renders when polled data hasn't changed structurally
+  const deepCompare = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+  const { data: serverInfo = { token: '', port: 8765 } } = useSWR(
+    'serverInfo',
+    getServerInfo,
+    { refreshInterval: 30_000, onError: () => {}, compare: deepCompare },
+  );
+  const { data: esphomeVersions = { selected: null, detected: null, available: [] }, mutate: mutateEsphomeVersions } = useSWR(
+    'versions',
+    getEsphomeVersions,
+    { refreshInterval: 15 * 60_000, onError: () => {}, compare: deepCompare },
+  );
+  const { data: workers = [], mutate: mutateWorkers } = useSWR(
+    'workers',
+    getWorkers,
+    { refreshInterval: 5_000, onError: () => {}, compare: deepCompare },
+  );
+  const { data: devicesAndTargets, mutate: mutateDevices } = useSWR(
+    'devices',
+    async () => { const [t, d] = await Promise.all([getTargets(), getDevices()]); return { targets: t, devices: d }; },
+    { refreshInterval: 15_000, onError: () => {}, compare: deepCompare },
+  );
+  const targets = devicesAndTargets?.targets ?? [];
+  const devices = devicesAndTargets?.devices ?? [];
+  const { data: queue = [], mutate: mutateQueue } = useSWR(
+    'queue',
+    getQueue,
+    { refreshInterval: 3_000, onError: () => {}, compare: deepCompare },
+  );
+  // Exclude validation-only jobs from display (they run server-side and auto-prune)
+  const displayQueue = useMemo(() => queue.filter(j => !j.validate_only), [queue]);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme);
+  const [streamerMode, setStreamerMode] = useState(() => localStorage.getItem('streamerMode') === 'true');
 
-  const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
+  useEffect(() => {
+    document.documentElement.classList.toggle('streamer', streamerMode);
+    localStorage.setItem('streamerMode', String(streamerMode));
+  }, [streamerMode]);
+
   const [logJobId, setLogJobId] = useState<string | null>(null);
   const [deviceLogTarget, setDeviceLogTarget] = useState<string | null>(null);
   const [editorTarget, setEditorTarget] = useState<string | null>(null);
@@ -105,89 +134,25 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const { items: toastItems, addToast, removeToast } = useToast();
+  // Helper to match the old addToast(msg, type) pattern
+  const addToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    if (type === 'success') toast.success(message);
+    else if (type === 'error') toast.error(message);
+    else toast.info(message);
+  }, []);
 
-  // Wire toast function into API client for auto-reload toasts
+  // ---- Version-change detection ----
+  // Track addon version across SWR refreshes; reload the page when it changes.
   useEffect(() => {
-    setToastFn(addToast);
-  }, [addToast]);
-
-  // ---- Data fetchers ----
-
-  const fetchServerInfo = useCallback(async () => {
-    try {
-      const info = await getServerInfo();
-      setServerInfo(info);
-      if (info.addon_version) {
-        const prev = getInitialAddonVersion();
-        setInitialAddonVersion(info.addon_version);
-        if (prev !== null && info.addon_version !== prev) {
-          addToast('New version detected — reloading...', 'info');
-          setTimeout(() => location.reload(), 1500);
-        }
-      }
-    } catch { /* ignore */ }
-  }, [addToast]);
-
-  const fetchEsphomeVersions = useCallback(async () => {
-    try {
-      const data = await getEsphomeVersions();
-      setEsphomeVersions(data);
-    } catch { /* ignore */ }
-  }, []);
-
-  const fetchWorkers = useCallback(async () => {
-    try {
-      const data = await getWorkers();
-      setWorkers(data);
-    } catch { /* ignore */ }
-  }, []);
-
-  const fetchDevicesAndTargets = useCallback(async () => {
-    try {
-      const [tData, dData] = await Promise.all([getTargets(), getDevices()]);
-      setTargets(tData);
-      setDevices(dData);
-    } catch { /* ignore */ }
-  }, []);
-
-  const fetchQueue = useCallback(async () => {
-    try {
-      const data = await getQueue();
-      setQueue(data);
-    } catch { /* ignore */ }
-  }, []);
-
-  // ---- Initial load + polling ----
-  // Use refs so the effect runs exactly once (no re-creation of intervals)
-  const fetchersRef = useRef({ fetchServerInfo, fetchEsphomeVersions, fetchWorkers, fetchDevicesAndTargets, fetchQueue });
-  fetchersRef.current = { fetchServerInfo, fetchEsphomeVersions, fetchWorkers, fetchDevicesAndTargets, fetchQueue };
-
-  useEffect(() => {
-    const f = fetchersRef.current;
-    f.fetchServerInfo();
-    f.fetchEsphomeVersions();
-    f.fetchWorkers();
-    f.fetchDevicesAndTargets();
-    f.fetchQueue();
-
-    const intervals = [
-      setInterval(() => fetchersRef.current.fetchServerInfo(), 30_000),
-      setInterval(() => fetchersRef.current.fetchEsphomeVersions(), 15 * 60_000),
-      setInterval(() => fetchersRef.current.fetchWorkers(), 5_000),
-      setInterval(() => fetchersRef.current.fetchDevicesAndTargets(), 15_000),
-      setInterval(() => fetchersRef.current.fetchQueue(), 3_000),
-    ];
-    return () => intervals.forEach(clearInterval);
-  }, []);
-
-  // Close version dropdown on outside click
-  useEffect(() => {
-    if (!versionDropdownOpen) return;
-    function handler() { setVersionDropdownOpen(false); }
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [versionDropdownOpen]);
+    const version = serverInfo.addon_version;
+    if (!version) return;
+    const prev = getInitialAddonVersion();
+    setInitialAddonVersion(version);
+    if (prev !== null && version !== prev) {
+      addToast('New version detected — reloading...', 'info');
+      setTimeout(() => location.reload(), 1500);
+    }
+  }, [serverInfo.addon_version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Tab navigation ----
 
@@ -203,7 +168,19 @@ export default function App() {
       const data = await compile(targets_);
       addToast(`Queued ${data.enqueued} device(s)`, 'success');
       switchTab('queue');
-      await fetchQueue();
+      mutateQueue();
+    } catch (err) {
+      addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleCompileOnWorker(target: string, clientId: string) {
+    try {
+      await compile([target], clientId);
+      const workerName = workers.find(w => w.client_id === clientId)?.hostname || clientId;
+      addToast(`Queued ${stripYaml(target)} on ${workerName}`, 'success');
+      switchTab('queue');
+      mutateQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -213,7 +190,7 @@ export default function App() {
     try {
       const result = await validateConfig(target);
       const jobId = result.job_id;
-      await fetchQueue();
+      mutateQueue();
       // Open the streaming log modal immediately — user sees output in real time
       if (jobId) setLogJobId(jobId);
     } catch (err) {
@@ -230,7 +207,7 @@ export default function App() {
           : `Cancelled ${data.cancelled} jobs`;
         addToast(msg, 'success');
       }
-      await fetchQueue();
+      mutateQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -245,7 +222,7 @@ export default function App() {
           : `Retrying ${data.retried} jobs`;
         addToast(msg, 'success');
       }
-      await fetchQueue();
+      mutateQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -258,7 +235,7 @@ export default function App() {
         const msg = data.retried === 1 ? 'Retrying 1 job' : `Retrying ${data.retried} failed jobs`;
         addToast(msg, 'success');
       }
-      await fetchQueue();
+      mutateQueue();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -271,7 +248,7 @@ export default function App() {
         const msg = data.cleared === 1 ? 'Cleared 1 succeeded job' : `Cleared ${data.cleared} succeeded jobs`;
         addToast(msg, 'success');
       }
-      await fetchQueue();
+      mutateQueue();
     } catch {
       addToast('Clear failed', 'error');
     }
@@ -280,7 +257,7 @@ export default function App() {
   async function handleClearJobs(ids: string[]) {
     try {
       await removeJobs(ids);
-      await fetchQueue();
+      mutateQueue();
     } catch {
       addToast('Clear failed', 'error');
     }
@@ -293,27 +270,28 @@ export default function App() {
         const msg = data.cleared === 1 ? 'Cleared 1 finished job' : `Cleared ${data.cleared} finished jobs`;
         addToast(msg, 'success');
       }
-      await fetchQueue();
+      mutateQueue();
     } catch {
       addToast('Clear failed', 'error');
     }
   }
 
-  async function handleDisableWorker(id: string, disabled: boolean) {
-    try {
-      await disableWorker(id, disabled);
-      addToast(disabled ? 'Worker disabled' : 'Worker enabled', 'success');
-      await fetchWorkers();
-    } catch {
-      addToast('Error toggling worker', 'error');
-    }
-  }
 
   async function handleRemoveWorker(id: string) {
     try {
       await removeWorker(id);
       addToast('Worker removed', 'success');
-      await fetchWorkers();
+      mutateWorkers();
+    } catch (err) {
+      addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleSetParallelJobs(id: string, count: number) {
+    try {
+      await setWorkerParallelJobs(id, count);
+      addToast(`Set to ${count} slot${count !== 1 ? 's' : ''} — worker will restart`, 'success');
+      mutateWorkers();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -323,7 +301,7 @@ export default function App() {
     try {
       await deleteTarget(target, archive);
       addToast(`${archive ? 'Archived' : 'Deleted'} ${stripYaml(target)}`, 'success');
-      await fetchDevicesAndTargets();
+      mutateDevices();
     } catch (err) {
       addToast('Delete failed: ' + (err as Error).message, 'error');
     }
@@ -333,8 +311,8 @@ export default function App() {
     try {
       const result = await renameTarget(oldTarget, newName);
       addToast(`Renamed to ${stripYaml(result.new_filename)} — compiling new firmware...`, 'success');
-      await fetchDevicesAndTargets();
-      await fetchQueue();
+      mutateDevices();
+      mutateQueue();
       switchTab('queue');
     } catch (err) {
       addToast('Rename failed: ' + (err as Error).message, 'error');
@@ -342,26 +320,20 @@ export default function App() {
   }
 
   async function handleSelectEsphomeVersion(version: string) {
-    setVersionDropdownOpen(false);
     try {
       await setEsphomeVersion(version);
-      setEsphomeVersions(prev => ({ ...prev, selected: version }));
+      mutateEsphomeVersions({ ...esphomeVersions, selected: version }, false);
       addToast('ESPHome version set to ' + version, 'success');
     } catch (err) {
       addToast('Failed to set version: ' + (err as Error).message, 'error');
     }
   }
 
-  function handleVersionDropdownToggle(e: React.MouseEvent) {
-    e.stopPropagation();
-    setVersionDropdownOpen(prev => !prev);
-  }
-
   // ---- Render ----
 
-  const devicesCount = getTabCount('devices', targets, devices, queue, workers);
-  const queueCount = getTabCount('queue', targets, devices, queue, workers);
-  const workersCount = getTabCount('workers', targets, devices, queue, workers);
+  const devicesCount = getTabCount('devices', targets, devices, displayQueue, workers);
+  const queueCount = getTabCount('queue', targets, devices, displayQueue, workers);
+  const workersCount = getTabCount('workers', targets, devices, displayQueue, workers);
 
   // Seed version for connect modal: prefer selected esphome version, fall back to server_version field
   const seedVersion = esphomeVersions.selected ||
@@ -379,17 +351,15 @@ export default function App() {
         <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           Distributed Build
         </span>
-        <span className="version-badge">
+        <span className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap">
           {serverInfo.addon_version ? `v${serverInfo.addon_version}` : 'v?'}
         </span>
         <EsphomeVersionDropdown
           versions={esphomeVersions}
-          open={versionDropdownOpen}
-          onToggle={handleVersionDropdownToggle}
           onSelect={handleSelectEsphomeVersion}
         />
         <span
-          className="version-badge"
+          className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap"
           style={{ cursor: 'pointer' }}
           onClick={() => setEditorTarget('secrets.yaml')}
           title="Edit secrets.yaml"
@@ -397,26 +367,32 @@ export default function App() {
           Secrets
         </span>
         <span
-          className="version-badge"
-          style={{ cursor: 'pointer', fontSize: 13 }}
+          className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[13px] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
           onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? '☀' : '☾'}
         </span>
+        <span
+          className={`inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[13px] cursor-pointer hover:bg-[var(--border)] ${streamerMode ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
+          onClick={() => setStreamerMode(s => !s)}
+          title={streamerMode ? 'Disable streamer mode' : 'Enable streamer mode (blur sensitive data)'}
+        >
+          {streamerMode ? '🔒' : '👁'}
+        </span>
         <span className="spacer" />
         <span className="status-dot" title="Server online" />
       </header>
 
-      <nav className="tab-bar">
+      <nav className="sticky top-[52px] z-40 flex overflow-x-auto border-b border-[var(--border)] bg-[var(--surface)] px-5">
         {(['devices', 'queue', 'workers'] as TabName[]).map(tab => (
           <button
             key={tab}
-            className={`tab${activeTab === tab ? ' active' : ''}`}
+            className={`inline-flex items-center gap-1.5 px-4 h-11 bg-transparent border-none border-b-[3px] border-b-transparent text-[13px] font-medium cursor-pointer whitespace-nowrap transition-colors ${activeTab === tab ? 'text-[var(--text)] border-b-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
             onClick={() => switchTab(tab)}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}{' '}
-            <span className="tab-count">
+            <span className={`inline-block rounded-full px-1.5 py-px text-[11px] font-semibold ${activeTab === tab ? 'bg-[var(--accent)] text-white' : 'bg-[var(--surface2)] text-[var(--text-muted)]'}`}>
               {tab === 'devices' ? devicesCount : tab === 'queue' ? queueCount : workersCount}
             </span>
           </button>
@@ -428,7 +404,9 @@ export default function App() {
           <DevicesTab
             targets={targets}
             devices={devices}
+            workers={workers}
             onCompile={handleCompile}
+            onCompileOnWorker={handleCompileOnWorker}
             onEdit={setEditorTarget}
             onLogs={setDeviceLogTarget}
             onToast={addToast}
@@ -438,7 +416,8 @@ export default function App() {
         )}
         {activeTab === 'queue' && (
           <QueueTab
-            queue={queue}
+            queue={displayQueue}
+            targets={targets}
             workers={workers}
             onCancel={handleCancelJobs}
             onRetry={handleRetryJobs}
@@ -453,16 +432,17 @@ export default function App() {
         {activeTab === 'workers' && (
           <WorkersTab
             workers={workers}
-            queue={queue}
+            queue={displayQueue}
             serverClientVersion={serverInfo.server_client_version}
-            onDisable={handleDisableWorker}
+
             onRemove={handleRemoveWorker}
+            onSetParallelJobs={handleSetParallelJobs}
             onConnectWorker={() => setConnectModalOpen(true)}
           />
         )}
       </main>
 
-      <ToastContainer items={toastItems} onRemove={removeToast} />
+      <Toaster />
 
       <LogModal
         jobId={logJobId}
@@ -471,6 +451,7 @@ export default function App() {
         onClose={() => setLogJobId(null)}
         onRetry={handleRetryJobs}
         onEdit={(target) => { setLogJobId(null); setEditorTarget(target); }}
+        stacked={!!editorTarget}
       />
 
       {deviceLogTarget && (
@@ -483,7 +464,7 @@ export default function App() {
       {editorTarget && (
         <EditorModal
           target={editorTarget}
-          onClose={() => setEditorTarget(null)}
+          onClose={() => { setEditorTarget(null); mutateDevices(); }}
           onToast={addToast}
           onValidate={handleValidate}
           onCompile={(target) => { handleCompile([target]); switchTab('queue'); }}

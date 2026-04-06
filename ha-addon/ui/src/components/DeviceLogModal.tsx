@@ -1,8 +1,16 @@
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildWsUrl } from '../api/client';
 import { stripYaml } from '../utils';
+import { copyTerminalText, downloadTerminalText } from '../utils/terminal';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+import { Button } from './ui/button';
 
 interface Props {
   target: string;
@@ -11,12 +19,19 @@ interface Props {
 
 export function DeviceLogModal({ target, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [containerMounted, setContainerMounted] = useState(false);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Initialize xterm and WebSocket when the modal opens
+  // Track when container div is in the DOM (Dialog portal is async)
+  const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    setContainerMounted(!!node);
+  }, []);
+
+  // Initialize xterm and WebSocket when the container is mounted
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerMounted || !containerRef.current) return;
 
     const term = new Terminal({
       cursorBlink: false,
@@ -85,68 +100,30 @@ export function DeviceLogModal({ target, onClose }: Props) {
         termRef.current = null;
       }
     };
-  }, [target]);
+  }, [target, containerMounted]);
 
-  // Keyboard handler
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
-
-  const mouseDownTargetRef = useRef<EventTarget | null>(null);
-  function handleOverlayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    mouseDownTargetRef.current = e.target;
-  }
-  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.target === e.currentTarget && mouseDownTargetRef.current === e.currentTarget) {
-      onClose();
-    }
-  }
-
-  function handleDownload() {
-    const term = termRef.current;
-    if (!term) return;
-    const buffer = term.buffer.active;
-    const lines: string[] = [];
-    for (let i = 0; i < buffer.length; i++) {
-      lines.push(buffer.getLine(i)?.translateToString() ?? '');
-    }
-    const text = lines.join('\n');
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    a.href = url;
-    a.download = `${stripYaml(target)}-live-${ts}.log`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const handleCopy = () => copyTerminalText(termRef.current);
+  const handleDownload = () => downloadTerminalText(termRef.current, stripYaml(target) + '-live');
 
   return (
-    <div
-      id="device-log-modal"
-      className="modal-overlay open"
-      onMouseDown={handleOverlayMouseDown}
-      onClick={handleOverlayClick}
-    >
-      <div className="modal">
-        <div className="modal-header">
-          <div className="modal-header-left">
-            <h3>{stripYaml(target)}</h3>
-            <span className="badge badge-working">Live Logs</span>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="dialog-lg">
+        <DialogHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+            <DialogTitle>{stripYaml(target)}</DialogTitle>
+            <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide bg-[#1e3a5f] text-[#60a5fa]">Live Logs</span>
           </div>
-          <button className="btn-secondary btn-sm" onClick={handleDownload} title="Download log">
+          <Button variant="secondary" size="sm" onClick={handleCopy} title="Copy log to clipboard">
+            Copy
+          </Button>
+          <Button variant="secondary" size="sm" onClick={handleDownload} title="Download log as file">
             &#8595; Download
-          </button>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          </Button>
+        </DialogHeader>
+        <div style={{ flex: 1, padding: 0, overflow: 'hidden' }}>
+          <div ref={containerCallbackRef} className="xterm-container" style={{ width: '100%', height: '100%' }} />
         </div>
-        <div className="modal-body" style={{ padding: 0 }}>
-          <div ref={containerRef} className="xterm-container" style={{ width: '100%', height: '100%' }} />
-        </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

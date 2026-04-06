@@ -106,10 +106,14 @@ def test_eviction_respects_lru_order(tmp_path):
 
     evicted = []
 
-    def fake_evict():
-        version, path = next(iter(vm._lru.items()))
-        evicted.append(version)
-        del vm._lru[version]
+    def fake_evict(keep_version=None):
+        for version in vm._lru:
+            if version == keep_version:
+                continue
+            evicted.append(version)
+            del vm._lru[version]
+            return True
+        return False
 
     with patch.object(vm, "_evict_lru", side_effect=fake_evict):
         with patch.object(vm, "_install", side_effect=lambda v: _add_fake_version(tmp_path, v)):

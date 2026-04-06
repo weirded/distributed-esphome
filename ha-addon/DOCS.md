@@ -8,7 +8,7 @@ This is useful if Home Assistant runs on a Raspberry Pi or other low-power hardw
 
 If you are reading this, the add-on is already installed. Start the add-on, then open the web UI via the **ESPH Distributed** entry in the HA sidebar.
 
-The add-on will work without any external build workers: it manages the queue and discovers your devices, and the web UI is fully functional. You add build workers separately (see below).
+The add-on includes a built-in local worker (starts with 0 slots, so it is effectively paused). You can increase the slot count via the **Workers** tab to start using it immediately, or add external remote workers on other machines for faster builds.
 
 ## Configuration
 
@@ -26,8 +26,6 @@ If you change `token` after build workers are already running, you must update `
 
 Build workers run as Docker containers on any machine that has network access to both this add-on (port 8765) and your ESP devices (OTA port 3232).
 
-### Quick start — docker run
-
 Open the web UI, go to the **Workers** tab, and click **+ Connect Worker**. A pre-filled `docker run` command is shown with your server URL and token already substituted. Copy and run it on any Docker host.
 
 ```bash
@@ -40,23 +38,9 @@ docker run -d --restart unless-stopped \
 
 The `esphome-versions` volume persists the ESPHome virtualenv cache so reinstalls are not needed after a container restart.
 
-### Packaged archive (start.sh / stop.sh)
+Alternatively, use the `docker-compose.worker.yml` file from the project repository as a starting point for a Compose-managed worker.
 
-For machines where you prefer not to type a long `docker run` command, use the packaging script from the project repository to build a self-contained archive:
-
-```bash
-# On a machine with the repo checked out:
-./package-client.sh http://homeassistant.local:8765 your-token
-
-# Copy the archive to the build host:
-scp dist/esphome-dist-client-*.tar.gz user@build-host:/tmp/
-
-# On the build host:
-cd /tmp && tar -xzf esphome-dist-client-*.tar.gz
-SERVER_URL=http://homeassistant.local:8765 SERVER_TOKEN=your-token ./start.sh
-```
-
-Use `./start.sh --background` to detach after startup. `./stop.sh` stops and removes the container. `./uninstall.sh` removes the container and image.
+You can also adjust the number of parallel job slots on any worker (including the built-in local worker) from the **Workers** tab — set slots to 0 to pause a worker without removing it.
 
 ### Worker environment variables
 
@@ -66,7 +50,7 @@ The most commonly needed variables:
 |----------|---------|-------------|
 | `SERVER_URL` | required | Full URL to this add-on, e.g. `http://homeassistant.local:8765` |
 | `SERVER_TOKEN` | required | Must match the `token` option configured above |
-| `MAX_PARALLEL_JOBS` | `2` | How many compile jobs to run simultaneously on this worker |
+| `MAX_PARALLEL_JOBS` | `2` | How many compile jobs to run simultaneously on this worker (0 = paused) |
 | `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup so the first job does not wait |
 | `HOST_PLATFORM` | — | Override the OS string shown in the UI, useful on macOS Docker hosts |
 
@@ -75,7 +59,7 @@ The most commonly needed variables:
 1. The add-on scans `/config/esphome/*.yaml` for compilable targets and re-scans every 30 seconds.
 2. When you trigger a compile (single device, all, or outdated only), jobs are added to the queue.
 3. Connected build workers poll the server every 5 seconds. When a worker claims a job it receives the full ESPHome config directory — including `secrets.yaml` — as a compressed archive.
-4. The worker ensures the required ESPHome version is installed (up to 3 versions cached on disk via LRU), runs `esphome compile`, then pushes the firmware directly to the device via OTA.
+4. The worker ensures the required ESPHome version is installed (up to 3 versions cached on disk via LRU), then runs `esphome run --no-logs` which compiles and pushes the firmware directly to the device via OTA in a single step.
 5. The result — compile log and OTA outcome — is posted back to the server.
 6. The device poller picks up the newly running firmware version via mDNS within the next poll cycle.
 
@@ -91,11 +75,13 @@ Workers check the server version on every heartbeat. If the server is running a 
 
 The UI is accessible via the HA sidebar or directly at `http://your-ha-host:8765`.
 
-**Devices tab** — lists all YAML configs found in your ESPHome config directory. For each device it shows online/offline status, the firmware version currently running on the device, and whether the config has changed since the last compile. You can trigger a compile for individual devices, all devices, or only those running outdated firmware. An inline YAML editor is also available.
+**Devices tab** — lists all YAML configs found in your ESPHome config directory. For each device it shows online/offline status (using HA connectivity where available), the firmware version currently running on the device, whether the config has changed since the last compile, and which devices are registered in Home Assistant. You can trigger a compile for individual devices, all devices, or only those running outdated firmware. The inline Monaco YAML editor provides ESPHome schema autocomplete, validation, and dirty-line tracking. Additional columns (area, comment, project) are configurable via the column picker. You can also rename or delete devices, copy their API encryption key, and restart devices directly from the UI. Live device logs are available per device.
 
-**Queue tab** — shows live job status with build logs. Failed jobs can be retried; in-progress jobs can be cancelled. A badge on the tab shows the count of active and failed jobs.
+**Queue tab** — shows live job status with build logs. Failed jobs can be retried; in-progress jobs can be cancelled. Old entries are pruned automatically after one hour. A badge on the tab shows the count of active and failed jobs.
 
-**Workers tab** — lists connected build workers with online/offline status, current job per slot, ESPHome version, and system information (architecture, CPU, memory, OS). Workers can be disabled or removed. The **+ Connect Worker** button provides the pre-filled `docker run` command for adding new workers.
+**Workers tab** — lists connected build workers (including the built-in local worker) with online/offline status, current job per slot, ESPHome version, system information (architecture, CPU, memory, OS), and disk space. Workers can have their slot count adjusted or be removed. The **+ Connect Worker** button provides the pre-filled `docker run` command for adding new workers.
+
+A dark/light theme toggle is available in the header.
 
 ## Security Considerations
 

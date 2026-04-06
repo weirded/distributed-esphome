@@ -93,10 +93,16 @@ async def _heartbeat_handler(request: web.Request) -> web.Response:
     if not registry.heartbeat(client_id, system_info):
         # Unknown worker — let it re-register
         return web.json_response({"error": "Unknown client_id"}, status=404)
-    return web.json_response({
+
+    # Include requested config changes in heartbeat response
+    worker = registry.get(client_id)
+    resp: dict = {
         "ok": True,
         "server_client_version": _get_server_client_version(),
-    })
+    }
+    if worker and worker.requested_max_parallel_jobs is not None:
+        resp["set_max_parallel_jobs"] = worker.requested_max_parallel_jobs
+    return web.json_response(resp)
 
 
 async def _deregister_handler(request: web.Request) -> web.Response:

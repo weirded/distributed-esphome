@@ -105,30 +105,19 @@ The web UI is available at `http://your-host:8765`.
 
 ### 3. Add Remote Build Workers (optional)
 
-The Web UI shows a **Docker run** command pre-filled with your server URL and token. You can copy it directly or use the packaging script to build a self-contained archive:
+The add-on includes a built-in local worker (starts with 0 slots). To use it, open the **Workers** tab and increase the slot count.
+
+To add a remote worker on another machine, go to the **Workers** tab and click **+ Connect Worker**. A pre-filled `docker run` command is shown with your server URL and token already substituted:
 
 ```bash
-# Build archive (outputs dist/esphome-dist-client-<version>.tar.gz)
-./package-client.sh http://your-ha-host:8765 your-token
-
-# Deploy to another Docker host
-scp dist/esphome-dist-client-0.0.1.tar.gz user@build-host:/tmp/
-ssh user@build-host "cd /tmp && tar -xzf esphome-dist-client-0.0.1.tar.gz"
-
-# On the build host — start (tails logs; Ctrl-C detaches, container keeps running)
-SERVER_URL=http://your-ha-host:8765 SERVER_TOKEN=your-token ./start.sh
-
-# Or start detached
-SERVER_URL=http://your-ha-host:8765 SERVER_TOKEN=your-token ./start.sh --background
+docker run -d --restart unless-stopped \
+  -e SERVER_URL=http://your-ha-host:8765 \
+  -e SERVER_TOKEN=your-token \
+  -v esphome-versions:/esphome-versions \
+  ghcr.io/weirded/esphome-dist-client:latest
 ```
 
-The archive contains three scripts:
-
-| Script | What it does |
-|--------|-------------|
-| `start.sh` | Loads image (if needed), starts container, tails logs. `--background` to detach. Fails immediately if `SERVER_URL` or `SERVER_TOKEN` are unset. |
-| `stop.sh` | Stops and removes the container. |
-| `uninstall.sh` | Stops container, removes image, optionally removes the `esphome-versions` volume. |
+Alternatively, use `docker-compose.worker.yml` from the project repository as a starting point for a Compose-managed worker.
 
 > **Note:** Build workers must have network access to your ESP devices (same LAN or VLAN) to push firmware via OTA.
 
@@ -138,9 +127,11 @@ Access via the HA sidebar (**ESPH Distributed**) or directly at `http://your-ha-
 
 Three tabs — works on mobile and small laptop screens:
 
-- **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, running version); "config changed" indicator when the YAML has been modified since the last compile; compile individual, all, or only outdated ones; inline YAML editor
-- **Queue** — live job status with logs; retry failed jobs (including OTA failures), cancel in-progress jobs; badge shows active/failed count
-- **Workers** — connected build workers with online status, current job per slot, version, and system info (CPU arch, core count, memory, OS version, CPU model, uptime); enable/disable workers; remove offline workers; **+ Connect Worker** button opens a pre-filled `docker run` command
+- **Devices** — all discovered ESPHome YAML configs with mDNS device status (online/offline, using HA connectivity where available); "config changed" indicator when the YAML has been modified since the last compile; compile individual, all, or only outdated ones; Monaco YAML editor with ESPHome schema autocomplete, validation, and dirty-line tracking; configurable columns (area, comment, project) via the column picker; HA integration status per device; rename/delete devices; copy API encryption key; restart devices; live device logs
+- **Queue** — live job status with logs; retry failed jobs (including OTA failures), cancel in-progress jobs; entries older than one hour are pruned automatically; badge shows active/failed count
+- **Workers** — connected build workers (including the built-in local worker) with online status, current job per slot, version, system info (CPU arch, core count, memory, OS version, CPU model, uptime), and disk space; adjust slot count per worker (0 = paused); remove offline workers; **+ Connect Worker** button opens a pre-filled `docker run` command
+
+A dark/light theme toggle is available in the header.
 
 ## How It Works
 
@@ -148,7 +139,7 @@ Three tabs — works on mobile and small laptop screens:
 2. When you trigger a compile, one job per YAML is added to the queue
 3. Build workers poll `GET /api/v1/jobs/next` every 5 seconds
 4. On claiming a job, the worker receives the full ESPHome config directory as a `tar.gz` bundle (including `secrets.yaml`)
-5. The worker ensures the required ESPHome version is installed (LRU cache, max 3 versions), compiles, then pushes firmware via OTA directly to the device
+5. The worker ensures the required ESPHome version is installed (LRU cache, max 3 versions), then runs `esphome run --no-logs` which compiles and pushes firmware via OTA directly to the device in a single step
 6. Results (compile log, OTA outcome) are posted back to the server
 7. The server's device poller picks up the new firmware version via mDNS + native API within the next poll cycle
 
@@ -191,7 +182,7 @@ All configuration is via environment variables:
 | `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
 | `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
 | `MAX_ESPHOME_VERSIONS` | `3` | Max cached ESPHome versions on disk |
-| `MAX_PARALLEL_JOBS` | `2` | Concurrent build jobs per worker |
+| `MAX_PARALLEL_JOBS` | `2` | Concurrent build jobs per worker (0 = paused) |
 | `HOSTNAME` | system hostname | Worker name shown in UI |
 | `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup |
 | `ESPHOME_BIN` | — | Use this binary instead of the version-manager venvs |
@@ -295,18 +286,19 @@ distributed-esphome/
 │   ├── client/               # Build worker code (also used for standalone Docker image)
 │   │   ├── Dockerfile
 │   │   ├── client.py         # Main loop, heartbeat, job runner, auto-update
-│   │   ├── version_manager.py # ESPHome version install/eviction (LRU)
-│   │   └── dist-scripts/     # start.sh / stop.sh / uninstall.sh + PowerShell variants
-│   └── server/
-│       ├── main.py           # aiohttp app, middleware, background tasks
-│       ├── api.py            # /api/v1/* — worker REST API (Bearer token auth)
-│       ├── ui_api.py         # /ui/api/* — browser JSON API (Ingress auth)
-│       ├── app_config.py     # Centralised configuration (AppConfig dataclass)
-│       ├── job_queue.py      # Job state machine, persistence
-│       ├── scanner.py        # YAML discovery, bundle generation
-│       ├── registry.py       # Build worker registry
-│       ├── device_poller.py  # mDNS listener + aioesphomeapi polling
-│       └── static/index.html # Single-file Web UI (tab layout)
+│   │   └── version_manager.py # ESPHome version install/eviction (LRU)
+│   ├── server/
+│   │   ├── main.py           # aiohttp app, middleware, background tasks
+│   │   ├── api.py            # /api/v1/* — worker REST API (Bearer token auth)
+│   │   ├── ui_api.py         # /ui/api/* — browser JSON API (Ingress auth)
+│   │   ├── app_config.py     # Centralised configuration (AppConfig dataclass)
+│   │   ├── job_queue.py      # Job state machine, persistence
+│   │   ├── scanner.py        # YAML discovery, bundle generation
+│   │   ├── registry.py       # Build worker registry
+│   │   ├── device_poller.py  # mDNS listener + aioesphomeapi polling
+│   │   └── static/           # Built UI assets (generated from ha-addon/ui/)
+│   └── ui/                   # React + Vite + TypeScript frontend (builds into server/static/)
+├── docker-compose.worker.yml # Compose file for running a remote build worker
 ├── scripts/
 │   ├── bump-version.sh       # Update version in all 3 places atomically
 │   ├── install-hooks.sh      # Configure git to use .githooks/
@@ -315,7 +307,6 @@ distributed-esphome/
 ├── .github/workflows/ci.yml            # GitHub Actions: tests + mypy on every push/PR
 ├── .github/workflows/publish-server.yml # Publish standalone server image to GHCR
 ├── .github/workflows/publish-client.yml # Publish worker image to GHCR
-├── package-client.sh         # Build + package client Docker image for distribution
 └── PRD.md                    # Product requirements for ESPHome dashboard replacement
 ```
 
@@ -337,9 +328,6 @@ Both the HA add-on (server) and standalone build workers support **x86-64 and AR
 ```bash
 # Build a native ARM64 worker image (e.g. on Apple Silicon or Raspberry Pi 4)
 docker buildx build --platform linux/arm64 --load -t esphome-dist-client ha-addon/client/
-
-# Package and distribute an ARM64 worker archive
-./package-client.sh http://your-ha-host:8765 your-token linux/arm64
 ```
 
 ## License
