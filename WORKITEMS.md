@@ -157,11 +157,6 @@ LIB.1–3 require a new Docker image (`psutil` needs C compilation). LIB.0 adds 
 - [ ] **SEC.2 Bounded log storage** — workers can stream unlimited log data via `POST /api/v1/jobs/{id}/log`, risking OOM. Add a max log size (e.g. 512KB per job), truncate with a marker.
 - [ ] **SEC.3 Validate max_parallel_jobs on registration** — UI validates 0-32 but `api.py` worker registration accepts any integer. Add bounds check to match.
 
-### Bug Fixes
-
-- [ ] **BF.1 Duplicate devices with hyphens** (BUGS #159, GitHub #2) — `_map_target()` does exact string comparison but ESPHome normalizes hyphens to underscores for mDNS. Normalize before comparing.
-- [ ] **BF.2 OTA diagnostics reports wrong device** (BUGS #160, GitHub #15) — `_ota_network_diagnostics()` regex matches first `name:` in YAML (e.g. a neopixel light component) instead of `esphome.name`. Fix as part of LIB.3: use proper YAML parsing, not regex.
-
 ### Quality Gates (CLAUDE.md)
 
 Capstone for the 1.3 release: codify the standards established by all the above work into CLAUDE.md so future releases don't regress.
@@ -202,6 +197,10 @@ Theme: **Full replacement for the stock ESPHome dashboard.** Every feature the b
 ### Thread / IPv6 Support
 
 - [ ] **4.6 Thread device IP display** (GitHub #17) — Thread devices use IPv6 and don't show an IP address in the dashboard. Display IPv6 addresses and add a wifi/thread indicator to the device row.
+
+### Unmanaged Devices
+
+- [ ] **6.8 Hide/remove unmanaged devices** (GitHub #18) — add ability to dismiss or hide mDNS-discovered devices that have no config file. Also extend streamer mode to blur unmanaged device info.
 
 ### Queue UX
 

@@ -1,7 +1,7 @@
 # Based on GitHub issue #6 — ESP32-C3 with external_components from GitHub
 # Tests: git clone during compile, ESP-IDF framework, C3 RISC-V toolchain
 esphome:
-  name: compile-test-external-components
+  name: ct-ext-components
   friendly_name: "Test External Components"
 
 esp32:

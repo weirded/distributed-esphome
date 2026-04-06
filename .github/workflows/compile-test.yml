@@ -49,6 +49,7 @@ jobs:
           - esp32-hyphenated-name
           - esp32s3-complex
           - esp32-bluetooth-proxy
+          - esp32c6-thread
 
     steps:
       - uses: actions/checkout@v4
