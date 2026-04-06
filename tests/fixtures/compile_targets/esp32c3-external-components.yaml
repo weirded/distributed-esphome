@@ -1,0 +1,34 @@
+# Based on GitHub issue #6 — ESP32-C3 with external_components from GitHub
+# Tests: git clone during compile, ESP-IDF framework, C3 RISC-V toolchain
+esphome:
+  name: compile-test-external-components
+  friendly_name: "Test External Components"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+
+improv_serial:
+
+captive_portal:
+
+web_server:
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: led_strip
+    pin: GPIO8
+    num_leds: 1
+    rmt_channel: 0
+    chipset: WS2812
+    rgb_order: GRB
+    name: "Status LED"
