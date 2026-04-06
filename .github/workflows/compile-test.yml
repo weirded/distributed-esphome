@@ -1,0 +1,110 @@
+name: ESPHome Compile Tests
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - "ha-addon/client/**"
+      - "ha-addon/Dockerfile"
+      - "ha-addon/build.yaml"
+      - "ha-addon/server/requirements.txt"
+      - "tests/fixtures/compile_targets/**"
+      - ".github/workflows/compile-test.yml"
+  pull_request:
+    paths:
+      - "ha-addon/client/**"
+      - "ha-addon/Dockerfile"
+      - "ha-addon/build.yaml"
+      - "tests/fixtures/compile_targets/**"
+  workflow_dispatch: # manual trigger
+
+concurrency:
+  group: compile-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ESPHOME_VERSION: "2026.3.2"
+
+jobs:
+  # Test the client Docker image (used by remote workers)
+  compile-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - esp8266-arduino
+          - esp32-arduino
+          - esp32-idf
+          - esp32s2-idf
+          - esp32s3-idf
+          - esp32c3-idf
+          - esp32c6-idf
+          - rp2040-arduino
+          - bk72xx-libretiny
+          - rtl87xx-libretiny
+          - esp32c3-external-components
+          - esp8266-with-packages
+          - esp32-hyphenated-name
+          - esp32s3-complex
+          - esp32-bluetooth-proxy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build client image
+        run: docker build -t esphome-dist-client ha-addon/client/
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: /tmp/esphome-compile-cache
+          key: pio-${{ matrix.target }}-${{ env.ESPHOME_VERSION }}
+          restore-keys: pio-${{ matrix.target }}-
+
+      - name: Compile ${{ matrix.target }}
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config:ro" \
+            -v /tmp/esphome-compile-cache:/esphome-versions \
+            esphome-dist-client \
+            -c "pip install --no-cache-dir 'esphome==${{ env.ESPHOME_VERSION }}' && esphome compile /config/${{ matrix.target }}.yaml"
+
+  # Test the server Docker image (used by local worker)
+  compile-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Test a subset on the server image — if client passes, server should too
+        # Focus on the platforms that historically had issues (toolchain deps)
+        target:
+          - esp8266-arduino
+          - esp32-idf
+          - esp32s3-idf
+          - esp32c3-idf
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build server image
+        run: docker build -t esphome-dist-server ha-addon/
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: /tmp/esphome-compile-cache
+          key: pio-server-${{ matrix.target }}-${{ env.ESPHOME_VERSION }}
+          restore-keys: pio-server-${{ matrix.target }}-
+
+      - name: Compile ${{ matrix.target }}
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config:ro" \
+            -v /tmp/esphome-compile-cache:/esphome-versions \
+            esphome-dist-server \
+            -c "pip install --no-cache-dir 'esphome==${{ env.ESPHOME_VERSION }}' && esphome compile /config/${{ matrix.target }}.yaml"

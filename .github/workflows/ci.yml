@@ -27,11 +27,31 @@ jobs:
             requests \
             mypy types-requests types-PyYAML
 
-      - name: Run unit tests
-        run: pytest tests/ --ignore=tests/test_e2e_client.py -v
+      - name: Run all tests (unit + e2e)
+        run: pytest tests/ -v
 
       - name: mypy — server
         run: mypy ha-addon/server/ --ignore-missing-imports
 
       - name: mypy — client
         run: mypy ha-addon/client/ --ignore-missing-imports
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ha-addon/ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ha-addon/ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ha-addon/ui
+        run: npm run build
