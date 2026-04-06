@@ -136,7 +136,7 @@
 
 157-158. FIXED (1.2.0-dev.60) - Local worker compilation failures. Root cause: Alpine base image's musl libc can't run PlatformIO's glibc cross-compiler toolchains (segfault with gcompat). Fix: hardcoded `FROM python:3.11-slim` (Debian) in Dockerfile — same proven base as the client image. HA Supervisor overrides BUILD_FROM arg, so hardcoding was necessary. Includes gcc, libffi-dev, libssl-dev, git.
 
-
+159. OPEN - Duplicate device rows for configs with hyphens in esphome.name. (GitHub issue #2) Devices appear twice: once as managed target (with checkbox, unknown status) and once as unmanaged device (no checkbox, online). Root cause: ESPHome normalizes device names for mDNS — hyphens become underscores (e.g. `led-controller-v2-rocket-lamp` advertises as `led_controller_v2_rocket_lamp`). `_map_target()` in device_poller.py does exact string comparison, so the mDNS name doesn't match the filename stem or `esphome.name` (both use hyphens). Result: `compile_target` is None, device lands in unmanaged list, and the managed target row has no device info. Fix: normalize hyphens/underscores before comparing in `_map_target()` and `build_name_to_target_map()`. Exacerbated when remote `packages:` resolution fails (git clone timeout), since the explicit `esphome.name` entry in `name_map` is also missing.
 
 ---
 

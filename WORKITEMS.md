@@ -58,54 +58,54 @@ Mark items `[x]` when complete.
 
 ---
 
-## 1.2.0 — Design System + Editor (current release)
+## Completed in 1.2.0
 
-Theme: **Complete the shadcn/ui migration and ship the file tree editor.** These are the two most visible improvements for users — a polished, consistent UI and the ability to edit include files.
+<details>
+<summary>shadcn/ui design system, TanStack Table, SWR, local worker, 65+ bug fixes</summary>
 
-### Design System Migration
+- [x] shadcn/ui design system: Dialog, Button, DropdownMenu, Sonner toast, Tailwind preflight
+- [x] TanStack Table for all three tabs (sorting, column visibility, row selection)
+- [x] SWR data fetching (replaced manual setInterval polling)
+- [x] Built-in local worker (python:3.11-slim base for PlatformIO compatibility)
+- [x] Configurable device columns (Area, Comment, Project) with gear icon picker
+- [x] Streamer mode (blur sensitive data)
+- [x] Worker management: 0-slot pause, disk reporting, debounced controls
+- [x] Archive management API (list, restore, permanent delete)
+- [x] Copy to Clipboard on log modals
+- [x] Unsaved changes warning in editor (shadcn Dialog)
+- [x] 65+ bug fixes (#90-#158)
 
-- [x] **DS.2a Buttons** (1.2.0-dev.25) — shadcn Button with warn/success variants, all 33 instances migrated
-- [x] **DS.2b Badges** (1.2.0-dev.30) — `getJobBadge()` returns Tailwind classes, removed `.badge-*` CSS
-- [x] **DS.2c Inputs/Selects** (1.2.0-dev.30) — search boxes and ConnectWorkerModal form fields use Tailwind classes
-- [x] **DS.2d Status dots** (1.2.0-dev.20) — shared `StatusDot` component
-- [x] **DS.3 Modals** (1.2.0-dev.23) — all 5 modals use shadcn Dialog; Tailwind preflight re-enabled (1.2.0-dev.24)
-- [x] **DS.4a Tab bar** (1.2.0-dev.31) — Tailwind classes in App.tsx, removed `.tab-*` CSS
-- [x] **DS.4b Panels** (1.2.0-dev.32) — Tailwind classes, removed `.panel-*` CSS
-- [x] **DS.4c Version badge** (1.2.0-dev.32) — Tailwind classes, removed `.version-badge` CSS
-- [x] **DS.4e Version dropdown** (1.2.0-dev.18) — shadcn DropdownMenu
-- [x] **DS.5 Cleanup** — Toast.tsx, App.css, index.css, Vite SVGs deleted; old modal/button/badge/tab/panel CSS removed
-
-**DS migration complete.** Tailwind preflight enabled. All interactive components use shadcn/Base UI. Remaining CSS: table styling, editor/xterm structural classes, status dots.
-
-### UI Cleanup
-
-- [x] **UI.1 Extract shared utilities** (1.2.0-dev.35) — `timeAgo()` to utils.ts, terminal helpers to utils/terminal.ts
-- [x] **UI.2 Structural fixes** (1.2.0-dev.35) — deleted usePolling.ts, useWebSocket.ts; removed redundant Escape handlers (Dialog handles natively)
-- [x] **UI.3 Add frontend section to CLAUDE.md** (1.2.0-dev.35)
-
-### TanStack Table
-
-Replace hand-rolled table logic with TanStack Table (`@tanstack/react-table`). Headless — renders through existing shadcn Table components.
-
-- [x] **TT.1 DevicesTab** (1.2.0-dev.37) — TanStack column defs, sorting, column visibility (localStorage), row selection. Deleted useSortable, SortableHeader, DOM-query checkbox pattern.
-- [x] **TT.2 QueueTab** (1.2.0-dev.37) — TanStack sorting with custom stateSort fn, row selection. Deleted QueueRow component (rendering inline in column defs).
-- [x] **TT.3 WorkersTab** (1.2.0-dev.38) — TanStack sorting, local-worker pinned to top post-sort. Multi-row slot expansion outside TanStack.
-- Deleted: `useSortable.ts`, `SortableHeader.tsx`, `hooks/` directory
-
-### Other 1.2.0
-
-- [x] **LIB.4 SWR for UI data fetching** (1.2.0-dev.39) — replaced 5 manual setInterval loops with useSWR hooks (auto cache/dedup/stale-while-revalidate). Removed fetchersRef, useCallback fetchers.
-- [x] **6.5 Streamer mode** (1.2.0-dev.39) — toggle in header blurs IPs, tokens, docker commands via `.sensitive` class + CSS `filter: blur()`. Persisted in localStorage.
+</details>
 
 ---
 
-## 1.3.0 — Quality + Testing
+## 1.3.0 — Quality + Testing (current release)
 
-Theme: **Harden the codebase.** Fill test coverage gaps, add CI, clean up Python code, add Playwright browser tests. No new features — focus on reliability and maintainability.
+Theme: **Harden the codebase.** Fill test coverage gaps, add CI, clean up Python code, add Playwright browser tests, and add ESPHome build integration tests. No new user features — focus on reliability and preventing regressions.
 
-### Test Suite
+### ESPHome Build Integration Tests
 
-126 existing tests are all genuine and valuable. Main gaps: api.py, ui_api.py, main.py (1,780 lines) have zero coverage.
+Fixture YAML configs that cover every supported ESPHome platform/framework combination. Run actual `esphome compile` in CI and on the local worker to catch toolchain/dependency regressions early (like the Alpine glibc issues in 1.2.0).
+
+- [ ] **BT.1 Fixture configs** — minimal compilable YAML for each platform:
+  - ESP8266 (Arduino) — e.g. `d1_mini`
+  - ESP32 (Arduino) — e.g. `esp32dev`
+  - ESP32 (ESP-IDF) — e.g. `esp32dev` with `framework: esp-idf`
+  - ESP32-S2 (ESP-IDF) — e.g. `esp32-s2-saola-1`
+  - ESP32-S3 (ESP-IDF) — e.g. `esp32-s3-devkitc-1`
+  - ESP32-C3 (ESP-IDF, RISC-V) — e.g. `esp32-c3-devkitm-1`
+  - ESP32-C6 (ESP-IDF, RISC-V) — e.g. `esp32-c6-devkitc-1`
+  - RP2040 (Arduino) — e.g. `rpipicow`
+  - ESP32-H2 (ESP-IDF) — if supported
+  - BK72xx (LibreTiny) — e.g. `generic-bk7231n-qfn32-tuya`
+  - RTL87xx (LibreTiny) — e.g. `generic-rtl8710bn-2mb-788k`
+- [ ] **BT.2 Docker compile test script** — `scripts/test-compile.sh` that builds each fixture in the client Docker image (`esphome-dist-client`), exits non-zero on any failure
+- [ ] **BT.3 Local worker compile test** — same fixtures compiled via the local worker (server add-on image) to validate the python:3.11-slim base
+- [ ] **BT.4 CI integration** — run `test-compile.sh` in GitHub Actions on push to `develop` (can be slow — use matrix or sequential, cache ESPHome venvs)
+
+### Python Test Suite
+
+117 existing tests. Main gaps: api.py, ui_api.py, main.py have low coverage.
 
 - [ ] **T.0 Fix test anti-patterns** — redundant sys.path, hardcoded /tmp, sync async wrappers, module-level mocking
 - [ ] **T.1 Auth middleware tests** (~6) — security critical
@@ -150,6 +150,10 @@ LIB.1–3 require a new Docker image (`psutil` needs C compilation). LIB.0 adds 
 - [ ] **LIB.1 `psutil` for client system info** — replace ~200 lines of /proc/cpuinfo parsing with cross-platform API
 - [ ] **LIB.2 `tenacity` for client retry logic** — decorator-based retries + exponential backoff
 - [ ] **LIB.3 `pyyaml` for client network diagnostics** — replace fragile regex YAML parsing
+
+### Bug Fixes
+
+- [ ] **BF.1 Duplicate devices with hyphens** (BUGS #159, GitHub #2) — `_map_target()` does exact string comparison but ESPHome normalizes hyphens to underscores for mDNS. Normalize before comparing.
 
 ### Quality Gates (CLAUDE.md)
 
