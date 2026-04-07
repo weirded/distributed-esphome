@@ -810,7 +810,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         # Build + OTA via `esphome run` (compile and upload in one step)
         # ---------------------------------------------------------------
         _report_status(job_id, "Compiling + OTA" + (" (retry)" if ota_only else ""))
-        run_cmd = [esphome_bin, "run", target_path, "--no-logs"]
+        run_cmd = [esphome_bin, "run", target_path]
         ota_address = job.get("ota_address")
         if ota_address:
             run_cmd.extend(["--device", ota_address])
@@ -841,7 +841,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                 _flush_log_text(job_id, "\n--- OTA failed, retrying in 5s ---\n")
                 time.sleep(5)
                 _report_status(job_id, "OTA Retry")
-                upload_cmd = [esphome_bin, "upload", target_path, "--no-logs"]
+                upload_cmd = [esphome_bin, "upload", target_path]
                 if ota_address:
                     upload_cmd.extend(["--device", ota_address])
                 retry_log, retry_ok = _run_subprocess(

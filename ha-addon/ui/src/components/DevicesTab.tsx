@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiKey, restartDevice } from '../api/client';
 import type { Device, Target } from '../types';
-import { stripYaml } from '../utils';
+import { displayIpAddress, isSensitiveModeEnabled, stripYaml } from '../utils';
 import { useSortable } from '../hooks/useSortable';
 import { SortableHeader } from './SortableHeader';
 
@@ -111,6 +111,7 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onLogs, onToas
   const { sort, handleSort, sortedItems } = useSortable();
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const sensitiveMode = isSensitiveModeEnabled();
 
   // Track checked state in a ref — we read DOM directly to avoid re-render loops
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -287,6 +288,7 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onLogs, onToas
                     <TargetRow
                       key={t.target}
                       target={t}
+                      sensitiveMode={sensitiveMode}
                       onCompile={onCompile}
                       onEdit={onEdit}
                       onLogs={onLogs}
@@ -296,7 +298,7 @@ export function DevicesTab({ targets, devices, onCompile, onEdit, onLogs, onToas
                     />
                   ))}
                   {filteredUnmanaged.map(d => (
-                    <UnmanagedRow key={d.name} device={d} />
+                    <UnmanagedRow key={d.name} device={d} sensitiveMode={sensitiveMode} />
                   ))}
                 </>
               )}
@@ -450,6 +452,7 @@ function DeviceMenu({
 
 function TargetRow({
   target: t,
+  sensitiveMode,
   onCompile,
   onEdit,
   onLogs,
@@ -458,6 +461,7 @@ function TargetRow({
   onRename,
 }: {
   target: Target;
+  sensitiveMode: boolean;
   onCompile: (targets: string[]) => void;
   onEdit: (target: string) => void;
   onLogs: (target: string) => void;
@@ -481,7 +485,8 @@ function TargetRow({
 
   const upgradeBtnCls = t.needs_update ? 'btn-success' : 'btn-secondary';
   const displayName = t.friendly_name || t.device_name || stripYaml(t.target);
-  const showIpLink = t.has_web_server && t.online && t.ip_address;
+  const ipText = displayIpAddress(t.ip_address, sensitiveMode);
+  const showIpLink = !sensitiveMode && t.has_web_server && t.online && t.ip_address;
 
   const haCell: React.ReactNode = t.ha_configured
     ? <span style={{ color: 'var(--success)' }}>Yes</span>
@@ -506,10 +511,10 @@ function TargetRow({
               rel="noopener"
               className="ip-link"
             >
-              {t.ip_address}<span style={{ fontSize: 10 }}>&#8599;</span>
+              {ipText}<span style={{ fontSize: 10 }}>&#8599;</span>
             </a>
           )
-          : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
+          : <span className="ip-link" style={{ color: 'var(--text-muted)' }}>{ipText}</span>}
       </td>
       <td style={{ fontSize: 12 }}>
         {t.running_version || '—'}
@@ -526,10 +531,11 @@ function TargetRow({
   );
 }
 
-function UnmanagedRow({ device: d }: { device: Device }) {
+function UnmanagedRow({ device: d, sensitiveMode }: { device: Device; sensitiveMode: boolean }) {
   const statusEl = d.online
     ? <><span className="dot dot-online"></span>Online</>
     : <><span className="dot dot-offline"></span>Offline</>;
+  const ipText = displayIpAddress(d.ip_address, sensitiveMode);
 
   // Unmanaged devices (no config) don't have web_server info — never link their IP
   return (
@@ -542,7 +548,7 @@ function UnmanagedRow({ device: d }: { device: Device }) {
       <td>{statusEl}</td>
       <td style={{ fontSize: 12 }}><span style={{ color: 'var(--text-muted)' }}>—</span></td>
       <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
-        <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
+        <span className="ip-link" style={{ color: 'var(--text-muted)' }}>{ipText}</span>
       </td>
       <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>
       <td></td>
