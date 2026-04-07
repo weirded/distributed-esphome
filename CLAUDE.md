@@ -173,6 +173,7 @@ cd ha-addon/ui && npx vite         # dev server
 - **All API calls go through `api/client.ts`.** Components never call `fetch` directly.
 - **Batch operations get one toast.** When an action affects multiple items (e.g. "clean all caches"), use `Promise.all` and show a single summary toast — never one toast per item. Bulk actions should be handled in App.tsx, not by iterating callbacks in child components.
 - **Think about the UX.** Before shipping a UI change, mentally walk through it: does the layout make sense? Does it look right on the real dashboard with real data? Avoid `flex` on `<td>`, buttons that look like links, or anything that would look sloppy to a user.
+- **Update `.gitignore` whenever introducing a new tool, linter, framework, or library.** Most tools generate a cache, lock, build, or report directory (`.ruff_cache/`, `.pytest_cache/`, `.mypy_cache/`, `node_modules/`, `playwright-report/`, `test-results/`, `.vite/`, `htmlcov/`, `dist/`, `build/`, `.coverage`, etc.). Add the appropriate entries to `.gitignore` in the same commit that introduces the tool — don't wait for the cache to show up untracked.
 
 ## Project Tracking
 
