@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 QUEUE_FILE = Path("/data/queue.json")
 MAX_RETRIES = 3
+MAX_LOG_BYTES = 512 * 1024  # 512 KB per job
+LOG_TRUNCATED_MARKER = "\n\n--- LOG TRUNCATED (exceeded 512 KB) ---\n"
 
 
 class JobState(str, Enum):
@@ -457,12 +459,20 @@ class JobQueue:
             return True
 
     async def append_log(self, job_id: str, text: str) -> bool:
-        """Append streaming log text to a running job (transient; not persisted)."""
+        """Append streaming log text to a running job (transient; not persisted).
+
+        Caps the streaming log at MAX_LOG_BYTES to prevent OOM from
+        runaway build output.
+        """
         async with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 return False
+            if len(job._streaming_log) >= MAX_LOG_BYTES:
+                return True  # silently drop — already truncated
             job._streaming_log += text
+            if len(job._streaming_log) > MAX_LOG_BYTES:
+                job._streaming_log = job._streaming_log[:MAX_LOG_BYTES] + LOG_TRUNCATED_MARKER
             return True
 
     def get_all(self) -> list[Job]:

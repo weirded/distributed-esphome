@@ -143,7 +143,7 @@ LIB.1–3 require a new Docker image (`psutil` needs C compilation). LIB.0 adds 
 ### Security Hardening
 
 - [x] **SEC.1 Timing-safe token comparison** *(1.3.0-dev)* — `constant_time_compare()` in `helpers.py`, used in auth middleware and `api.py`
-- [ ] **SEC.2 Bounded log storage** — workers can stream unlimited log data via `POST /api/v1/jobs/{id}/log`, risking OOM. Add a max log size (e.g. 512KB per job), truncate with a marker.
+- [x] **SEC.2 Bounded log storage** *(1.3.0-dev)* — `append_log()` caps `_streaming_log` at 512 KB per job, truncates with marker, silently drops further appends
 - [x] **SEC.3 Validate max_parallel_jobs on registration** *(1.3.0-dev)* — `clamp()` in `helpers.py`, bounds 0-32 in `api.py` worker registration
 
 ### Quality Gates (CLAUDE.md)

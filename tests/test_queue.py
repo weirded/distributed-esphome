@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from job_queue import JobQueue, JobState
+from job_queue import JobQueue, JobState, MAX_LOG_BYTES, LOG_TRUNCATED_MARKER
 
 
 # ---------------------------------------------------------------------------
@@ -442,3 +442,51 @@ async def test_retry_multiple_jobs(queue):
     assert len(new_jobs) == 2
     targets = {j.target for j in new_jobs}
     assert targets == {"d1.yaml", "d2.yaml"}
+
+
+# ---------------------------------------------------------------------------
+# Bounded log storage (SEC.2)
+# ---------------------------------------------------------------------------
+
+async def test_append_log_basic(queue):
+    await _enqueue(queue, "device1.yaml")
+    job = await queue.claim_next("client-A")
+    ok = await queue.append_log(job.id, "line 1\n")
+    assert ok
+    assert queue.get(job.id)._streaming_log == "line 1\n"
+
+
+async def test_append_log_unknown_job(queue):
+    ok = await queue.append_log("nonexistent", "text")
+    assert not ok
+
+
+async def test_append_log_truncates_at_max(queue):
+    """Log exceeding MAX_LOG_BYTES is truncated with a marker."""
+    await _enqueue(queue, "device1.yaml")
+    job = await queue.claim_next("client-A")
+
+    # Write just under the limit, then push over
+    chunk = "x" * (MAX_LOG_BYTES - 10)
+    await queue.append_log(job.id, chunk)
+    await queue.append_log(job.id, "y" * 100)  # pushes over
+
+    log = queue.get(job.id)._streaming_log
+    assert log.endswith(LOG_TRUNCATED_MARKER)
+    # Total should be capped content + marker
+    assert len(log) == MAX_LOG_BYTES + len(LOG_TRUNCATED_MARKER)
+
+
+async def test_append_log_drops_after_truncation(queue):
+    """After truncation, further appends are silently dropped."""
+    await _enqueue(queue, "device1.yaml")
+    job = await queue.claim_next("client-A")
+
+    # Fill past max to trigger truncation
+    await queue.append_log(job.id, "x" * (MAX_LOG_BYTES + 1))
+    log_after_truncate = queue.get(job.id)._streaming_log
+    assert LOG_TRUNCATED_MARKER in log_after_truncate
+
+    # Further appends should not change the log
+    await queue.append_log(job.id, "more data")
+    assert queue.get(job.id)._streaming_log == log_after_truncate
