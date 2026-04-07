@@ -45,6 +45,3 @@ ha-addon/dist/
 
 # Local deployment scripts
 push-to-hass-4.sh
-
-# Local bug tracking
-BUGS.md

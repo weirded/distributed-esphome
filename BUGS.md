@@ -140,6 +140,10 @@
 
 159. OPEN - Duplicate device rows for configs with hyphens in esphome.name. (GitHub issue #2) Devices appear twice: once as managed target (with checkbox, unknown status) and once as unmanaged device (no checkbox, online). Root cause: ESPHome normalizes device names for mDNS — hyphens become underscores (e.g. `led-controller-v2-rocket-lamp` advertises as `led_controller_v2_rocket_lamp`). `_map_target()` in device_poller.py does exact string comparison, so the mDNS name doesn't match the filename stem or `esphome.name` (both use hyphens). Result: `compile_target` is None, device lands in unmanaged list, and the managed target row has no device info. Fix: normalize hyphens/underscores before comparing in `_map_target()` and `build_name_to_target_map()`. Exacerbated when remote `packages:` resolution fails (git clone timeout), since the explicit `esphome.name` entry in `name_map` is also missing.
 
+160. There is a layout issue with the hamburger menu. If it gets opened on the bottom right corner of the screen, the menu still drops down and is below the edge of the screen, not usable. 
+
+
+
 ---
 
 <details>
