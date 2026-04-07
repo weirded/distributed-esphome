@@ -171,6 +171,33 @@ def test_map_target_parametrized(device_name, targets, expected, poller):
 
 
 # ---------------------------------------------------------------------------
+# Hyphen/underscore normalization (bug #159)
+# ---------------------------------------------------------------------------
+
+def test_map_target_hyphen_to_underscore(poller):
+    """mDNS advertises underscores but esphome.name uses hyphens."""
+    poller.update_compile_targets(["led-controller-v2.yaml"])
+    # mDNS name has underscores
+    assert poller._map_target("led_controller_v2") == "led-controller-v2.yaml"
+
+
+def test_map_target_underscore_to_hyphen(poller):
+    """Reverse direction: config uses underscores, mDNS could use either."""
+    poller.update_compile_targets(["led_controller.yaml"])
+    assert poller._map_target("led-controller") == "led_controller.yaml"
+
+
+def test_map_target_name_map_hyphen_normalization(poller):
+    """name_to_target map entries also match with normalized hyphens/underscores."""
+    poller.update_compile_targets(
+        ["rocket-lamp.yaml"],
+        name_to_target={"led-controller-v2-rocket-lamp": "rocket-lamp.yaml"},
+    )
+    # mDNS advertises with underscores
+    assert poller._map_target("led_controller_v2_rocket_lamp") == "rocket-lamp.yaml"
+
+
+# ---------------------------------------------------------------------------
 # _ping_device
 # ---------------------------------------------------------------------------
 

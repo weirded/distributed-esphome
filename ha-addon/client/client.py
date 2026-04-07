@@ -29,7 +29,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0-dev.3"
+CLIENT_VERSION = "1.3.0-dev.4"
 
 
 # ---------------------------------------------------------------------------
@@ -405,17 +405,39 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
     except Exception:
         logger.debug("Could not parse device address/port from YAML %s", target_path, exc_info=True)
 
-    # Extract device name for DNS fallback
+    # Extract device name from the esphome: block (not any other component's name: key).
+    # Parse with yaml.safe_load to avoid the regex pitfall of matching the wrong name:.
     device_name = None
     try:
+        import yaml as _yaml  # noqa: PLC0415
         with open(target_path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                m = _re.match(r'\s*name:\s*["\']?([a-zA-Z0-9_-]+)', line)
-                if m:
-                    device_name = m.group(1)
-                    break
+            raw = _yaml.safe_load(f)
+        if isinstance(raw, dict):
+            esphome_block = raw.get("esphome") or {}
+            if isinstance(esphome_block, dict) and esphome_block.get("name"):
+                device_name = str(esphome_block["name"])
     except Exception:
-        logger.debug("Could not extract device name from YAML %s", target_path, exc_info=True)
+        # Fallback: look for name: directly under an esphome: line
+        try:
+            with open(target_path, encoding="utf-8", errors="replace") as f:
+                content_lines = f.readlines()
+            in_esphome = False
+            for line in content_lines:
+                stripped = line.lstrip()
+                # Top-level key (no indent) — check if it's esphome:
+                if line and not line[0].isspace() and stripped.startswith("esphome:"):
+                    in_esphome = True
+                    continue
+                elif line and not line[0].isspace():
+                    in_esphome = False
+                    continue
+                if in_esphome:
+                    m = _re.match(r'\s+name:\s*["\']?([a-zA-Z0-9_-]+)', line)
+                    if m:
+                        device_name = m.group(1)
+                        break
+        except Exception:
+            logger.debug("Could not extract device name from YAML %s", target_path, exc_info=True)
 
     # If use_address is a hostname (not IP), try to resolve it
     if device_addr and not _re.match(r'\d+\.\d+\.\d+\.\d+$', device_addr):

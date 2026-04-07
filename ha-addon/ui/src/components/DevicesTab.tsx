@@ -705,6 +705,19 @@ function DeviceMenu({
       <div className="fixed inset-0 z-50" onClick={onClose} />
       <div
         className="fixed z-50 min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
+        ref={(el) => {
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          // If menu extends below viewport, flip it upward
+          if (rect.bottom > window.innerHeight) {
+            el.style.top = `${Math.max(4, position.top - rect.height - 4)}px`;
+          }
+          // If menu extends beyond left edge after translateX(-100%), nudge right
+          if (rect.left < 0) {
+            el.style.left = `${position.left}px`;
+            el.style.transform = 'none';
+          }
+        }}
         style={{ top: position.top, left: position.left, transform: 'translateX(-100%)' }}
       >
         <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Device</div>

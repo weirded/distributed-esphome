@@ -410,18 +410,33 @@ class DevicePoller:
                 if not dev.ip_address:
                     dev.ip_address = addr
 
+    @staticmethod
+    def _normalize(name: str) -> str:
+        """Normalize a device name for comparison (hyphens ↔ underscores).
+
+        ESPHome normalizes device names for mDNS — hyphens become underscores.
+        """
+        return name.replace("-", "_")
+
     def _map_target(self, device_name: str) -> Optional[str]:
         """Return the YAML filename matching *device_name*, or None.
 
         Checks the name-to-target map first (covers both explicit
         ``esphome.name`` overrides and filename stems), then falls back
-        to a direct filename-stem comparison.
+        to a direct filename-stem comparison.  Comparisons are
+        hyphen/underscore-insensitive because ESPHome normalizes hyphens
+        to underscores in mDNS advertisements.
         """
+        norm = self._normalize(device_name)
         if device_name in self._name_to_target:
             return self._name_to_target[device_name]
+        # Try normalized lookup
+        for key, target in self._name_to_target.items():
+            if self._normalize(key) == norm:
+                return target
         for target in self._compile_targets:
             stem = Path(target).stem
-            if stem == device_name:
+            if self._normalize(stem) == norm:
                 return target
         return None
 

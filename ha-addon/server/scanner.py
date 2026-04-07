@@ -331,6 +331,11 @@ def build_name_to_target_map(
             if esph_name:
                 device_name = str(esph_name)
                 name_map[device_name] = target
+                # Also map the underscore-normalized variant so mDNS names
+                # (which replace hyphens with underscores) resolve correctly.
+                normalized = device_name.replace("-", "_")
+                if normalized != device_name:
+                    name_map[normalized] = target
 
         key_name = device_name or stem
 
