@@ -39,9 +39,18 @@ htmlcov/
 # Docker
 *.env
 
+# Vite
+.vite/
+
+# Node
+node_modules/
+
+# Playwright
+test-results/
+playwright-report/
+
 # HA add-on local build
 ha-addon/dist/
-
 
 # Local deployment scripts
 push-to-hass-4.sh
