@@ -108,10 +108,16 @@ async def _enqueue_job(
 
 
 async def _register(ta: _App, hostname: str = "build-box", platform: str = "linux/amd64",
-                    system_info: dict | None = None) -> str:
+                    system_info: dict | None = None,
+                    image_version: str | None = "1") -> str:
+    # Defaults to image_version="1" (current MIN_IMAGE_VERSION) so most tests
+    # exercise the happy path. Tests that want to simulate a stale-image worker
+    # explicitly pass image_version=None.
     body: dict = {"hostname": hostname, "platform": platform}
     if system_info is not None:
         body["system_info"] = system_info
+    if image_version is not None:
+        body["image_version"] = image_version
     resp = await ta.post("/api/v1/workers/register", json=body, headers=AUTH_HEADERS)
     assert resp.status == 200
     return (await resp.json())["client_id"]
@@ -842,5 +848,175 @@ async def test_status_endpoint(tmp_path):
         assert "esphome_version" in data
         assert "online_workers" in data
         assert "queue_size" in data
+    finally:
+        await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# LIB.0 — Docker image version detection
+# ---------------------------------------------------------------------------
+
+async def test_register_stores_image_version(tmp_path):
+    """Workers that send image_version have it stored in the registry."""
+    ta = await _make_app(tmp_path)
+    try:
+        resp = await ta.post(
+            "/api/v1/workers/register",
+            json={
+                "hostname": "modern-worker",
+                "platform": "linux/amd64",
+                "client_version": "1.3.0-dev.17",
+                "image_version": "1",
+            },
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await resp.json())["client_id"]
+        worker = ta.registry.get(client_id)
+        assert worker is not None
+        assert worker.image_version == "1"
+    finally:
+        await ta.close()
+
+
+async def test_register_without_image_version_stores_none(tmp_path):
+    """Pre-LIB.0 workers that don't send image_version get None (treated as stale)."""
+    ta = await _make_app(tmp_path)
+    try:
+        resp = await ta.post(
+            "/api/v1/workers/register",
+            json={"hostname": "old-worker", "platform": "linux/amd64"},
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await resp.json())["client_id"]
+        worker = ta.registry.get(client_id)
+        assert worker is not None
+        assert worker.image_version is None
+    finally:
+        await ta.close()
+
+
+async def test_heartbeat_advertises_update_for_fresh_image(tmp_path):
+    """Workers with a current image_version get server_client_version in heartbeat."""
+    ta = await _make_app(tmp_path)
+    try:
+        reg_resp = await ta.post(
+            "/api/v1/workers/register",
+            json={
+                "hostname": "modern-worker",
+                "platform": "linux/amd64",
+                "image_version": "1",
+            },
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await reg_resp.json())["client_id"]
+
+        hb_resp = await ta.post(
+            "/api/v1/workers/heartbeat",
+            json={"client_id": client_id},
+            headers=AUTH_HEADERS,
+        )
+        assert hb_resp.status == 200
+        data = await hb_resp.json()
+        assert "server_client_version" in data
+        assert "image_upgrade_required" not in data
+    finally:
+        await ta.close()
+
+
+async def test_heartbeat_flags_stale_image(tmp_path):
+    """Workers missing image_version get image_upgrade_required, NOT server_client_version."""
+    ta = await _make_app(tmp_path)
+    try:
+        reg_resp = await ta.post(
+            "/api/v1/workers/register",
+            json={"hostname": "old-worker", "platform": "linux/amd64"},
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await reg_resp.json())["client_id"]
+
+        hb_resp = await ta.post(
+            "/api/v1/workers/heartbeat",
+            json={"client_id": client_id},
+            headers=AUTH_HEADERS,
+        )
+        assert hb_resp.status == 200
+        data = await hb_resp.json()
+        assert data.get("image_upgrade_required") is True
+        assert "min_image_version" in data
+        # Suppressing server_client_version prevents the auto-update loop
+        assert "server_client_version" not in data
+    finally:
+        await ta.close()
+
+
+async def test_heartbeat_flags_below_min_image_version(tmp_path):
+    """A reported image_version strictly below the server minimum is flagged."""
+    ta = await _make_app(tmp_path)
+    try:
+        # Pin the server's minimum high enough that "1" is below it for this test
+        with patch.object(api_module, "MIN_IMAGE_VERSION", "5"):
+            reg_resp = await ta.post(
+                "/api/v1/workers/register",
+                json={
+                    "hostname": "old-image-worker",
+                    "platform": "linux/amd64",
+                    "image_version": "1",
+                },
+                headers=AUTH_HEADERS,
+            )
+            client_id = (await reg_resp.json())["client_id"]
+
+            hb_resp = await ta.post(
+                "/api/v1/workers/heartbeat",
+                json={"client_id": client_id},
+                headers=AUTH_HEADERS,
+            )
+            data = await hb_resp.json()
+            assert data.get("image_upgrade_required") is True
+            assert data.get("min_image_version") == "5"
+    finally:
+        await ta.close()
+
+
+async def test_get_client_code_refuses_stale_image(tmp_path):
+    """Stale-image workers get 409 from /api/v1/client/code instead of code."""
+    ta = await _make_app(tmp_path)
+    try:
+        reg_resp = await ta.post(
+            "/api/v1/workers/register",
+            json={"hostname": "old-worker", "platform": "linux/amd64"},
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await reg_resp.json())["client_id"]
+
+        headers = {**AUTH_HEADERS, "X-Client-Id": client_id}
+        resp = await ta.get("/api/v1/client/code", headers=headers)
+        assert resp.status == 409
+        data = await resp.json()
+        assert data.get("error") == "image_upgrade_required"
+    finally:
+        await ta.close()
+
+
+async def test_get_client_code_allows_fresh_image(tmp_path):
+    """Fresh-image workers can still pull source code."""
+    ta = await _make_app(tmp_path)
+    try:
+        reg_resp = await ta.post(
+            "/api/v1/workers/register",
+            json={
+                "hostname": "modern-worker",
+                "platform": "linux/amd64",
+                "image_version": "1",
+            },
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await reg_resp.json())["client_id"]
+
+        headers = {**AUTH_HEADERS, "X-Client-Id": client_id}
+        resp = await ta.get("/api/v1/client/code", headers=headers)
+        assert resp.status == 200
+        data = await resp.json()
+        assert "files" in data
     finally:
         await ta.close()

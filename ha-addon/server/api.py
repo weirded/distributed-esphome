@@ -6,6 +6,7 @@ import base64
 import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 import aiohttp
 from aiohttp import web
@@ -13,6 +14,7 @@ from aiohttp import web
 from app_config import AppConfig
 from constants import (
     HA_SUPERVISOR_IP, HEADER_AUTHORIZATION, HEADER_X_CLIENT_ID, HEADER_X_WORKER_ID,
+    MIN_IMAGE_VERSION,
 )
 from job_queue import JobState
 from scanner import create_bundle, get_esphome_version
@@ -70,13 +72,15 @@ async def _register_worker_handler(request: web.Request) -> web.Response:
     hostname = body.get("hostname", "unknown")
     platform = body.get("platform", "unknown")
     client_version = body.get("client_version")
+    image_version = body.get("image_version")
     existing_client_id = body.get("client_id")
     from helpers import clamp  # noqa: PLC0415
     max_parallel_jobs = clamp(int(body.get("max_parallel_jobs", 1)), 0, 32)
     system_info = body.get("system_info") if isinstance(body.get("system_info"), dict) else None
     registry = request.app["registry"]
     client_id = registry.register(
-        hostname, platform, client_version, existing_client_id, max_parallel_jobs, system_info,
+        hostname, platform, client_version, existing_client_id, max_parallel_jobs,
+        system_info, image_version=image_version,
     )
     return web.json_response({"client_id": client_id})
 
@@ -101,16 +105,40 @@ async def _heartbeat_handler(request: web.Request) -> web.Response:
 
     # Include requested config changes in heartbeat response
     worker = registry.get(client_id)
-    resp: dict = {
-        "ok": True,
-        "server_client_version": _get_server_client_version(),
-    }
+    resp: dict = {"ok": True}
+
+    # Only advertise a newer source-code version to workers running an
+    # up-to-date Docker image. A stale image can't be fixed by rewriting
+    # .py files in place (missing system deps / Python version / libs),
+    # so suppressing server_client_version prevents an auto-update loop
+    # that would just fail to pick up the real changes.
+    if worker is None or _image_version_ok(worker.image_version):
+        resp["server_client_version"] = _get_server_client_version()
+    else:
+        resp["image_upgrade_required"] = True
+        resp["min_image_version"] = MIN_IMAGE_VERSION
+
     if worker and worker.requested_max_parallel_jobs is not None:
         resp["set_max_parallel_jobs"] = worker.requested_max_parallel_jobs
     if worker and worker.pending_clean:
         resp["clean_build_cache"] = True
         worker.pending_clean = False
     return web.json_response(resp)
+
+
+def _image_version_ok(reported: Optional[str]) -> bool:
+    """Return True if *reported* is >= MIN_IMAGE_VERSION.
+
+    Image versions are monotonic integers (as strings). A missing/invalid
+    reported version is treated as out of date — workers that never send
+    an image_version field are pre-LIB.0 builds and should be upgraded.
+    """
+    if reported is None:
+        return False
+    try:
+        return int(reported) >= int(MIN_IMAGE_VERSION)
+    except (TypeError, ValueError):
+        return False
 
 
 async def _deregister_handler(request: web.Request) -> web.Response:
@@ -347,9 +375,29 @@ async def get_client_version(request: web.Request) -> web.Response:
 
 @routes.get("/api/v1/client/code")
 async def get_client_code(request: web.Request) -> web.Response:
-    """Return all .py files from the bundled worker directory."""
+    """Return all .py files from the bundled worker directory.
+
+    Gated on image version: workers with a stale Docker image are refused,
+    because source-code updates alone can't fix a stale image and would
+    just cause them to repeatedly exec into broken state.
+    """
     if not _check_auth(request):
         return _unauthorized()
+
+    # Look up the caller's image version from the registry
+    client_id = request.headers.get(HEADER_X_CLIENT_ID) or request.rel_url.query.get("client_id")
+    if client_id:
+        worker = request.app["registry"].get(client_id)
+        if worker and not _image_version_ok(worker.image_version):
+            return web.json_response(
+                {
+                    "error": "image_upgrade_required",
+                    "min_image_version": MIN_IMAGE_VERSION,
+                    "reported": worker.image_version,
+                },
+                status=409,
+            )
+
     base = _CLIENT_CODE_DIR if _CLIENT_CODE_DIR.exists() else Path(__file__).parent
     files = {}
     for path in sorted(base.glob("*.py")):

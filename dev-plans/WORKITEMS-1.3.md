@@ -54,7 +54,7 @@ End-to-end testing of the web UI using Playwright.
 
 LIB.1 requires a new Docker image (`psutil` needs C compilation). LIB.0 adds detection so the server/UI warns when the worker image is too old.
 
-- [ ] **LIB.0 Client image version detection** — `IMAGE_VERSION` baked into Docker image, `MIN_IMAGE_VERSION` on server, heartbeat gates auto-update, UI warning badge
+- [x] **LIB.0 Client image version detection** *(1.3.0-dev.17)* — `ha-addon/client/IMAGE_VERSION` file baked into the client Docker image (sits next to `client.py` via `COPY IMAGE_VERSION .`), reported in register payload. Server stores `worker.image_version`, has `MIN_IMAGE_VERSION` constant in `constants.py`, and in `/api/v1/workers/heartbeat` suppresses `server_client_version` for stale-image workers (returning `image_upgrade_required` + `min_image_version` instead) so they don't enter an auto-update loop against a broken image. `/api/v1/client/code` also returns 409 for stale workers. `/ui/api/server-info` exposes `min_image_version` for the UI. `WorkersTab` shows a red "image stale" badge next to the version. Client logs a one-time warning and stops setting `_update_available`. 7 new tests in `test_api.py`.
 - [ ] **LIB.1 `psutil` for client system info** — replace ~200 lines of /proc/cpuinfo parsing with cross-platform API
 
 ## Security Hardening

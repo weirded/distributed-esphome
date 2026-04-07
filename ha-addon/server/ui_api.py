@@ -98,6 +98,7 @@ async def get_server_info(request: web.Request) -> web.Response:
     ip_addrs = [a for a in addrs if a.replace(".", "").isdigit()]
     server_ip = ip_addrs[0] if ip_addrs else (addrs[0] if addrs else None)
 
+    from constants import MIN_IMAGE_VERSION  # noqa: PLC0415
     return web.json_response({
         "token": cfg.token,
         "port": cfg.port,
@@ -105,6 +106,7 @@ async def get_server_info(request: web.Request) -> web.Response:
         "server_addresses": addrs,
         "server_client_version": addon_version,
         "addon_version": addon_version,
+        "min_image_version": MIN_IMAGE_VERSION,
     })
 
 

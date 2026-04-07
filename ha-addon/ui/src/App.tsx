@@ -457,7 +457,7 @@ export default function App() {
             workers={workers}
             queue={displayQueue}
             serverClientVersion={serverInfo.server_client_version}
-
+            minImageVersion={serverInfo.min_image_version}
             onRemove={handleRemoveWorker}
             onSetParallelJobs={handleSetParallelJobs}
             onCleanCache={handleCleanWorkerCache}

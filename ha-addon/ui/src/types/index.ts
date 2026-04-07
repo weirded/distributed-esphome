@@ -5,6 +5,7 @@ export interface ServerInfo {
   server_addresses?: string[];
   addon_version?: string;
   server_client_version?: string;
+  min_image_version?: string;
 }
 
 export interface EsphomeVersions {
@@ -67,6 +68,7 @@ export interface Worker {
   max_parallel_jobs?: number;
   requested_max_parallel_jobs?: number | null;
   client_version?: string;
+  image_version?: string | null;
   system_info?: SystemInfo;
   current_job_id?: string;
 }

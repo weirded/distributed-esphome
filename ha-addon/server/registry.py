@@ -24,6 +24,7 @@ class Worker:
     current_job_id: Optional[str] = None
     disabled: bool = False
     client_version: Optional[str] = None
+    image_version: Optional[str] = None  # baked-in Docker image version (separate from client_version, which is source code)
     max_parallel_jobs: int = 1
     requested_max_parallel_jobs: Optional[int] = None  # set via UI, pushed in heartbeat
     pending_clean: bool = False  # set via UI, pushed in heartbeat
@@ -38,6 +39,7 @@ class Worker:
             "current_job_id": self.current_job_id,
             "disabled": self.disabled,
             "client_version": self.client_version,
+            "image_version": self.image_version,
             "max_parallel_jobs": self.max_parallel_jobs,
             "requested_max_parallel_jobs": self.requested_max_parallel_jobs,
             "pending_clean": self.pending_clean,
@@ -59,6 +61,7 @@ class WorkerRegistry:
         existing_client_id: Optional[str] = None,
         max_parallel_jobs: int = 1,
         system_info: Optional[dict] = None,
+        image_version: Optional[str] = None,
     ) -> str:
         """Register a worker. Returns client_id.
 
@@ -71,6 +74,7 @@ class WorkerRegistry:
             worker.hostname = hostname
             worker.platform = platform
             worker.client_version = client_version
+            worker.image_version = image_version
             worker.max_parallel_jobs = max_parallel_jobs
             # Clear the request once the worker has applied the new value
             if worker.requested_max_parallel_jobs == max_parallel_jobs:
@@ -79,8 +83,9 @@ class WorkerRegistry:
             if system_info is not None:
                 worker.system_info = system_info
             logger.info(
-                "Re-registered worker %s (%s / %s / v%s / %d slots)",
-                existing_client_id, hostname, platform, client_version or "?", max_parallel_jobs,
+                "Re-registered worker %s (%s / %s / v%s / image=%s / %d slots)",
+                existing_client_id, hostname, platform, client_version or "?",
+                image_version or "?", max_parallel_jobs,
             )
             return existing_client_id
 
@@ -90,13 +95,15 @@ class WorkerRegistry:
             hostname=hostname,
             platform=platform,
             client_version=client_version,
+            image_version=image_version,
             max_parallel_jobs=max_parallel_jobs,
             system_info=system_info,
         )
         self._workers[client_id] = worker
         logger.info(
-            "Registered worker %s (%s / %s / v%s / %d slots)",
-            client_id, hostname, platform, client_version or "?", max_parallel_jobs,
+            "Registered worker %s (%s / %s / v%s / image=%s / %d slots)",
+            client_id, hostname, platform, client_version or "?",
+            image_version or "?", max_parallel_jobs,
         )
         return client_id
 

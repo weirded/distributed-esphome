@@ -16,6 +16,7 @@ interface Props {
   workers: Worker[];
   queue: Job[];
   serverClientVersion?: string;
+  minImageVersion?: string;
   onRemove: (id: string) => void;
   onSetParallelJobs: (id: string, count: number) => void;
   onCleanCache: (id: string) => void;
@@ -64,16 +65,68 @@ function workerPlatformHtml(si: SystemInfo): React.ReactNode {
   );
 }
 
-function ClientVersionCell({ ver, scv }: { ver?: string; scv?: string }) {
-  if (!ver) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-  if (!scv || ver === scv) {
-    return <code style={{ fontSize: 11, color: 'var(--text-muted)' }}>{ver}</code>;
+function ClientVersionCell({
+  ver,
+  scv,
+  imageVer,
+  minImageVer,
+}: {
+  ver?: string;
+  scv?: string;
+  imageVer?: string | null;
+  minImageVer?: string;
+}) {
+  // Docker image version is checked first — a stale image blocks source-code
+  // auto-updates entirely, so that's the more important warning to surface.
+  const imageStale = imageIsStale(imageVer, minImageVer);
+
+  if (!ver) {
+    return (
+      <span style={{ color: 'var(--text-muted)' }}>
+        —
+        {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} />}
+      </span>
+    );
   }
+
+  const isOutdated = scv && ver !== scv;
+  const color = imageStale ? 'var(--destructive)' : isOutdated ? 'var(--warn)' : 'var(--text-muted)';
+  const title = isOutdated ? `Source outdated — server: ${scv}` : undefined;
+
   return (
-    <code style={{ fontSize: 11, color: 'var(--warn)' }} title={`Outdated — server: ${scv}`}>
-      {ver} ↑
-    </code>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <code style={{ fontSize: 11, color }} title={title}>
+        {ver}
+        {isOutdated && ' ↑'}
+      </code>
+      {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} />}
+    </span>
   );
+}
+
+function ImageStaleBadge({ imageVer, minImageVer }: { imageVer?: string | null; minImageVer?: string }) {
+  return (
+    <span
+      title={
+        `Docker image is out of date — this worker reports IMAGE_VERSION=${imageVer ?? '<none>'} ` +
+        `but the server requires ${minImageVer}. Rebuild the worker image ` +
+        `(docker pull + restart) to get the latest.`
+      }
+      className="inline-flex items-center rounded-full border border-[var(--destructive)] bg-[var(--destructive)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--destructive)]"
+    >
+      image stale
+    </span>
+  );
+}
+
+/** Return true iff the reported image version is missing or below the server minimum. */
+function imageIsStale(reported: string | null | undefined, minimum: string | undefined): boolean {
+  if (!minimum) return false; // server doesn't enforce a minimum
+  if (reported == null) return true; // pre-LIB.0 worker
+  const r = parseInt(reported, 10);
+  const m = parseInt(minimum, 10);
+  if (Number.isNaN(r) || Number.isNaN(m)) return false;
+  return r < m;
 }
 
 /* Debounced slot control (#108) */
@@ -137,7 +190,7 @@ function getWorkerSortValue(w: Worker, colId: string): string {
 
 const columnHelper = createColumnHelper<Worker>();
 
-export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker }: Props) {
+export function WorkersTab({ workers, queue, serverClientVersion, minImageVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'hostname', desc: false }]);
 
@@ -255,7 +308,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
             <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
             <td>{statusEl}{uptimeEl}</td>
             <td>{jobEl}</td>
-            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} /></td>
+            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} /></td>
             <td>
               <SlotControl
                 slots={slots}

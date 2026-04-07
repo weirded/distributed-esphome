@@ -29,7 +29,23 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0-dev.16"
+CLIENT_VERSION = "1.3.0-dev.17"
+
+
+def _read_image_version() -> Optional[str]:
+    """Read the baked-in Docker image version from IMAGE_VERSION next to this file.
+
+    Returns None if the file is missing (e.g. running from a source checkout
+    without a Docker build). The server treats None as "unknown".
+    """
+    try:
+        path = Path(__file__).parent / "IMAGE_VERSION"
+        return path.read_text(encoding="utf-8").strip() or None
+    except (FileNotFoundError, OSError):
+        return None
+
+
+IMAGE_VERSION = _read_image_version()
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +112,10 @@ HEADERS = {
 # Set when the heartbeat detects a newer server-side client bundle.
 # Checked in the main loop so updates only happen between jobs.
 _update_available: threading.Event = threading.Event()
+
+# Sticky flag so we only log the "image upgrade required" warning once
+# per process rather than on every heartbeat.
+_image_upgrade_logged: bool = False
 
 # Active job counter — incremented/decremented by run_job(); main loop
 # waits for this to reach zero before applying updates or re-registering.
@@ -226,6 +246,7 @@ def register() -> str:
                 "hostname": HOSTNAME,
                 "platform": PLATFORM,
                 "client_version": CLIENT_VERSION,
+                "image_version": IMAGE_VERSION,
                 "max_parallel_jobs": MAX_PARALLEL_JOBS,
                 "system_info": sysinfo,
             }
@@ -282,6 +303,7 @@ def _clean_build_cache() -> None:
 
 def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
+    global _image_upgrade_logged
     while not stop_event.is_set():
         try:
             resp = post("/api/v1/workers/heartbeat", {
@@ -300,12 +322,25 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                 _on_server_reachable()
                 _on_auth_ok()
                 data = resp.json()
-                sv = data.get("server_client_version")
-                if sv and sv != CLIENT_VERSION:
-                    logger.info(
-                        "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
-                    )
-                    _update_available.set()
+                # Server may refuse source-code auto-updates if our Docker image
+                # is too old to safely receive them (missing system deps, etc.)
+                if data.get("image_upgrade_required"):
+                    min_v = data.get("min_image_version", "?")
+                    if not _image_upgrade_logged:
+                        logger.warning(
+                            "Docker image upgrade required: this worker reports IMAGE_VERSION=%s "
+                            "but the server's MIN_IMAGE_VERSION=%s. Auto-updates are disabled "
+                            "until the Docker image is rebuilt with `docker pull` + restart.",
+                            IMAGE_VERSION or "<none>", min_v,
+                        )
+                        _image_upgrade_logged = True
+                else:
+                    sv = data.get("server_client_version")
+                    if sv and sv != CLIENT_VERSION:
+                        logger.info(
+                            "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
+                        )
+                        _update_available.set()
                 # Check for max_parallel_jobs config change from UI
                 new_jobs = data.get("set_max_parallel_jobs")
                 if new_jobs is not None and isinstance(new_jobs, int) and new_jobs != MAX_PARALLEL_JOBS:
