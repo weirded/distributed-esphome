@@ -1,4 +1,4 @@
-"""System information gathering — stdlib only, no psutil dependency.
+"""System information gathering — psutil for memory/CPU/disk, stdlib for the rest.
 
 Importable standalone; no dependency on other client modules.
 """
@@ -10,6 +10,8 @@ import platform
 import subprocess
 import time
 from typing import Optional
+
+import psutil
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -34,9 +36,15 @@ def _benchmark_cpu() -> int:
 # Computed once at startup; included in every heartbeat as a relative CPU score.
 _CPU_PERF_SCORE: int = _benchmark_cpu()
 
+# Prime psutil.cpu_percent() — the first non-blocking call always returns 0.0
+# because it has nothing to diff against. A throwaway call at startup gives
+# later calls a meaningful baseline.
+psutil.cpu_percent(interval=None)
+
 
 # ---------------------------------------------------------------------------
-# OS / hardware detection
+# OS / hardware detection — psutil doesn't provide distro names or CPU models,
+# so these stay stdlib.
 # ---------------------------------------------------------------------------
 
 def _get_os_version() -> str:
@@ -44,7 +52,6 @@ def _get_os_version() -> str:
     system = platform.system()
 
     if system == "Darwin":
-        # e.g. "macOS 15.3"
         mac_ver = platform.mac_ver()[0]
         return f"macOS {mac_ver}" if mac_ver else "macOS"
 
@@ -77,7 +84,11 @@ def _get_os_version() -> str:
 
 
 def _get_cpu_model() -> str:
-    """Return CPU model string using stdlib and /proc/cpuinfo or sysctl."""
+    """Return CPU model string.
+
+    psutil doesn't expose the CPU brand string, so fall back to /proc/cpuinfo
+    on Linux, sysctl on macOS, and platform.processor()/machine() elsewhere.
+    """
     system = platform.system()
 
     if system == "Darwin":
@@ -104,7 +115,6 @@ def _get_cpu_model() -> str:
             pass
 
     if system == "Linux":
-        # Try /proc/cpuinfo — "model name" on x86, "Model name" or "Hardware" on ARM
         try:
             with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
                 for line in f:
@@ -118,48 +128,19 @@ def _get_cpu_model() -> str:
         except OSError:
             pass
 
-    # Generic fallback
     machine = platform.machine()
     processor = platform.processor()
     return processor or machine or "Unknown"
 
 
-def _get_total_memory_bytes() -> Optional[int]:
-    """Return total physical memory in bytes using stdlib only."""
-    system = platform.system()
-
-    if system == "Linux":
-        # Parse /proc/meminfo
-        try:
-            with open("/proc/meminfo", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        # Format: "MemTotal:     16384000 kB"
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            kb = int(parts[1])
-                            return kb * 1024
-        except (OSError, ValueError):
-            pass
-
-    if system == "Darwin":
-        try:
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True, text=True, timeout=3,
-            )
-            return int(result.stdout.strip())
-        except Exception:
-            pass
-
-    return None
-
+# ---------------------------------------------------------------------------
+# Formatters
+# ---------------------------------------------------------------------------
 
 def _format_memory(bytes_: int) -> str:
     """Return a human-readable memory string, e.g. '16 GB' or '512 MB'."""
     gb = bytes_ / (1024 ** 3)
     if gb >= 1:
-        # Round to nearest whole GB for clean display
         return f"{round(gb)} GB"
     mb = bytes_ / (1024 ** 2)
     return f"{round(mb)} MB"
@@ -180,66 +161,62 @@ def _format_uptime(seconds: float) -> str:
     return f"{secs}s"
 
 
-def _get_cpu_usage() -> Optional[float]:
-    """Return CPU usage as a percentage (0-100) using load average.
-
-    Uses os.getloadavg() (1-minute average) divided by core count.
-    Works in Docker on both Linux and macOS without /proc/stat sampling.
-    """
-    try:
-        load1, _, _ = os.getloadavg()
-        cores = os.cpu_count() or 1
-        return round(min(load1 / cores * 100, 100.0), 1)
-    except Exception:
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def collect_system_info(versions_dir: str = "/esphome-versions") -> dict:
-    """Gather hardware/OS details using stdlib only. All fields are best-effort.
+    """Gather hardware/OS details. All fields are best-effort.
 
     *versions_dir* is used to report disk space on the build volume.  Pass the
     ``ESPHOME_VERSIONS_DIR`` env value from the caller so this module stays
-    dependency-free.
+    decoupled from client.py.
 
     When running in Docker on a non-Linux host, the container sees the VM's
     Linux.  Set ``HOST_PLATFORM`` to override ``os_version`` with the actual
     host OS (e.g. ``macOS 15.3 (Apple M1 Pro)``).
     """
-    cpu_count = os.cpu_count()
-    mem_bytes = _get_total_memory_bytes()
-
     os_version = os.environ.get("HOST_PLATFORM") or _get_os_version()
 
-    # Disk space on the build volume
+    # Memory — psutil.virtual_memory() handles Linux (/proc/meminfo), macOS
+    # (sysctl), Windows, and FreeBSD in one call.
+    total_memory: Optional[str] = None
+    try:
+        total_memory = _format_memory(psutil.virtual_memory().total)
+    except Exception:
+        pass
+
+    # CPU utilization — psutil.cpu_percent(interval=None) compares against the
+    # previous call. It was primed at module load, so heartbeats get accurate
+    # utilization percentages (not just load-average approximations).
+    cpu_usage: Optional[float] = None
+    try:
+        cpu_usage = round(psutil.cpu_percent(interval=None), 1)
+    except Exception:
+        pass
+
+    # Disk space on the build volume — psutil.disk_usage() is cross-platform.
     disk_total: Optional[str] = None
     disk_free: Optional[str] = None
     disk_pct: Optional[int] = None
     try:
-        st = os.statvfs(versions_dir)
-        total = st.f_frsize * st.f_blocks
-        free = st.f_frsize * st.f_bavail
-        used_pct = round((1 - free / total) * 100) if total > 0 else None
-        disk_total = _format_memory(total)
-        disk_free = _format_memory(free)
-        disk_pct = used_pct
+        du = psutil.disk_usage(versions_dir)
+        disk_total = _format_memory(du.total)
+        disk_free = _format_memory(du.free)
+        disk_pct = round(du.percent)
     except Exception:
         pass
 
-    info: dict = {
+    return {
         "cpu_arch": platform.machine(),
         "os_version": os_version,
-        "cpu_cores": cpu_count,
+        "cpu_cores": psutil.cpu_count(logical=True) or os.cpu_count(),
         "cpu_model": _get_cpu_model(),
-        "total_memory": _format_memory(mem_bytes) if mem_bytes is not None else None,
+        "total_memory": total_memory,
         "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
         "perf_score": _CPU_PERF_SCORE,
-        "cpu_usage": _get_cpu_usage(),
+        "cpu_usage": cpu_usage,
         "disk_total": disk_total,
         "disk_free": disk_free,
         "disk_used_pct": disk_pct,
     }
-    return info

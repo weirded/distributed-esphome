@@ -21,7 +21,7 @@ pytest tests/test_client.py::TestVersionManager::test_lru_eviction
 
 ### Install Dependencies
 ```bash
-pip install pytest pytest-asyncio aiohttp aioesphomeapi zeroconf requests
+pip install pytest pytest-asyncio aiohttp aioesphomeapi zeroconf requests psutil
 # Or from requirements files:
 pip install -r ha-addon/server/requirements.txt
 pip install -r ha-addon/client/requirements.txt

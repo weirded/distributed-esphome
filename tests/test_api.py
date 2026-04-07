@@ -109,10 +109,10 @@ async def _enqueue_job(
 
 async def _register(ta: _App, hostname: str = "build-box", platform: str = "linux/amd64",
                     system_info: dict | None = None,
-                    image_version: str | None = "1") -> str:
-    # Defaults to image_version="1" (current MIN_IMAGE_VERSION) so most tests
+                    image_version: str | None = "2") -> str:
+    # Defaults to image_version="2" (current MIN_IMAGE_VERSION) so most tests
     # exercise the happy path. Tests that want to simulate a stale-image worker
-    # explicitly pass image_version=None.
+    # explicitly pass image_version=None or an older number.
     body: dict = {"hostname": hostname, "platform": platform}
     if system_info is not None:
         body["system_info"] = system_info
@@ -856,24 +856,25 @@ async def test_status_endpoint(tmp_path):
 # LIB.0 — Docker image version detection
 # ---------------------------------------------------------------------------
 
-async def test_register_stores_image_version(tmp_path):
-    """Workers that send image_version have it stored in the registry."""
+@pytest.mark.parametrize("image_version", ["1", "2", "42"])
+async def test_register_stores_image_version(tmp_path, image_version):
+    """Workers that send image_version have it stored verbatim in the registry."""
     ta = await _make_app(tmp_path)
     try:
         resp = await ta.post(
             "/api/v1/workers/register",
             json={
-                "hostname": "modern-worker",
+                "hostname": "worker",
                 "platform": "linux/amd64",
                 "client_version": "1.3.0-dev.17",
-                "image_version": "1",
+                "image_version": image_version,
             },
             headers=AUTH_HEADERS,
         )
         client_id = (await resp.json())["client_id"]
         worker = ta.registry.get(client_id)
         assert worker is not None
-        assert worker.image_version == "1"
+        assert worker.image_version == image_version
     finally:
         await ta.close()
 
@@ -897,6 +898,7 @@ async def test_register_without_image_version_stores_none(tmp_path):
 
 async def test_heartbeat_advertises_update_for_fresh_image(tmp_path):
     """Workers with a current image_version get server_client_version in heartbeat."""
+    from constants import MIN_IMAGE_VERSION
     ta = await _make_app(tmp_path)
     try:
         reg_resp = await ta.post(
@@ -904,7 +906,7 @@ async def test_heartbeat_advertises_update_for_fresh_image(tmp_path):
             json={
                 "hostname": "modern-worker",
                 "platform": "linux/amd64",
-                "image_version": "1",
+                "image_version": MIN_IMAGE_VERSION,
             },
             headers=AUTH_HEADERS,
         )
@@ -1000,6 +1002,7 @@ async def test_get_client_code_refuses_stale_image(tmp_path):
 
 async def test_get_client_code_allows_fresh_image(tmp_path):
     """Fresh-image workers can still pull source code."""
+    from constants import MIN_IMAGE_VERSION
     ta = await _make_app(tmp_path)
     try:
         reg_resp = await ta.post(
@@ -1007,7 +1010,7 @@ async def test_get_client_code_allows_fresh_image(tmp_path):
             json={
                 "hostname": "modern-worker",
                 "platform": "linux/amd64",
-                "image_version": "1",
+                "image_version": MIN_IMAGE_VERSION,
             },
             headers=AUTH_HEADERS,
         )

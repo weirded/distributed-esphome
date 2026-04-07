@@ -55,7 +55,7 @@ End-to-end testing of the web UI using Playwright.
 LIB.1 requires a new Docker image (`psutil` needs C compilation). LIB.0 adds detection so the server/UI warns when the worker image is too old.
 
 - [x] **LIB.0 Client image version detection** *(1.3.0-dev.17)* — `ha-addon/client/IMAGE_VERSION` file baked into the client Docker image (sits next to `client.py` via `COPY IMAGE_VERSION .`), reported in register payload. Server stores `worker.image_version`, has `MIN_IMAGE_VERSION` constant in `constants.py`, and in `/api/v1/workers/heartbeat` suppresses `server_client_version` for stale-image workers (returning `image_upgrade_required` + `min_image_version` instead) so they don't enter an auto-update loop against a broken image. `/api/v1/client/code` also returns 409 for stale workers. `/ui/api/server-info` exposes `min_image_version` for the UI. `WorkersTab` shows a red "image stale" badge next to the version. Client logs a one-time warning and stops setting `_update_available`. 7 new tests in `test_api.py`.
-- [ ] **LIB.1 `psutil` for client system info** — replace ~200 lines of /proc/cpuinfo parsing with cross-platform API
+- [x] **LIB.1 `psutil` for client system info** *(1.3.0-dev.19)* — added `psutil>=5.9` to client requirements, rewrote `sysinfo.py` to use `psutil.virtual_memory()`, `psutil.cpu_percent()`, `psutil.disk_usage()`, and `psutil.cpu_count()`. Kept the CPU benchmark, `_get_os_version()` (distro detection via `/etc/os-release`), and `_get_cpu_model()` (CPU brand string via `/proc/cpuinfo`/sysctl) since psutil doesn't expose those. Cut the file from 245 → 217 lines and made it cross-platform (Windows support as a bonus). Primed `cpu_percent()` at module load so the first heartbeat returns a real value instead of 0.0. Bumped `IMAGE_VERSION` to "2" and `MIN_IMAGE_VERSION` to "2" — validates LIB.0 end-to-end: pre-dev.19 workers will show the "image stale" badge until they rebuild.
 
 ## Security Hardening
 
@@ -102,5 +102,13 @@ Capstone for the 1.3 release: codify the standards established by all the above 
 - [x] **#173** *(1.3.0-dev.16)* — Reverted #172. Restored `esphome run --no-logs` (single subprocess for compile+OTA, matches native ESPHome UI). The version-compat concern with `--no-logs` is acceptable; if it becomes a real problem later we'll add a fallback.
 - [x] **#174** *(1.3.0-dev.16)* — Default queue sort changed back to State (working → pending → timed_out → failed → success). Time-based default from #6.7 was wrong default — running jobs are more important than newest. Time column is still sortable.
 - [x] **#175** *(1.3.0-dev.16)* — Finish Time column now labels its duration: "Took 2m 14s" when finished, "Elapsed 45s" when in progress.
+
+## Open Bugs
+
+- [ ] **#176** — (GitHub #22) `esphome run` prompts interactively when multiple upload targets exist (e.g. a USB serial dongle plus OTA). Worker has no stdin, so the job stalls / crashes with a traceback at `choose_prompt`. Need to force OTA-only upload (pass `--device` / `--upload-port`, or equivalent) so ESPHome never prompts.
+- [ ] **#177** — (GitHub #21) Retry after OTA-only failure recompiles from scratch instead of resuming. Reporter's worker also showed `esphome: error: unrecognized arguments: --no-logs` on the in-process retry — suggests the in-worker OTA retry loop re-invokes esphome with flags the installed version doesn't support. Investigate: (a) why retry doesn't land back on the same worker / reuse build dir, (b) the `--no-logs` compatibility issue on the internal retry path.
+- [x] **#178** *(1.3.0-dev.8)* — (GitHub #19) Privacy/streamer mode now covers unmanaged devices. Unmanaged rows render IP with `className="sensitive"` (blurred by streamer CSS), and the 6.8 "Show unmanaged devices" toggle lets users hide them entirely. Pending release — issue stays open until 1.3 ships.
+- [ ] **#179** — (GitHub #6) All compiles fail on ARM macOS (M2) worker. No failure reported on Windows/Linux. Need full log from reporter — truncated in issue. Likely PlatformIO toolchain / uv hardlink / filesystem issue on macOS host worker (non-Docker).
+- [ ] **#180** — (GitHub #2, follow-up to #159) User still sees duplicate device rows after 1.1 hyphen fix. Sample YAML uses `packages: remote_package_files` from a GitHub URL with `generic-thread.yaml`. Need to reproduce with their config — possibly a remote-package / thread-device interaction the current name-mapping doesn't handle.
 
 

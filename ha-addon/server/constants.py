@@ -19,4 +19,4 @@ SECRETS_YAML = "secrets.yaml"
 # fix a stale image (missing system packages, old Python, old requirements).
 # Bump this when a change in the client Dockerfile requires workers to rebuild
 # their image (e.g. adding a new system dep or Python library).
-MIN_IMAGE_VERSION = "1"
+MIN_IMAGE_VERSION = "2"

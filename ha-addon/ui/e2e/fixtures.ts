@@ -7,7 +7,7 @@ export const serverInfo = {
   port: 8765,
   addon_version: '1.3.0-dev.4',
   server_client_version: '1.3.0-dev.4',
-  min_image_version: '1',
+  min_image_version: '2',
 };
 
 export const esphomeVersions = {
@@ -69,7 +69,7 @@ export const workers = [
     max_parallel_jobs: 2,
     requested_max_parallel_jobs: null,
     client_version: '1.3.0-dev.4',
-    image_version: '1',
+    image_version: '2',
     system_info: {
       os_version: 'Debian 12',
       cpu_model: 'Intel i7-12700',

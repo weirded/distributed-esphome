@@ -24,7 +24,7 @@ jobs:
           pip install \
             pytest pytest-asyncio pytest-cov \
             aiohttp aioesphomeapi zeroconf \
-            requests \
+            requests psutil \
             mypy types-requests types-PyYAML \
             ruff
 
