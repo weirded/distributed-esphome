@@ -87,7 +87,7 @@ export function QueueTab({
   onOpenLog,
   onEdit,
 }: Props) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'state', desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [filter, setFilter] = useState('');
 
@@ -194,6 +194,14 @@ export function QueueTab({
         );
       },
       sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(row => row.created_at, {
+      id: 'created_at',
+      header: ({ column }) => <SortHeader label="Time" column={column} />,
+      cell: ({ row: { original: job } }) => (
+        <span style={{ fontSize: 12 }}>{timeAgo(job.created_at)}</span>
+      ),
+      sortingFn: 'datetime',
     }),
     columnHelper.accessor(row => row.duration_seconds ?? 0, {
       id: 'duration',

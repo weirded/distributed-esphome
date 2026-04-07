@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import {
   cancelJobs,
+  cleanWorkerCache,
   clearQueue,
   compile,
   deleteTarget,
@@ -277,6 +278,16 @@ export default function App() {
   }
 
 
+  async function handleCleanWorkerCache(id: string) {
+    try {
+      await cleanWorkerCache(id);
+      const workerName = workers.find(w => w.client_id === id)?.hostname || id;
+      addToast(`Clean build cache requested for ${workerName}`, 'success');
+    } catch (err) {
+      addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
   async function handleRemoveWorker(id: string) {
     try {
       await removeWorker(id);
@@ -437,6 +448,7 @@ export default function App() {
 
             onRemove={handleRemoveWorker}
             onSetParallelJobs={handleSetParallelJobs}
+            onCleanCache={handleCleanWorkerCache}
             onConnectWorker={() => setConnectModalOpen(true)}
           />
         )}

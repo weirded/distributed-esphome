@@ -142,8 +142,11 @@
 
 161. FIXED (1.3.0-dev.4) - Hamburger menu drops off-screen when opened near bottom-right corner. Fix: added viewport boundary detection via callback ref — flips menu upward when it would extend below viewport, and removes translateX(-100%) when menu would extend past the left edge.
 
-160. There is a layout issue with the hamburger menu. If it gets opened on the bottom right corner of the screen, the menu still drops down and is below the edge of the screen, not usable. 
+162. DUPLICATE of #161 — hamburger menu bottom-right corner issue. Already fixed in 1.3.0-dev.4.
 
+163. INVESTIGATING - When the UI is open and a new upgrade is deployed, HA shows an "add-on is offline" dialog instead of the app reloading gracefully. This is an HA Ingress behavior — may need a service worker or reconnect logic.
+
+164. INVESTIGATING - "Upgrade on..." submenu still drops off-screen when opened near viewport edge. Main hamburger menu was fixed (#161) but the nested worker submenu needs the same viewport boundary detection.
 
 
 ---

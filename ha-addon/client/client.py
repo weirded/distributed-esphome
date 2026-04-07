@@ -29,7 +29,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0-dev.8"
+CLIENT_VERSION = "1.3.0-dev.9"
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +260,26 @@ def _restart_self() -> None:
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
+def _clean_build_cache() -> None:
+    """Remove all build artifacts from the esphome-versions directory."""
+    import shutil
+    from version_manager import VERSIONS_BASE
+    base = Path(VERSIONS_BASE)
+    if not base.exists():
+        logger.info("No build cache to clean (%s does not exist)", base)
+        return
+    removed = 0
+    for entry in base.iterdir():
+        if entry.is_dir():
+            try:
+                shutil.rmtree(entry)
+                removed += 1
+                logger.info("Removed %s", entry.name)
+            except Exception as exc:
+                logger.warning("Failed to remove %s: %s", entry.name, exc)
+    logger.info("Build cache clean complete — removed %d version(s)", removed)
+
+
 def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
     while not stop_event.is_set():
@@ -296,6 +316,10 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                     # Write new value to env so it persists across restart
                     os.environ["MAX_PARALLEL_JOBS"] = str(new_jobs)
                     _restart_self()
+                # Check for clean build cache request from UI
+                if data.get("clean_build_cache"):
+                    logger.info("Server requested build cache clean — clearing esphome-versions")
+                    _clean_build_cache()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             _on_server_unreachable(exc)
         except Exception as exc:

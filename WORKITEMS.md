@@ -150,6 +150,19 @@ Capstone for the 1.3 release: codify the standards established by all the above 
 
 - [ ] **QG.1 Codify quality standards in CLAUDE.md** — document enforceable rules covering: constants over magic strings, test coverage requirements for new code, ruff/lint compliance, error handling patterns, naming conventions, frontend TypeScript standards, and any other conventions established during 1.3 cleanup. This is the last 1.3 task — written after everything else lands so it reflects the actual state of the codebase.
 
+
+### Unmanaged Devices
+
+- [x] **6.8 Hide/remove unmanaged devices** *(1.3.0-dev.8)* — "Show unmanaged devices" toggle in column picker gear dropdown, persisted to localStorage
+
+### Queue UX
+
+- [x] **6.7 Default queue sort by time** *(1.3.0-dev.8)* — default sort changed to `created_at` descending; added sortable Time column to queue table
+
+### Build Management
+
+- [x] **5.1 Clean build artifacts** *(1.3.0-dev.8)* — "Clean Cache" button on online workers, dispatched via heartbeat, worker clears esphome-versions directory
+
 ---
 
 ## 1.4.0 — ESPHome Dashboard Parity
@@ -177,21 +190,11 @@ Theme: **Full replacement for the stock ESPHome dashboard.** Every feature the b
 
 - [ ] **4.5 Auto-connect device logs after OTA** — when viewing a job's log modal, automatically connect to the device's native API log stream after OTA completes, like `esphome run` does (compile → upload → tail logs)
 
-### Build Management
-
-- [ ] **5.1 Clean build artifacts** — dispatch `esphome clean` to worker, per-device and clean-all
 
 ### Thread / IPv6 Support
 
 - [ ] **4.6 Thread device IP display** (GitHub #17) — Thread devices use IPv6 and don't show an IP address in the dashboard. Display IPv6 addresses and add a wifi/thread indicator to the device row.
 
-### Unmanaged Devices
-
-- [ ] **6.8 Hide/remove unmanaged devices** (GitHub #18) — add ability to dismiss or hide mDNS-discovered devices that have no config file. Also extend streamer mode to blur unmanaged device info.
-
-### Queue UX
-
-- [ ] **6.7 Default queue sort by time** (GitHub #16) — sort queue tab by compile time (most recent first) by default, so latest jobs are always on top
 
 ### Device Adoption
 
@@ -254,7 +257,6 @@ Items with less certainty on scope or priority. Will be shaped into a release wh
 ### Remote Compilation (Backlog #1)
 
 - [ ] Allow compiling on VPS servers not on the local network (firmware download + separate OTA step)
-- [ ] Possibly GitHub Actions integration for builds
 
 ### Git Integration (Backlog #2)
 

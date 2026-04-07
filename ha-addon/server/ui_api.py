@@ -1057,6 +1057,19 @@ async def set_worker_parallel_jobs(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "max_parallel_jobs": value})
 
 
+@routes.post("/ui/api/workers/{client_id}/clean")
+async def clean_worker_cache(request: web.Request) -> web.Response:
+    """Request a worker to clean its build cache. Pushed via next heartbeat."""
+    client_id = request.match_info["client_id"]
+    registry = request.app["registry"]
+    worker = registry.get(client_id)
+    if not worker:
+        return web.json_response({"error": "Worker not found"}, status=404)
+    worker.pending_clean = True
+    logger.info("Worker %s (%s): clean build cache requested", client_id, worker.hostname)
+    return web.json_response({"ok": True})
+
+
 # Legacy client routes — kept for backwards compatibility
 
 @routes.delete("/ui/api/clients/{client_id}")

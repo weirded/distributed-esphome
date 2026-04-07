@@ -187,11 +187,15 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
 
-  // Persist column visibility to localStorage whenever it changes
+  // Persist column visibility and unmanaged toggle to localStorage
   useEffect(() => {
     saveColumnVisibility(columnVisibility);
   }, [columnVisibility]);
+  useEffect(() => {
+    localStorage.setItem('showUnmanaged', String(showUnmanaged));
+  }, [showUnmanaged]);
 
   // Build a set of device names that are already shown as managed targets
   // to prevent duplicates when compile_target mapping has a race condition
@@ -542,6 +546,13 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                       {col.label}
                     </DropdownMenuCheckboxItem>
                   ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={showUnmanaged}
+                    onCheckedChange={() => setShowUnmanaged(v => !v)}
+                  >
+                    Show unmanaged devices
+                  </DropdownMenuCheckboxItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -582,7 +593,7 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                       ))}
                     </tr>
                   ))}
-                  {filteredUnmanaged.map(d => (
+                  {showUnmanaged && filteredUnmanaged.map(d => (
                     <UnmanagedRow key={d.name} device={d} isVisible={isVisible} />
                   ))}
                 </>

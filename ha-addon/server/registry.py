@@ -26,6 +26,7 @@ class Worker:
     client_version: Optional[str] = None
     max_parallel_jobs: int = 1
     requested_max_parallel_jobs: Optional[int] = None  # set via UI, pushed in heartbeat
+    pending_clean: bool = False  # set via UI, pushed in heartbeat
     system_info: Optional[dict] = None
 
     def to_dict(self) -> dict:
@@ -39,6 +40,7 @@ class Worker:
             "client_version": self.client_version,
             "max_parallel_jobs": self.max_parallel_jobs,
             "requested_max_parallel_jobs": self.requested_max_parallel_jobs,
+            "pending_clean": self.pending_clean,
             "system_info": self.system_info,
         }
 

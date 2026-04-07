@@ -18,6 +18,7 @@ interface Props {
   serverClientVersion?: string;
   onRemove: (id: string) => void;
   onSetParallelJobs: (id: string, count: number) => void;
+  onCleanCache: (id: string) => void;
   onConnectWorker: () => void;
 }
 
@@ -135,7 +136,7 @@ function getWorkerSortValue(w: Worker, colId: string): string {
 
 const columnHelper = createColumnHelper<Worker>();
 
-export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSetParallelJobs, onConnectWorker }: Props) {
+export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSetParallelJobs, onCleanCache, onConnectWorker }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'hostname', desc: false }]);
 
@@ -261,7 +262,10 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
                 onSet={(n) => onSetParallelJobs(c.client_id, n)}
               />
             </td>
-            <td>
+            <td className="flex gap-1">
+              {c.online && (
+                <Button variant="secondary" size="sm" onClick={() => onCleanCache(c.client_id)}>Clean Cache</Button>
+              )}
               {!c.online && !isLocal && (
                 <Button variant="destructive" size="sm" onClick={() => onRemove(c.client_id)}>Remove</Button>
               )}

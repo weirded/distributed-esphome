@@ -104,6 +104,9 @@ async def _heartbeat_handler(request: web.Request) -> web.Response:
     }
     if worker and worker.requested_max_parallel_jobs is not None:
         resp["set_max_parallel_jobs"] = worker.requested_max_parallel_jobs
+    if worker and worker.pending_clean:
+        resp["clean_build_cache"] = True
+        worker.pending_clean = False
     return web.json_response(resp)
 
 
