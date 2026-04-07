@@ -262,13 +262,12 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
                 onSet={(n) => onSetParallelJobs(c.client_id, n)}
               />
             </td>
-            <td className="flex gap-1">
-              {c.online && (
+            <td>
+              {c.online ? (
                 <Button variant="secondary" size="sm" onClick={() => onCleanCache(c.client_id)}>Clean Cache</Button>
-              )}
-              {!c.online && !isLocal && (
+              ) : !isLocal ? (
                 <Button variant="destructive" size="sm" onClick={() => onRemove(c.client_id)}>Remove</Button>
-              )}
+              ) : null}
             </td>
           </tr>
         );
@@ -338,6 +337,10 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
           </div>
           <div className="actions">
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{countText}</span>
+            <Button variant="secondary" size="sm" onClick={() => {
+              const onlineWorkers = workers.filter(w => w.online);
+              onlineWorkers.forEach(w => onCleanCache(w.client_id));
+            }} disabled={!workers.some(w => w.online)}>Clean All Caches</Button>
             <Button size="sm" onClick={onConnectWorker}>+ Connect Worker</Button>
           </div>
         </div>

@@ -144,9 +144,12 @@
 
 162. DUPLICATE of #161 — hamburger menu bottom-right corner issue. Already fixed in 1.3.0-dev.4.
 
-163. INVESTIGATING - When the UI is open and a new upgrade is deployed, HA shows an "add-on is offline" dialog instead of the app reloading gracefully. This is an HA Ingress behavior — may need a service worker or reconnect logic.
+163. WONTFIX - When the UI is open and a new upgrade is deployed, HA shows an "add-on is offline" dialog instead of the app reloading gracefully. This is HA Ingress behavior — the proxy intercepts the connection before our app can handle it. SWR already retries and the version-change detector triggers a reload once the server is back.
 
-164. INVESTIGATING - "Upgrade on..." submenu still drops off-screen when opened near viewport edge. Main hamburger menu was fixed (#161) but the nested worker submenu needs the same viewport boundary detection.
+164. FIXED (1.3.0-dev.9) - "Upgrade on..." submenu drops off-screen when opened near viewport edge. Fix: added callback ref with viewport detection — opens to the right if insufficient space on the left, flips upward if extending below viewport.
+
+165. FIXED (1.3.0-dev.9) - Clean Cache button layout broken (flex on td) and missing global button. Fix: removed flex from td, added "Clean All Caches" button in Workers tab header.
+
 
 
 ---

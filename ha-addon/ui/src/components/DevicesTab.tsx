@@ -750,7 +750,32 @@ function DeviceMenu({
                 Upgrade on...
                 <span className="ml-auto text-xs">&#9666;</span>
               </div>
-              <div className="invisible group-hover/sub:visible absolute right-full top-0 mr-1 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10">
+              <div
+                className="invisible group-hover/sub:visible absolute top-0 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
+                ref={(el) => {
+                  if (!el) return;
+                  const parent = el.parentElement?.getBoundingClientRect();
+                  if (!parent) return;
+                  // Default: open to the left (right-full)
+                  const spaceLeft = parent.left;
+                  const subWidth = el.offsetWidth || 160;
+                  if (spaceLeft >= subWidth) {
+                    el.style.right = '100%';
+                    el.style.left = 'auto';
+                    el.style.marginRight = '4px';
+                  } else {
+                    el.style.left = '100%';
+                    el.style.right = 'auto';
+                    el.style.marginLeft = '4px';
+                  }
+                  // Vertical: flip up if it extends below viewport
+                  const rect = el.getBoundingClientRect();
+                  if (rect.bottom > window.innerHeight) {
+                    el.style.top = 'auto';
+                    el.style.bottom = '0';
+                  }
+                }}
+              >
                 {onlineWorkers.map(w => (
                   <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
                 ))}
