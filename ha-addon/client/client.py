@@ -29,7 +29,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0-dev.15"
+CLIENT_VERSION = "1.3.0-dev.16"
 
 
 # ---------------------------------------------------------------------------
@@ -653,53 +653,43 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             return  # skip compile and OTA phases
 
         # ---------------------------------------------------------------
-        # Build + OTA via separate `esphome compile` + `esphome upload`
-        #
-        # We split this into two commands instead of using `esphome run` for two
-        # reasons:
-        #   1. `esphome run` tails device logs after OTA, blocking until killed.
-        #      The `--no-logs` flag avoids this on modern ESPHome but isn't
-        #      recognized on older versions reported in the wild.
-        #   2. With separate steps we get clean pass/fail signals for each
-        #      phase without parsing log strings.
+        # Build + OTA via `esphome run` (compile and upload in one step)
         # ---------------------------------------------------------------
+        _report_status(job_id, "Compiling + OTA" + (" (retry)" if ota_only else ""))
+        run_cmd = [esphome_bin, "run", target_path, "--no-logs"]
         ota_address = job.get("ota_address")
+        if ota_address:
+            run_cmd.extend(["--device", ota_address])
 
-        _report_status(job_id, "Compiling" + (" (retry)" if ota_only else ""))
-        compile_cmd = [esphome_bin, "compile", target_path]
-        compile_log, compile_ok = _run_subprocess(
-            compile_cmd,
+        # Total timeout covers both compile + OTA
+        total_timeout = timeout_seconds + OTA_TIMEOUT
+        run_log, run_ok = _run_subprocess(
+            run_cmd,
             cwd=tmp_dir,
-            timeout=timeout_seconds,
-            label="compile",
+            timeout=total_timeout,
+            label="compile+OTA",
             env=subprocess_env,
             job_id=job_id,
         )
 
-        if not compile_ok:
-            _submit_result(job_id, "failed", log=None, ota_result=None)
+        if run_ok:
+            _submit_result(job_id, "success", log=None, ota_result="success")
         else:
-            _report_status(job_id, "OTA")
-            upload_cmd = [esphome_bin, "upload", target_path]
-            if ota_address:
-                upload_cmd.extend(["--device", ota_address])
-            upload_log, upload_ok = _run_subprocess(
-                upload_cmd,
-                cwd=tmp_dir,
-                timeout=OTA_TIMEOUT,
-                label="OTA",
-                env=subprocess_env,
-                job_id=job_id,
-            )
+            log_lower = run_log.lower()
+            compile_succeeded = "successfully compiled" in log_lower
+            ota_failed = compile_succeeded and ("failed" in log_lower or "timed out" in log_lower)
 
-            if upload_ok:
-                _submit_result(job_id, "success", log=None, ota_result="success")
-            else:
-                # OTA failed — retry once after a brief delay.
+            if not compile_succeeded:
+                _submit_result(job_id, "failed", log=None, ota_result=None)
+            elif ota_failed:
+                # Compile succeeded but OTA failed — retry OTA before reporting.
                 # Keep job in WORKING state so timeout checker can re-queue if we die.
                 _flush_log_text(job_id, "\n--- OTA failed, retrying in 5s ---\n")
                 time.sleep(5)
                 _report_status(job_id, "OTA Retry")
+                upload_cmd = [esphome_bin, "upload", target_path, "--no-logs"]
+                if ota_address:
+                    upload_cmd.extend(["--device", ota_address])
                 retry_log, retry_ok = _run_subprocess(
                     upload_cmd,
                     cwd=tmp_dir,
@@ -715,6 +705,9 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                     diag = _ota_network_diagnostics(target_path, tmp_dir, subprocess_env)
                     if diag:
                         _flush_log_text(job_id, "\n--- Network Diagnostics ---\n" + diag)
+            else:
+                # Compile succeeded but something else failed
+                _submit_result(job_id, "success", log=None, ota_result="failed")
 
     finally:
         _log_context.current_target = None

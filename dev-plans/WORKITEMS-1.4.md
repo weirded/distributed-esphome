@@ -30,3 +30,6 @@ Theme: **Full replacement for the stock ESPHome dashboard.** Every feature the b
 ## Device Adoption
 
 - [ ] **2.4 Device adoption/import** — discover unconfigured devices, adopt with project URL
+
+## Open Bugs & Tweaks
+

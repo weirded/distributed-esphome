@@ -13,9 +13,10 @@ pip-wheel-metadata/
 venv/
 env/
 
-# Testing / type checking
+# Testing / type checking / linting
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
@@ -51,6 +52,9 @@ playwright-report/
 
 # HA add-on local build
 ha-addon/dist/
+
+# Local agent state
+.claude/
 
 # Local deployment scripts
 push-to-hass-4.sh

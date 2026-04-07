@@ -83,22 +83,24 @@ Capstone for the 1.3 release: codify the standards established by all the above 
 
 ---
 
-## Open Bugs
+## Bugs & Tweaks
 
-
-159. FIXED (1.3.0-dev.4) - Duplicate device rows for configs with hyphens in esphome.name. (GitHub issue #2) Root cause: ESPHome normalizes device names for mDNS — hyphens become underscores. `_map_target()` did exact string comparison. Fix: added hyphen/underscore normalization in `_map_target()` (tries normalized lookup on both name_to_target map and filename stems) and `build_name_to_target_map()` (adds underscore-normalized variant of hyphenated names to the map).
-160. FIXED (1.3.0-dev.4) - OTA diagnostics reports wrong device name. (GitHub issue #15) Root cause: `_ota_network_diagnostics()` used a naive regex matching the first `name:` in the YAML (e.g. a neopixel light). Fix: replaced regex with yaml.safe_load to extract esphome.name properly, with a fallback that only looks under the esphome: block.
-161. FIXED (1.3.0-dev.4) - Hamburger menu drops off-screen when opened near bottom-right corner. Fix: added viewport boundary detection via callback ref — flips menu upward when it would extend below viewport, and removes translateX(-100%) when menu would extend past the left edge.
-162. DUPLICATE of #161 — hamburger menu bottom-right corner issue. Already fixed in 1.3.0-dev.4.
-163. WONTFIX - When the UI is open and a new upgrade is deployed, HA shows an "add-on is offline" dialog instead of the app reloading gracefully. This is HA Ingress behavior — the proxy intercepts the connection before our app can handle it. SWR already retries and the version-change detector triggers a reload once the server is back.
-164. FIXED (1.3.0-dev.9) - "Upgrade on..." submenu drops off-screen when opened near viewport edge. Fix: added callback ref with viewport detection — opens to the right if insufficient space on the left, flips upward if extending below viewport.
-165. FIXED (1.3.0-dev.9) - Clean Cache button layout broken (flex on td) and missing global button. Fix: removed flex from td, added "Clean All Caches" button in Workers tab header.
-166. STALE — #163 marked WONTFIX, #164 fixed in 1.3.0-dev.9.
-167. FIXED (1.3.0-dev.10) - Queue showed enqueue time twice (Device column + Time column). Removed timeAgo from Device column, added absolute HH:MM:SS with relative time below in Time column. Uses browser locale (inherits HA timezone).
-168. FIXED (1.3.0-dev.10) - Retry button now shown for successful jobs too. Changed `isJobRetryable` to include all finished jobs (not just failed).
-169. FIXED (1.3.0-dev.10) - Clean All Caches was generating one toast per worker. Fix: dedicated `handleCleanAllCaches` in App.tsx uses Promise.all with a single summary toast. Added CLAUDE.md guidelines about batching toasts and thinking about UX.
-170. FIXED (1.3.0-dev.10) - Time column renamed to "Start Time". Added "Finish Time" column showing HH:MM:SS + duration for finished jobs, elapsed time for in-progress jobs. Added `finished_at` to Job type.
-171. FIXED (1.3.0-dev.15) - Queue duration was wrong — used worker-side `duration_seconds` instead of wall-clock time. Fix: compute `finished_at - created_at` for finished jobs and `now - created_at` for in-progress jobs in the Finish Time cell.
-172. FIXED (1.3.0-dev.15) - `--no-logs` removal from dev.12 broke output capture. Fix: replaced `esphome run` with separate `esphome compile` + `esphome upload` calls. Works on all ESPHome versions (no `--no-logs` flag needed), gives clean compile-vs-OTA failure detection without log string parsing.
+- [x] **#159** *(1.3.0-dev.4)* — Duplicate device rows for configs with hyphens in esphome.name. (GitHub issue #2) Root cause: ESPHome normalizes device names for mDNS — hyphens become underscores. `_map_target()` did exact string comparison. Fix: added hyphen/underscore normalization in `_map_target()` (tries normalized lookup on both name_to_target map and filename stems) and `build_name_to_target_map()` (adds underscore-normalized variant of hyphenated names to the map).
+- [x] **#160** *(1.3.0-dev.4)* — OTA diagnostics reports wrong device name. (GitHub issue #15) Root cause: `_ota_network_diagnostics()` used a naive regex matching the first `name:` in the YAML (e.g. a neopixel light). Fix: replaced regex with yaml.safe_load to extract esphome.name properly, with a fallback that only looks under the esphome: block.
+- [x] **#161** *(1.3.0-dev.4)* — Hamburger menu drops off-screen when opened near bottom-right corner. Fix: added viewport boundary detection via callback ref — flips menu upward when it would extend below viewport, and removes translateX(-100%) when menu would extend past the left edge.
+- [x] ~~**#162**~~ DUPLICATE of #161 — hamburger menu bottom-right corner issue. Already fixed in 1.3.0-dev.4.
+- [x] ~~**#163**~~ WONTFIX — When the UI is open and a new upgrade is deployed, HA shows an "add-on is offline" dialog instead of the app reloading gracefully. This is HA Ingress behavior — the proxy intercepts the connection before our app can handle it. SWR already retries and the version-change detector triggers a reload once the server is back.
+- [x] **#164** *(1.3.0-dev.9)* — "Upgrade on..." submenu drops off-screen when opened near viewport edge. Fix: added callback ref with viewport detection — opens to the right if insufficient space on the left, flips upward if extending below viewport.
+- [x] **#165** *(1.3.0-dev.9)* — Clean Cache button layout broken (flex on td) and missing global button. Fix: removed flex from td, added "Clean All Caches" button in Workers tab header.
+- [x] ~~**#166**~~ STALE — #163 marked WONTFIX, #164 fixed in 1.3.0-dev.9.
+- [x] **#167** *(1.3.0-dev.10)* — Queue showed enqueue time twice (Device column + Time column). Removed timeAgo from Device column, added absolute HH:MM:SS with relative time below in Time column. Uses browser locale (inherits HA timezone).
+- [x] **#168** *(1.3.0-dev.10)* — Retry button now shown for successful jobs too. Changed `isJobRetryable` to include all finished jobs (not just failed).
+- [x] **#169** *(1.3.0-dev.10)* — Clean All Caches was generating one toast per worker. Fix: dedicated `handleCleanAllCaches` in App.tsx uses Promise.all with a single summary toast. Added CLAUDE.md guidelines about batching toasts and thinking about UX.
+- [x] **#170** *(1.3.0-dev.10)* — Time column renamed to "Start Time". Added "Finish Time" column showing HH:MM:SS + duration for finished jobs, elapsed time for in-progress jobs. Added `finished_at` to Job type.
+- [x] **#171** *(1.3.0-dev.15)* — Queue duration was wrong — used worker-side `duration_seconds` instead of wall-clock time. Fix: compute `finished_at - created_at` for finished jobs and `now - created_at` for in-progress jobs in the Finish Time cell.
+- [x] ~~**#172**~~ REVERTED — `--no-logs` removal was reverted in #173 below. Sticking with `esphome run --no-logs`.
+- [x] **#173** *(1.3.0-dev.16)* — Reverted #172. Restored `esphome run --no-logs` (single subprocess for compile+OTA, matches native ESPHome UI). The version-compat concern with `--no-logs` is acceptable; if it becomes a real problem later we'll add a fallback.
+- [x] **#174** *(1.3.0-dev.16)* — Default queue sort changed back to State (working → pending → timed_out → failed → success). Time-based default from #6.7 was wrong default — running jobs are more important than newest. Time column is still sortable.
+- [x] **#175** *(1.3.0-dev.16)* — Finish Time column now labels its duration: "Took 2m 14s" when finished, "Elapsed 45s" when in progress.
 
 

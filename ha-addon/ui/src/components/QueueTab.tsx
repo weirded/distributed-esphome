@@ -87,7 +87,7 @@ export function QueueTab({
   onOpenLog,
   onEdit,
 }: Props) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'state', desc: false }]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [filter, setFilter] = useState('');
 
@@ -218,7 +218,7 @@ export function QueueTab({
         if (inProgress) {
           // Wall-clock elapsed since enqueue (not since worker pickup)
           const elapsed = fmtDuration((Date.now() - new Date(job.created_at).getTime()) / 1000);
-          return <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>{elapsed}</span>;
+          return <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>Elapsed {elapsed}</span>;
         }
         if (!job.finished_at) return <span style={{ fontSize: 12 }}>—</span>;
         const finished = new Date(job.finished_at);
@@ -229,7 +229,7 @@ export function QueueTab({
         return (
           <span style={{ fontSize: 12 }} title={finished.toLocaleString()}>
             {time}
-            {dur && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{dur}</div>}
+            {dur && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Took {dur}</div>}
           </span>
         );
       },

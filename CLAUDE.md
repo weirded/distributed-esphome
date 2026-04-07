@@ -186,6 +186,7 @@ All roadmap, release process, and bug tracking lives in `dev-plans/`:
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process (what Claude does vs. what the human does)
 
 **Always update tracking files when completing work:**
-- When a work item is done, mark it `[x]` and add the specific version tag (e.g. `*(1.3.0-dev.7)*` — use the actual dev.N, not the generic `dev`)
-- When a bug is fixed, update its status to `FIXED (X.Y.Z-dev.N)` and move it from "Open Bugs" into the Bug Fixes list
-- Do this immediately after the work is complete, not deferred to later
+- Both work items and bug entries use the same checkbox format: `- [x] **#NNN** *(X.Y.Z-dev.N)* — description` (where `#NNN` only applies to bugs).
+- When a work item is done, check the box and add the specific version tag (e.g. `*(1.3.0-dev.7)*` — use the actual dev.N, not the generic `dev`).
+- When a bug is fixed, check the box and add the version tag. For wontfix/duplicate/stale entries, use `~~**#NNN**~~ WONTFIX —` (strike-through bold ID + label).
+- Do this immediately after the work is complete, not deferred to later.
