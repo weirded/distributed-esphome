@@ -29,7 +29,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0-dev.22"
+CLIENT_VERSION = "1.3.0-dev.23"
 
 
 def _read_image_version() -> Optional[str]:
@@ -676,8 +676,10 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         # ---------------------------------------------------------------
         if validate_only:
             _report_status(job_id, "Validating")
+            validate_cmd = [esphome_bin, "config", target_path]
+            logger.info("Invoking: %s", " ".join(validate_cmd))
             _compile_log, compile_ok = _run_subprocess(
-                [esphome_bin, "config", target_path],
+                validate_cmd,
                 cwd=tmp_dir,
                 timeout=60,  # validation is fast — 60s is plenty
                 label="validate",
@@ -689,12 +691,29 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
 
         # ---------------------------------------------------------------
         # Build + OTA via `esphome run` (compile and upload in one step)
+        #
+        # --no-logs is REQUIRED on `esphome run` so the worker doesn't hang
+        # tailing device logs after a successful OTA. It is NOT accepted by
+        # `esphome upload` — passing it to the retry path in bug #177 caused
+        # the retry to crash with "unrecognized arguments: --no-logs".
+        #
+        # --device is ALWAYS set:
+        #   - ota_address from the server if known (device poller has an IP)
+        #   - otherwise the literal string "OTA", which tells ESPHome to
+        #     resolve the device itself and skip the interactive upload
+        #     target prompt (#176). Without this, ESPHome prompts when the
+        #     worker has multiple possible targets (e.g. a USB serial dongle
+        #     plus the OTA target), and the worker has no stdin.
         # ---------------------------------------------------------------
+        ota_address = job.get("ota_address") or "OTA"
+
         _report_status(job_id, "Compiling + OTA" + (" (retry)" if ota_only else ""))
-        run_cmd = [esphome_bin, "run", target_path, "--no-logs"]
-        ota_address = job.get("ota_address")
-        if ota_address:
-            run_cmd.extend(["--device", ota_address])
+        run_cmd = [
+            esphome_bin, "run", target_path,
+            "--no-logs",
+            "--device", ota_address,
+        ]
+        logger.info("Invoking: %s", " ".join(run_cmd))
 
         # Total timeout covers both compile + OTA
         total_timeout = timeout_seconds + OTA_TIMEOUT
@@ -719,12 +738,16 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             elif ota_failed:
                 # Compile succeeded but OTA failed — retry OTA before reporting.
                 # Keep job in WORKING state so timeout checker can re-queue if we die.
+                # Note: `esphome upload` does NOT accept --no-logs (it never tails
+                # device logs anyway), so this retry path only passes --device.
                 _flush_log_text(job_id, "\n--- OTA failed, retrying in 5s ---\n")
                 time.sleep(5)
                 _report_status(job_id, "OTA Retry")
-                upload_cmd = [esphome_bin, "upload", target_path, "--no-logs"]
-                if ota_address:
-                    upload_cmd.extend(["--device", ota_address])
+                upload_cmd = [
+                    esphome_bin, "upload", target_path,
+                    "--device", ota_address,
+                ]
+                logger.info("Invoking: %s", " ".join(upload_cmd))
                 retry_log, retry_ok = _run_subprocess(
                     upload_cmd,
                     cwd=tmp_dir,

@@ -70,11 +70,13 @@ function ClientVersionCell({
   scv,
   imageVer,
   minImageVer,
+  onReinstall,
 }: {
   ver?: string;
   scv?: string;
   imageVer?: string | null;
   minImageVer?: string;
+  onReinstall: () => void;
 }) {
   // Docker image version is checked first — a stale image blocks source-code
   // auto-updates entirely, so that's the more important warning to surface.
@@ -84,7 +86,7 @@ function ClientVersionCell({
     return (
       <span style={{ color: 'var(--text-muted)' }}>
         —
-        {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} />}
+        {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
       </span>
     );
   }
@@ -99,23 +101,36 @@ function ClientVersionCell({
         {ver}
         {isOutdated && ' ↑'}
       </code>
-      {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} />}
+      {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
     </span>
   );
 }
 
-function ImageStaleBadge({ imageVer, minImageVer }: { imageVer?: string | null; minImageVer?: string }) {
+function ImageStaleBadge({
+  imageVer,
+  minImageVer,
+  onReinstall,
+}: {
+  imageVer?: string | null;
+  minImageVer?: string;
+  onReinstall: () => void;
+}) {
+  const reported = imageVer ?? 'pre-LIB.0';
   return (
-    <span
+    <button
+      type="button"
+      onClick={onReinstall}
       title={
-        `Docker image is out of date — this worker reports IMAGE_VERSION=${imageVer ?? '<none>'} ` +
-        `but the server requires ${minImageVer}. Rebuild the worker image ` +
-        `(docker pull + restart) to get the latest.`
+        `This worker's Docker image is out of date ` +
+        `(IMAGE_VERSION=${reported}, server requires ${minImageVer}). ` +
+        `Source-code auto-updates are disabled until the image is rebuilt.\n\n` +
+        `We recommend reinstalling the worker using the latest "docker run" ` +
+        `command from the Connect Worker modal — click this badge to open it.`
       }
-      className="inline-flex items-center rounded-full border border-[var(--destructive)] bg-[var(--destructive)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--destructive)]"
+      className="inline-flex items-center rounded-full border border-[var(--destructive)] bg-[var(--destructive)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--destructive)] cursor-pointer hover:bg-[var(--destructive)]/20"
     >
       image stale
-    </span>
+    </button>
   );
 }
 
@@ -308,7 +323,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
             <td>{statusEl}{uptimeEl}</td>
             <td>{jobEl}</td>
-            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} /></td>
+            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} onReinstall={onConnectWorker} /></td>
             <td>
               <SlotControl
                 slots={slots}
