@@ -44,6 +44,10 @@ const LOG_STREAM_TIMEOUT_MS = 60_000;
 // How long we'll watch the device live log for an incoming line.
 const DEVICE_LOG_TIMEOUT_MS = 30_000;
 
+// Job ID enqueued in test 2, polled in test 3. Module-scoped so it survives
+// across the serial tests in this file.
+let enqueuedJobId: string | null = null;
+
 test.describe.serial('cyd-office-info production smoke', () => {
   // Confirm we're talking to the expected add-on version before doing anything
   // else. If the deploy is stale, the rest of the tests are meaningless.
@@ -71,27 +75,38 @@ test.describe.serial('cyd-office-info production smoke', () => {
     await expect(targetRow).toBeVisible({ timeout: 30_000 });
   });
 
-  test('schedule upgrade and verify it lands in the queue', async ({ page }) => {
+  test('schedule upgrade and verify it lands in the queue', async ({ page, request }) => {
     await page.goto('/');
     const targetRow = await findTargetRow(page);
     await expect(targetRow).toBeVisible({ timeout: 30_000 });
+
+    // Snapshot the latest existing job ID for this target so we can detect
+    // the new one we're about to create
+    const before = await latestJobIdFor(request, TARGET_FILENAME);
 
     // Click the row's Upgrade button
     const upgradeBtn = targetRow.getByRole('button', { name: /^upgrade$/i });
     await expect(upgradeBtn).toBeVisible();
     await upgradeBtn.click();
 
-    // Toast confirms the enqueue (or the page auto-switches to Queue)
-    // Either way, switch to Queue tab and verify the job is there
-    await page.getByRole('button', { name: /^Queue/ }).click();
+    // Wait for a NEW job (different ID) to appear via the API — source of truth
+    await expect.poll(
+      async () => latestJobIdFor(request, TARGET_FILENAME),
+      { timeout: 15_000, message: 'expected a new job to be enqueued' },
+    ).not.toBe(before);
 
-    // The new job should appear within the polling interval (~3s)
+    enqueuedJobId = await latestJobIdFor(request, TARGET_FILENAME);
+    expect(enqueuedJobId).toBeTruthy();
+
+    // Switch to the Queue tab and confirm the row is visible in the UI
+    await page.getByRole('button', { name: /^Queue/ }).click();
     const queueRow = await findQueueRow(page);
     await expect(queueRow).toBeVisible({ timeout: 15_000 });
   });
 
-  test('compile runs to completion and live log streams', async ({ page }) => {
+  test('compile runs to completion and live log streams', async ({ page, request }) => {
     test.setTimeout(COMPILE_BUDGET_MS + 60_000);
+    expect(enqueuedJobId, 'previous test should have set enqueuedJobId').toBeTruthy();
 
     await page.goto('/');
     await page.getByRole('button', { name: /^Queue/ }).click();
@@ -105,36 +120,44 @@ test.describe.serial('cyd-office-info production smoke', () => {
     await logBtn.click();
 
     // The log modal contains an xterm.js terminal — the screen renders text
-    // into a div with class "xterm-screen". Wait for at least one log line.
+    // into a div with class "xterm-screen". Wait for it to render and stream
+    // at least some compile output.
     const terminal = page.locator('.xterm-screen').first();
     await expect(terminal).toBeVisible({ timeout: 10_000 });
-
-    // Wait for the terminal to actually contain compile output
     await expect.poll(
       async () => (await terminal.textContent())?.length ?? 0,
-      { timeout: LOG_STREAM_TIMEOUT_MS, message: 'expected log lines to stream' },
+      { timeout: LOG_STREAM_TIMEOUT_MS, message: 'expected log lines to stream into the modal' },
     ).toBeGreaterThan(50);
 
-    // Close the log modal so we can watch the queue row state from outside
+    // Close the modal — we'll poll completion via the API, which is the
+    // source of truth and avoids fragile UI badge text matching.
     await page.keyboard.press('Escape');
 
-    // Poll the queue row's state badge until we see Success or Failed
-    const stateBadge = queueRow.locator('span').filter({
-      hasText: /^(Pending|Working|Compiling|Linking|Uploading|OTA|Success|Failed|OTA Failed|Timed Out)$/i,
-    }).first();
-
+    // Poll the queue API for our specific job until it reaches a terminal state
+    let finalJob: QueueJob | null = null;
     await expect.poll(
-      async () => (await stateBadge.textContent())?.trim() ?? '',
+      async () => {
+        const job = await getJob(request, enqueuedJobId!);
+        if (job && isTerminal(job.state)) {
+          finalJob = job;
+          return job.state;
+        }
+        return job?.state ?? 'missing';
+      },
       {
         timeout: COMPILE_BUDGET_MS,
         intervals: [2_000, 5_000, 10_000],
         message: `compile + OTA did not finish within ${COMPILE_BUDGET_MS}ms`,
       },
-    ).toMatch(/^(Success|Failed|OTA Failed|Timed Out)$/i);
+    ).toMatch(/^(success|failed|timed_out)$/);
 
-    // The test fails if we ended in any non-success state
-    const finalState = (await stateBadge.textContent())?.trim() ?? '';
-    expect(finalState, `final compile state: ${finalState}`).toMatch(/^Success$/i);
+    // Compile must have succeeded AND OTA must have succeeded
+    expect(finalJob, 'final job should be set').not.toBeNull();
+    expect(finalJob!.state, `final state: ${finalJob!.state}`).toBe('success');
+    expect(
+      finalJob!.ota_result,
+      `OTA result: ${finalJob!.ota_result}`,
+    ).toBe('success');
   });
 
   test('live device logs stream from cyd-office-info', async ({ page }) => {
@@ -168,7 +191,49 @@ test.describe.serial('cyd-office-info production smoke', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Helpers
+// API helpers — talk directly to /ui/api/queue for state, source-of-truth.
+// ---------------------------------------------------------------------------
+
+interface QueueJob {
+  id: string;
+  target: string;
+  state: string;
+  ota_result?: string;
+  created_at: string;
+  finished_at?: string;
+}
+
+function isTerminal(state: string): boolean {
+  return state === 'success' || state === 'failed' || state === 'timed_out';
+}
+
+async function getQueue(request: import('@playwright/test').APIRequestContext): Promise<QueueJob[]> {
+  const resp = await request.get('/ui/api/queue');
+  if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
+  return resp.json();
+}
+
+async function latestJobIdFor(
+  request: import('@playwright/test').APIRequestContext,
+  target: string,
+): Promise<string | null> {
+  const jobs = await getQueue(request);
+  const matching = jobs
+    .filter(j => j.target === target)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return matching[0]?.id ?? null;
+}
+
+async function getJob(
+  request: import('@playwright/test').APIRequestContext,
+  id: string,
+): Promise<QueueJob | null> {
+  const jobs = await getQueue(request);
+  return jobs.find(j => j.id === id) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// UI helpers
 // ---------------------------------------------------------------------------
 
 /**
