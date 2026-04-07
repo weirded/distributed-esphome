@@ -87,18 +87,18 @@ Theme: **Harden the codebase.** Fill test coverage gaps, add CI, clean up Python
 
 Fixture YAML configs that cover every supported ESPHome platform/framework combination. Run actual `esphome compile` in CI and on the local worker to catch toolchain/dependency regressions early (like the Alpine glibc issues in 1.2.0).
 
-- [x] **BT.1 Fixture configs** *(1.3.0-dev)* — 16 minimal compilable YAML fixtures in `tests/fixtures/compile_targets/` covering ESP8266, ESP32 (Arduino + IDF), ESP32-S2/S3/C3/C6 (IDF), RP2040, BK72xx, RTL87xx, plus complex configs (external components, packages, Bluetooth Proxy, Thread)
-- [x] **BT.2 Docker compile test script** *(1.3.0-dev)* — `scripts/test-compile.sh` (host) and `scripts/test-compile-docker.sh` (Docker client + server images)
-- [x] **BT.3 Local worker compile test** *(1.3.0-dev)* — `test-compile-docker.sh --server-only` validates the python:3.11-slim server image
-- [x] **BT.4 CI integration** *(1.3.0-dev)* — `.github/workflows/compile-test.yml`: 16-target client matrix + 4-target server matrix with PlatformIO caching
+- [x] **BT.1 Fixture configs** *(1.3.0-dev.1)* — 16 minimal compilable YAML fixtures in `tests/fixtures/compile_targets/` covering ESP8266, ESP32 (Arduino + IDF), ESP32-S2/S3/C3/C6 (IDF), RP2040, BK72xx, RTL87xx, plus complex configs (external components, packages, Bluetooth Proxy, Thread)
+- [x] **BT.2 Docker compile test script** *(1.3.0-dev.1)* — `scripts/test-compile.sh` (host) and `scripts/test-compile-docker.sh` (Docker client + server images)
+- [x] **BT.3 Local worker compile test** *(1.3.0-dev.1)* — `test-compile-docker.sh --server-only` validates the python:3.11-slim server image
+- [x] **BT.4 CI integration** *(1.3.0-dev.1)* — `.github/workflows/compile-test.yml`: 16-target client matrix + 4-target server matrix with PlatformIO caching
 
 ### Python Test Suite
 
 117 existing tests. Main gaps: api.py, ui_api.py, main.py have low coverage.
 
-- [x] **T.0 Fix test anti-patterns** *(1.3.0-dev)* — removed redundant sys.path from 7 files, replaced hardcoded /tmp with tmp_path, converted test_queue.py to native async tests (167 tests total)
-- [x] **T.1 Auth middleware tests** *(1.3.0-dev)* — 13 tests in `tests/test_auth.py`: Bearer token, Ingress trust, dev bypass
-- [x] **T.2 Worker API tests** *(1.3.0-dev)* — 37 tests in `tests/test_api.py`: registration, heartbeat, scheduling, pinned jobs, result submission
+- [x] **T.0 Fix test anti-patterns** *(1.3.0-dev.3)* — removed redundant sys.path from 7 files, replaced hardcoded /tmp with tmp_path, converted test_queue.py to native async tests (167 tests total)
+- [x] **T.1 Auth middleware tests** *(1.3.0-dev.1)* — 13 tests in `tests/test_auth.py`: Bearer token, Ingress trust, dev bypass
+- [x] **T.2 Worker API tests** *(1.3.0-dev.1)* — 37 tests in `tests/test_api.py`: registration, heartbeat, scheduling, pinned jobs, result submission
 - [ ] **T.3 UI API tests** (~23) — targets, compile, config CRUD, rename, queue management
 - [ ] **T.4 Extend existing module tests** (~15) — scanner metadata, queue pinning, poller cache
 
@@ -106,27 +106,27 @@ Fixture YAML configs that cover every supported ESPHome platform/framework combi
 
 End-to-end testing of the web UI using Playwright.
 
-- [x] **PW.1 Playwright setup** *(1.3.0-dev)* — `@playwright/test`, Vite preview server, route-intercepted mock API
-- [x] **PW.2 Smoke tests** *(1.3.0-dev)* — 10 tests: page load, header, all tabs, tab counts, version badge
-- [x] **PW.3 Device tab interactions** *(1.3.0-dev)* — 5 tests: search/filter, editor modal, theme toggle, upgrade button
-- [x] **PW.4 Queue tab interactions** *(1.3.0-dev)* — 4 tests: state badges, search, log modal, worker hostname
-- [x] **PW.5 Workers tab interactions** *(1.3.0-dev)* — 5 tests: hostnames, connect modal, system info
+- [x] **PW.1 Playwright setup** *(1.3.0-dev.5)* — `@playwright/test`, Vite preview server, route-intercepted mock API
+- [x] **PW.2 Smoke tests** *(1.3.0-dev.5)* — 10 tests: page load, header, all tabs, tab counts, version badge
+- [x] **PW.3 Device tab interactions** *(1.3.0-dev.5)* — 5 tests: search/filter, editor modal, theme toggle, upgrade button
+- [x] **PW.4 Queue tab interactions** *(1.3.0-dev.5)* — 4 tests: state badges, search, log modal, worker hostname
+- [x] **PW.5 Workers tab interactions** *(1.3.0-dev.5)* — 5 tests: hostnames, connect modal, system info
 - [ ] **PW.6 Editor modal** — open, edit YAML, save, validate, dirty state warning
 - [ ] **PW.7 Theme and responsiveness** — dark/light toggle, narrow viewport behavior
 
 ### CI / GitHub Actions
 
-- [x] **CI.1 Run E2E tests in CI** *(1.3.0-dev)* — `.github/workflows/ci.yml` runs full test suite (removed `--ignore` filters)
-- [x] **CI.2 Add test coverage reporting** *(1.3.0-dev)* — `pytest-cov` with term-missing + HTML artifact upload (42% baseline)
-- [x] **CI.3 Add ruff linting** *(1.3.0-dev)* — `ruff check` on server + client code in CI; fixed 6 lint errors (unused imports, ambiguous vars)
-- [x] **CI.4 Add frontend build+lint job** *(1.3.0-dev)* — `frontend` job in CI: `npm ci && npm run build`
-- [x] **CI.5 Run Playwright tests in CI** *(1.3.0-dev)* — Chromium install + `playwright test` in frontend job, failure artifacts uploaded
+- [x] **CI.1 Run E2E tests in CI** *(1.3.0-dev.1)* — `.github/workflows/ci.yml` runs full test suite (removed `--ignore` filters)
+- [x] **CI.2 Add test coverage reporting** *(1.3.0-dev.7)* — `pytest-cov` with term-missing + HTML artifact upload (42% baseline)
+- [x] **CI.3 Add ruff linting** *(1.3.0-dev.7)* — `ruff check` on server + client code in CI; fixed 6 lint errors (unused imports, ambiguous vars)
+- [x] **CI.4 Add frontend build+lint job** *(1.3.0-dev.1)* — `frontend` job in CI: `npm ci && npm run build`
+- [x] **CI.5 Run Playwright tests in CI** *(1.3.0-dev.7)* — Chromium install + `playwright test` in frontend job, failure artifacts uploaded
 
 ### Python Codebase Cleanup
 
-- [x] **PY.1 Server DRY cleanup** *(1.3.0-dev)* — `helpers.py` with `safe_resolve()`, `json_error()`, `constant_time_compare()`, `clamp()`; replaced 14 inline path checks + 68 error responses
-- [x] **PY.2 Client cleanup** *(1.3.0-dev)* — extracted `sysinfo.py` (245 lines), added debug logging to 10 silent exceptions, tarfile filter fallback for Python <3.12
-- [x] **PY.3 Version manager thread safety** *(1.3.0-dev)* — `wait_event.wait()` with 600s timeout, disk space auto-eviction with `keep_version` parameter
+- [x] **PY.1 Server DRY cleanup** *(1.3.0-dev.1)* — `helpers.py` with `safe_resolve()`, `json_error()`, `constant_time_compare()`, `clamp()`; replaced 14 inline path checks + 68 error responses
+- [x] **PY.2 Client cleanup** *(1.3.0-dev.1)* — extracted `sysinfo.py` (245 lines), added debug logging to 10 silent exceptions, tarfile filter fallback for Python <3.12
+- [x] **PY.3 Version manager thread safety** *(1.3.0-dev.1)* — `wait_event.wait()` with 600s timeout, disk space auto-eviction with `keep_version` parameter
 - [ ] **PY.4 Consistency & polish** — standardize error handling, type hints, CLAUDE.md updates
 - [ ] **PY.5 Extract magic strings to constants** — consolidate hardcoded values (URLs, paths, config keys, status strings, header names, etc.) into named constants in server and client Python code
 - [ ] **PY.6 Extract magic strings to constants (UI)** — consolidate hardcoded API paths, localStorage keys, polling intervals, status strings, etc. into named constants in the TypeScript frontend
@@ -140,9 +140,9 @@ LIB.1 requires a new Docker image (`psutil` needs C compilation). LIB.0 adds det
 
 ### Security Hardening
 
-- [x] **SEC.1 Timing-safe token comparison** *(1.3.0-dev)* — `constant_time_compare()` in `helpers.py`, used in auth middleware and `api.py`
-- [x] **SEC.2 Bounded log storage** *(1.3.0-dev)* — `append_log()` caps `_streaming_log` at 512 KB per job, truncates with marker, silently drops further appends
-- [x] **SEC.3 Validate max_parallel_jobs on registration** *(1.3.0-dev)* — `clamp()` in `helpers.py`, bounds 0-32 in `api.py` worker registration
+- [x] **SEC.1 Timing-safe token comparison** *(1.3.0-dev.1)* — `constant_time_compare()` in `helpers.py`, used in auth middleware and `api.py`
+- [x] **SEC.2 Bounded log storage** *(1.3.0-dev.6)* — `append_log()` caps `_streaming_log` at 512 KB per job, truncates with marker, silently drops further appends
+- [x] **SEC.3 Validate max_parallel_jobs on registration** *(1.3.0-dev.1)* — `clamp()` in `helpers.py`, bounds 0-32 in `api.py` worker registration
 
 ### Quality Gates (CLAUDE.md)
 
