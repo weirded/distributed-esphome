@@ -29,7 +29,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0-dev.7"
+CLIENT_VERSION = "1.3.0-dev.8"
 
 
 # ---------------------------------------------------------------------------
