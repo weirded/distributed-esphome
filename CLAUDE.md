@@ -171,6 +171,8 @@ cd ha-addon/ui && npx vite         # dev server
 - **One component per file, colocate related code.** Types, helpers, and constants used by a single component live near that component, not in a global utils grab-bag.
 - **Semantic HTML.** `<button>` not `<div onClick>`, `<table>` for tabular data. shadcn handles much of this — don't undermine it with custom markup.
 - **All API calls go through `api/client.ts`.** Components never call `fetch` directly.
+- **Batch operations get one toast.** When an action affects multiple items (e.g. "clean all caches"), use `Promise.all` and show a single summary toast — never one toast per item. Bulk actions should be handled in App.tsx, not by iterating callbacks in child components.
+- **Think about the UX.** Before shipping a UI change, mentally walk through it: does the layout make sense? Does it look right on the real dashboard with real data? Avoid `flex` on `<td>`, buttons that look like links, or anything that would look sloppy to a user.
 
 ## Project Tracking
 

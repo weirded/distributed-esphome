@@ -197,7 +197,7 @@ export function QueueTab({
     }),
     columnHelper.accessor(row => row.created_at, {
       id: 'created_at',
-      header: ({ column }) => <SortHeader label="Time" column={column} />,
+      header: ({ column }) => <SortHeader label="Start Time" column={column} />,
       cell: ({ row: { original: job } }) => {
         const d = new Date(job.created_at);
         const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -210,20 +210,29 @@ export function QueueTab({
       },
       sortingFn: 'datetime',
     }),
-    columnHelper.accessor(row => row.duration_seconds ?? 0, {
-      id: 'duration',
-      header: ({ column }) => <SortHeader label="Duration" column={column} />,
+    columnHelper.accessor(row => row.finished_at ?? '', {
+      id: 'finished_at',
+      header: ({ column }) => <SortHeader label="Finish Time" column={column} />,
       cell: ({ row: { original: job } }) => {
         const inProgress = isJobInProgress(job);
-        const dur =
-          job.duration_seconds != null
-            ? fmtDuration(job.duration_seconds)
-            : inProgress && job.assigned_at
+        if (inProgress) {
+          const elapsed = job.assigned_at
             ? fmtDuration((Date.now() - new Date(job.assigned_at).getTime()) / 1000)
             : '—';
-        return <span style={{ fontSize: 12 }}>{dur}</span>;
+          return <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>{elapsed}</span>;
+        }
+        if (!job.finished_at) return <span style={{ fontSize: 12 }}>—</span>;
+        const d = new Date(job.finished_at);
+        const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const dur = job.duration_seconds != null ? fmtDuration(job.duration_seconds) : null;
+        return (
+          <span style={{ fontSize: 12 }} title={d.toLocaleString()}>
+            {time}
+            {dur && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{dur}</div>}
+          </span>
+        );
       },
-      sortingFn: 'basic',
+      sortingFn: 'datetime',
     }),
     columnHelper.display({
       id: 'actions',

@@ -11,6 +11,9 @@ import aiohttp
 from aiohttp import web
 
 from app_config import AppConfig
+from constants import (
+    HA_SUPERVISOR_IP, HEADER_AUTHORIZATION, HEADER_X_CLIENT_ID, HEADER_X_WORKER_ID,
+)
 from job_queue import JobState
 from scanner import create_bundle, get_esphome_version
 
@@ -43,9 +46,9 @@ def _check_auth(request: web.Request) -> bool:
     peer = request.transport and request.transport.get_extra_info("peername")
     if peer:
         peer_ip = peer[0] if isinstance(peer, tuple) else str(peer)
-        if peer_ip == "172.30.32.2":
+        if peer_ip == HA_SUPERVISOR_IP:
             return True
-    auth_header = request.headers.get("Authorization", "")
+    auth_header = request.headers.get(HEADER_AUTHORIZATION, "")
     from helpers import constant_time_compare  # noqa: PLC0415
     if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], cfg.token):
         return True
@@ -178,9 +181,9 @@ async def get_next_job(request: web.Request) -> web.Response:
     if not _check_auth(request):
         return _unauthorized()
 
-    client_id = request.headers.get("X-Client-Id") or request.rel_url.query.get("client_id")
+    client_id = request.headers.get(HEADER_X_CLIENT_ID) or request.rel_url.query.get("client_id")
     if not client_id:
-        return web.json_response({"error": "X-Client-Id header or client_id param required"}, status=400)
+        return web.json_response({"error": f"{HEADER_X_CLIENT_ID} header or client_id param required"}, status=400)
 
     queue = request.app["queue"]
     registry = request.app["registry"]
@@ -191,7 +194,7 @@ async def get_next_job(request: web.Request) -> web.Response:
     if worker and worker.disabled:
         return web.Response(status=204)
 
-    worker_id_str = request.headers.get("X-Worker-Id", "1")
+    worker_id_str = request.headers.get(HEADER_X_WORKER_ID, "1")
     try:
         worker_id = int(worker_id_str)
     except ValueError:

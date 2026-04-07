@@ -288,6 +288,17 @@ export default function App() {
     }
   }
 
+  async function handleCleanAllCaches() {
+    const onlineWorkers = workers.filter(w => w.online);
+    if (!onlineWorkers.length) return;
+    try {
+      await Promise.all(onlineWorkers.map(w => cleanWorkerCache(w.client_id)));
+      addToast(`Clean build cache requested for ${onlineWorkers.length} worker${onlineWorkers.length > 1 ? 's' : ''}`, 'success');
+    } catch (err) {
+      addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
   async function handleRemoveWorker(id: string) {
     try {
       await removeWorker(id);
@@ -449,6 +460,7 @@ export default function App() {
             onRemove={handleRemoveWorker}
             onSetParallelJobs={handleSetParallelJobs}
             onCleanCache={handleCleanWorkerCache}
+            onCleanAllCaches={handleCleanAllCaches}
             onConnectWorker={() => setConnectModalOpen(true)}
           />
         )}

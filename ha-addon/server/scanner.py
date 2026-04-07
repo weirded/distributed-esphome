@@ -8,6 +8,8 @@ import tarfile
 from pathlib import Path
 from typing import Optional
 
+from constants import SECRETS_YAML
+
 logger = logging.getLogger(__name__)
 
 # Module-level selected version; set at startup and via POST /ui/api/esphome-version.
@@ -60,7 +62,7 @@ def scan_configs(config_dir: str) -> list[str]:
     for p in sorted(base.glob("*.yaml")):
         if p.name.startswith("."):
             continue
-        if p.name.lower() == "secrets.yaml":
+        if p.name.lower() == SECRETS_YAML:
             continue
         results.append(p.name)
 

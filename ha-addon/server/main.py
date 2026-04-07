@@ -43,7 +43,8 @@ async def version_header_middleware(request: web.Request, handler):
     """Attach X-Server-Version header to every response for UI change detection."""
     response = await handler(request)
     from api import _get_server_client_version  # noqa: PLC0415
-    response.headers["X-Server-Version"] = _get_server_client_version()
+    from constants import HEADER_X_SERVER_VERSION  # noqa: PLC0415
+    response.headers[HEADER_X_SERVER_VERSION] = _get_server_client_version()
     return response
 
 
@@ -62,13 +63,14 @@ async def auth_middleware(request: web.Request, handler):
         if peer:
             peer_ip = peer[0] if isinstance(peer, tuple) else str(peer)
 
-        if peer_ip == "172.30.32.2":
+        from constants import HA_SUPERVISOR_IP, HEADER_AUTHORIZATION  # noqa: PLC0415
+        if peer_ip == HA_SUPERVISOR_IP:
             return await handler(request)
 
         cfg: AppConfig = request.app["config"]
         if cfg.token:
             from helpers import constant_time_compare  # noqa: PLC0415
-            auth_header = request.headers.get("Authorization", "")
+            auth_header = request.headers.get(HEADER_AUTHORIZATION, "")
             if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], cfg.token):
                 return await handler(request)
         else:
@@ -413,7 +415,8 @@ async def serve_index(request: web.Request) -> web.Response:
     except FileNotFoundError:
         return web.Response(status=404, text="index.html not found")
 
-    ingress_path = request.headers.get("X-Ingress-Path", "")
+    from constants import HEADER_X_INGRESS_PATH  # noqa: PLC0415
+    ingress_path = request.headers.get(HEADER_X_INGRESS_PATH, "")
     if ingress_path:
         # Ensure trailing slash for base href
         if not ingress_path.endswith("/"):

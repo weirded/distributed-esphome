@@ -1183,7 +1183,8 @@ async def get_secret_keys(request: web.Request) -> web.Response:
     """Return list of secret key names from secrets.yaml (values are never sent)."""
     import yaml  # noqa: PLC0415
     cfg = _cfg(request)
-    path = Path(cfg.config_dir) / "secrets.yaml"
+    from constants import SECRETS_YAML  # noqa: PLC0415
+    path = Path(cfg.config_dir) / SECRETS_YAML
     if not path.exists():
         return web.json_response({"keys": []})
     try:

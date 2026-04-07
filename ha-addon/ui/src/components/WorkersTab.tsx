@@ -19,6 +19,7 @@ interface Props {
   onRemove: (id: string) => void;
   onSetParallelJobs: (id: string, count: number) => void;
   onCleanCache: (id: string) => void;
+  onCleanAllCaches: () => void;
   onConnectWorker: () => void;
 }
 
@@ -136,7 +137,7 @@ function getWorkerSortValue(w: Worker, colId: string): string {
 
 const columnHelper = createColumnHelper<Worker>();
 
-export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSetParallelJobs, onCleanCache, onConnectWorker }: Props) {
+export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'hostname', desc: false }]);
 
@@ -337,10 +338,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
           </div>
           <div className="actions">
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{countText}</span>
-            <Button variant="secondary" size="sm" onClick={() => {
-              const onlineWorkers = workers.filter(w => w.online);
-              onlineWorkers.forEach(w => onCleanCache(w.client_id));
-            }} disabled={!workers.some(w => w.online)}>Clean All Caches</Button>
+            <Button variant="secondary" size="sm" onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>Clean All Caches</Button>
             <Button size="sm" onClick={onConnectWorker}>+ Connect Worker</Button>
           </div>
         </div>

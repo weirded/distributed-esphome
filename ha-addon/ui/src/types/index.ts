@@ -82,6 +82,7 @@ export interface Job {
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;
+  finished_at?: string;
   status_text?: string;
   ota_only?: boolean;
   validate_only?: boolean;

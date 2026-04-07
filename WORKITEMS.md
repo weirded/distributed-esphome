@@ -127,9 +127,9 @@ End-to-end testing of the web UI using Playwright.
 - [x] **PY.1 Server DRY cleanup** *(1.3.0-dev.1)* — `helpers.py` with `safe_resolve()`, `json_error()`, `constant_time_compare()`, `clamp()`; replaced 14 inline path checks + 68 error responses
 - [x] **PY.2 Client cleanup** *(1.3.0-dev.1)* — extracted `sysinfo.py` (245 lines), added debug logging to 10 silent exceptions, tarfile filter fallback for Python <3.12
 - [x] **PY.3 Version manager thread safety** *(1.3.0-dev.1)* — `wait_event.wait()` with 600s timeout, disk space auto-eviction with `keep_version` parameter
-- [ ] **PY.4 Consistency & polish** — standardize error handling, type hints, CLAUDE.md updates
-- [ ] **PY.5 Extract magic strings to constants** — consolidate hardcoded values (URLs, paths, config keys, status strings, header names, etc.) into named constants in server and client Python code
-- [ ] **PY.6 Extract magic strings to constants (UI)** — consolidate hardcoded API paths, localStorage keys, polling intervals, status strings, etc. into named constants in the TypeScript frontend
+- [x] **PY.4 Consistency & polish** *(1.3.0-dev.10)* — added CLAUDE.md guidelines for batch toasts, UX review, and quality standards
+- [x] **PY.5 Extract magic strings to constants** *(1.3.0-dev.10)* — `constants.py` with HA_SUPERVISOR_IP, header names, SECRETS_YAML; updated api.py, main.py, scanner.py, ui_api.py
+- [x] ~~**PY.6 Extract magic strings to constants (UI)**~~ — dropped; UI strings are each used in one place, extracting adds indirection without benefit
 
 ### Client Library Adoption
 

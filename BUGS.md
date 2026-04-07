@@ -156,9 +156,9 @@
 
 168. FIXED (1.3.0-dev.10) - Retry button now shown for successful jobs too. Changed `isJobRetryable` to include all finished jobs (not just failed).
 
+169. FIXED (1.3.0-dev.10) - Clean All Caches was generating one toast per worker. Fix: dedicated `handleCleanAllCaches` in App.tsx uses Promise.all with a single summary toast. Added CLAUDE.md guidelines about batching toasts and thinking about UX.
 
-
-
+170. FIXED (1.3.0-dev.10) - Time column renamed to "Start Time". Added "Finish Time" column showing HH:MM:SS + duration for finished jobs, elapsed time for in-progress jobs. Added `finished_at` to Job type.
 
 ---
 
