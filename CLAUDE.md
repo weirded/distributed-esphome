@@ -213,8 +213,8 @@ All roadmap, release process, and bug tracking lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index of all the files
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Each file mixes feature work items (with checkboxes) and bug fixes (numbered, with FIXED/WONTFIX/etc. status). Bug numbers are global and monotonic across releases.
-- `dev-plans/WORKITEMS-1.3.md` — **current release.** Open bugs go at the bottom under "Open Bugs", folded into the Bug Fixes list as they land.
-- `dev-plans/archive/` — released WORKITEMS files from prior versions (1.0, 1.1, 1.2). Historical reference only; don't edit.
+- `dev-plans/WORKITEMS-1.3.1.md` — **current release.** Open bugs go at the bottom under "Open Bugs", folded into the Bug Fixes list as they land.
+- `dev-plans/archive/` — released WORKITEMS files from prior versions (1.0, 1.1, 1.2, 1.3). Historical reference only; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings (refer when making security-relevant changes)
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process (what Claude does vs. what the human does)
 
