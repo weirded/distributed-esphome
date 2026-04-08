@@ -495,21 +495,25 @@ The following aspects of the implementation are done well and worth noting expli
 
 ## Summary Table
 
-| ID   | Finding                                              | Severity |
-|------|------------------------------------------------------|----------|
-| F-01 | Auth token exposed to browser via server-info API    | High     |
-| F-02 | Worker auto-update executes arbitrary server code    | High     |
-| F-03 | UI API unauthenticated if port 8765 is directly accessible | Medium |
-| F-04 | `secrets.yaml` included in every build bundle        | Medium   |
-| F-05 | Worker-server communication is plaintext HTTP        | Medium   |
-| F-06 | Supervisor IP bypass grants unauthenticated API access | Low    |
-| F-07 | No rate limiting or queue size cap                   | Low      |
-| F-08 | Job results not validated against the claiming worker | Low     |
-| F-09 | Path traversal check correct but worth hardening     | Low      |
-| F-10 | Monaco editor loaded from unpinned CDN (no SRI)      | Low      |
-| F-11 | Build log content stored unredacted                  | Low      |
-| F-12 | Dependency versions not pinned                       | Low      |
-| F-13 | Docker base image not pinned to a digest             | Low      |
-| F-14 | Auth token file written without explicit permissions | Info     |
-| F-15 | `X-Ingress-Path` injected into HTML unsanitized      | Info     |
-| F-16 | Worker registry not persistent (operational note)    | Info     |
+Status legend: **FIXED** (resolved, release noted) · **PARTIAL** (partially mitigated in the release noted; residual risk remains) · **OPEN** (still live, planned to fix) · **WONTFIX** (accepted risk by design for the HA add-on threat model) · **INFO** (observation, no action planned).
+
+Status as of 1.3.0 release (last reviewed 2026-04-08 against current code).
+
+| ID   | Finding                                              | Severity | Status | Notes |
+|------|------------------------------------------------------|----------|--------|-------|
+| F-01 | Auth token exposed to browser via server-info API    | High     | WONTFIX | Required for the Connect Worker modal's `docker run` command UX. Risk accepted: the token lives behind HA Ingress authentication, same trust boundary as the rest of HA. |
+| F-02 | Worker auto-update executes arbitrary server code    | High     | PARTIAL (1.3.0) | LIB.0/LIB.1 added `IMAGE_VERSION` / `MIN_IMAGE_VERSION` gating so the server refuses source-code auto-updates to workers running a stale Docker image. The arbitrary-code path itself remains; no signature verification. Full fix (signing or removal) tracked for a future release. |
+| F-03 | UI API unauthenticated if port 8765 is directly accessible | Medium | WONTFIX | By design — HA Ingress is the only intended access path. Documented in README. |
+| F-04 | `secrets.yaml` included in every build bundle        | Medium   | WONTFIX | Required for ESPHome's `!secret` resolution on the worker. Workers are authenticated and trusted machines in the stated threat model. |
+| F-05 | Worker-server communication is plaintext HTTP        | Medium   | WONTFIX | By design for the home-network threat model. Users with remote workers across segments can front the server with their own reverse proxy (documented). |
+| F-06 | Supervisor IP bypass grants unauthenticated API access | Low    | PARTIAL (1.3.0) | PY.4 moved the hardcoded `172.30.32.2` into `constants.HA_SUPERVISOR_IP`. The bypass itself (IP-based trust) remains. Workstream C.2 in WORKITEMS-1.3.1 will normalize IPv6 supervisor addrs and log refusal reasons. |
+| F-07 | No rate limiting or queue size cap                   | Low      | PARTIAL (1.3.0) | SEC.2 capped streaming logs at 512 KB per job. SEC.3 clamped `max_parallel_jobs` on worker registration (0–32). Queue-size cap and retry rate limit not yet added. |
+| F-08 | Job results not validated against the claiming worker | Low     | OPEN | Still unverified. Candidate for 1.3.1 Workstream B. |
+| F-09 | Path traversal check correct but worth hardening     | Low      | FIXED (1.3.0) | PY.1 introduced `helpers.safe_resolve()` and every UI API file endpoint now uses it. |
+| F-10 | Monaco editor loaded from unpinned CDN (no SRI)      | Low      | FIXED (1.1.0) | React UI rewrite bundles `monaco-editor` + `@monaco-editor/react` via Vite. No external CDN. |
+| F-11 | Build log content stored unredacted                  | Low      | WONTFIX | Build logs are inherently needed for debugging; scrubbing is imperfect. Mitigated by the F-07 size cap and by the fact that the log API lives behind HA Ingress (see F-03). |
+| F-12 | Dependency versions not pinned                       | Low      | OPEN | `requirements.txt` still uses `>=`. Needs a lockfile or exact pins plus a dependabot/renovate flow. Candidate for 1.3.1. |
+| F-13 | Docker base image not pinned to a digest             | Low      | WONTFIX | HA add-on build infrastructure controls `BUILD_FROM`; pinning a digest would break the official build flow. Trust assumption documented. |
+| F-14 | Auth token file written without explicit permissions | Info     | OPEN | Small hardening. Candidate for 1.3.1. |
+| F-15 | `X-Ingress-Path` injected into HTML unsanitized      | Info     | OPEN | Add a regex sanitizer in `serve_index`. Candidate for 1.3.1. |
+| F-16 | Worker registry not persistent (operational note)    | Info     | INFO | Operational note, not a security issue. No action planned. |
