@@ -89,6 +89,24 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
   return fields.some(f => f?.toLowerCase().includes(q));
 }
 
+/**
+ * Render a short label describing how the device's IP was resolved.
+ * Returns null when there's nothing useful to display (no source, or
+ * the address is just the {name}.local fallback no one configured).
+ */
+function formatAddressSource(source: string | null | undefined): string | null {
+  switch (source) {
+    case 'mdns': return 'via mDNS';
+    case 'wifi_use_address': return 'wifi.use_address';
+    case 'ethernet_use_address': return 'ethernet.use_address';
+    case 'openthread_use_address': return 'openthread.use_address';
+    case 'wifi_static_ip': return 'wifi static_ip';
+    case 'ethernet_static_ip': return 'ethernet static_ip';
+    case 'mdns_default': return '{name}.local';
+    default: return null;
+  }
+}
+
 export function RenameModal({ currentName, onConfirm, onClose }: {
   currentName: string;
   onConfirm: (newName: string) => void;
@@ -341,6 +359,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
         // In streamer mode: still blur via .sensitive CSS, but disable the
         // link so screenshots can't be click-through targets.
         const showIpLink = !streamerMode && t.has_web_server && t.online && t.ip_address;
+        const sourceLabel = formatAddressSource(t.address_source);
         return (
           <span style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
             {showIpLink
@@ -355,6 +374,14 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
                 </a>
               )
               : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
+            {sourceLabel && (
+              <div
+                style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
+                title={`Address source: ${t.address_source}`}
+              >
+                {sourceLabel}
+              </div>
+            )}
           </span>
         );
       },

@@ -175,6 +175,38 @@ cd ha-addon/ui && npx vite         # dev server
 - **Think about the UX.** Before shipping a UI change, mentally walk through it: does the layout make sense? Does it look right on the real dashboard with real data? Avoid `flex` on `<td>`, buttons that look like links, or anything that would look sloppy to a user.
 - **Update `.gitignore` whenever introducing a new tool, linter, framework, or library.** Most tools generate a cache, lock, build, or report directory (`.ruff_cache/`, `.pytest_cache/`, `.mypy_cache/`, `node_modules/`, `playwright-report/`, `test-results/`, `.vite/`, `htmlcov/`, `dist/`, `build/`, `.coverage`, etc.). Add the appropriate entries to `.gitignore` in the same commit that introduces the tool — don't wait for the cache to show up untracked.
 
+## Quality Standards (QG.1)
+
+Codified at the end of 1.3 from the conventions established during the Quality + Testing release. These are the bar for landing new code on `develop`. Most are automated; the rest are reviewed in the commit/PR.
+
+### Automated gates (CI must be green)
+
+Every push runs the following — they all must pass:
+
+1. **`pytest tests/`** with `pytest-cov` — full test suite (currently 264 tests, ~55% server+client coverage). Tests live alongside the code they cover (`tests/test_<module>.py`).
+2. **`ruff check ha-addon/server/ ha-addon/client/`** — Python lint. Zero warnings allowed. If a check is too strict for a real case, narrow it (per-file `# ruff: noqa: <code>`) rather than disabling globally.
+3. **`mypy ha-addon/server/ --ignore-missing-imports`** and **`mypy ha-addon/client/ --ignore-missing-imports`** — type check. Zero errors. New code should have type annotations on function signatures and dataclass fields.
+4. **`cd ha-addon/ui && npm run build`** — TypeScript + Vite production build. Zero errors. The build also runs `tsc -b` so type errors fail the build.
+5. **`cd ha-addon/ui && npm run test:e2e`** — mocked Playwright (37 tests, ~5s). Full UI flow against `page.route()` API mocks.
+6. **`.github/workflows/compile-test.yml`** — real `esphome compile` against 16 fixture YAMLs (matrix of platforms/frameworks) inside both the client and server Docker images.
+
+### Manual gates (developer discipline)
+
+1. **Test coverage for new code.** Any new server module or significant function gets unit tests in the same commit. Bug fixes get a regression test that fails before the fix and passes after. Don't ship a fix without proving it stays fixed.
+2. **End-to-end coverage for user-visible features.** New UI features get a Playwright test in `e2e/` (mocked) at minimum. If the feature touches the real compile path, also add a test in `e2e-hass-4/` against the author's real instance.
+3. **Constants over magic strings.** When a string, header name, file path, or numeric threshold appears in two or more places, extract it. `ha-addon/server/constants.py` is the canonical home for shared server constants. UI strings used in exactly one place stay inline (we explicitly skipped extracting these in PY.6 — the indirection isn't worth it).
+4. **Error handling at boundaries.** Use the helpers in `ha-addon/server/helpers.py` (`safe_resolve`, `json_error`, `clamp`, `constant_time_compare`) instead of inline path-traversal/auth/clamping logic. Never bypass these on a "trusted internal call" — every endpoint is a boundary.
+5. **Don't bypass the linter or type checker.** No `# noqa`, `# type: ignore`, `eslint-disable`, or `@ts-ignore` without a comment explaining why and a follow-up plan. If you find yourself wanting to silence a tool, the right move is usually to fix the root cause.
+6. **Update `dev-plans/WORKITEMS-X.Y.md` immediately after completing work.** Check the box, add the specific dev.N tag. See "Project Tracking" below for the rules. Don't batch up multiple fixes and update at the end — you'll forget what landed when.
+7. **Bump `ha-addon/client/IMAGE_VERSION` when the worker Docker image changes.** That's the system packages, Python version, requirements.txt, or anything else `COPY`'d into the image (other than the auto-updatable `.py` source). Bump `MIN_IMAGE_VERSION` in `constants.py` at the same time so old workers get the "image stale" badge in the UI.
+8. **Production smoke tests after each turn.** `./push-to-hass-4.sh` deploys to hass-4 and runs the full `e2e-hass-4` Playwright suite (real compile + OTA flash to `cyd-office-info`). Run this after every turn — it's part of the dev loop, not a release-only step.
+
+### What this is NOT
+
+- **No code style enforcement beyond ruff.** We don't enforce line length, import order, or formatting beyond what ruff defaults to. Personal preference is fine; ruff catches what matters.
+- **No 100% coverage target.** 55% baseline is fine. Aim for tests that prove non-obvious behavior (state machines, edge cases, regressions), not cosmetic coverage of trivial getters.
+- **No "comprehensive" PR templates or lint configs.** This is a single-developer project with an AI pair. Keep the bar high but the process light.
+
 ## Project Tracking
 
 All roadmap, release process, and bug tracking lives in `dev-plans/`:

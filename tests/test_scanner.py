@@ -288,23 +288,24 @@ def test_metadata_no_esphome_block():
 
 def test_name_map_uses_filename_stem_fallback():
     """Filename stem is always in the map as a fallback."""
-    name_map, _, _ = build_name_to_target_map(str(FIXTURES), ["device1.yaml"])
+    name_map, _, _, _ = build_name_to_target_map(str(FIXTURES), ["device1.yaml"])
     assert name_map["device1"] == "device1.yaml"
 
 
 def test_name_map_extracts_encryption_key():
     """API encryption keys are extracted and keyed by device name."""
-    _, keys, _ = build_name_to_target_map(str(FIXTURES), ["device1.yaml"])
+    _, keys, _, _ = build_name_to_target_map(str(FIXTURES), ["device1.yaml"])
     # The fixture's secrets.yaml maps api_encryption_key to a real base64 key
     assert "device1" in keys
     assert keys["device1"]  # non-empty
 
 
 def test_name_map_empty_targets(tmp_path):
-    name_map, keys, overrides = build_name_to_target_map(str(tmp_path), [])
+    name_map, keys, overrides, sources = build_name_to_target_map(str(tmp_path), [])
     assert name_map == {}
     assert keys == {}
     assert overrides == {}
+    assert sources == {}
 
 
 # ---------------------------------------------------------------------------
@@ -315,50 +316,50 @@ def test_name_map_empty_targets(tmp_path):
 
 def test_get_device_address_wifi_use_address():
     config = {"wifi": {"use_address": "192.168.1.42"}}
-    assert get_device_address(config, "dev") == "192.168.1.42"
+    assert get_device_address(config, "dev") == ("192.168.1.42", "wifi_use_address")
 
 
 def test_get_device_address_wifi_static_ip():
     config = {"wifi": {"manual_ip": {"static_ip": "10.0.0.5"}}}
-    assert get_device_address(config, "dev") == "10.0.0.5"
+    assert get_device_address(config, "dev") == ("10.0.0.5", "wifi_static_ip")
 
 
 def test_get_device_address_wifi_default_to_mdns():
     config = {"wifi": {"ssid": "test"}}
-    assert get_device_address(config, "dev") == "dev.local"
+    assert get_device_address(config, "dev") == ("dev.local", "mdns_default")
 
 
 def test_get_device_address_ethernet_use_address():
     config = {"ethernet": {"use_address": "10.0.0.10"}}
-    assert get_device_address(config, "dev") == "10.0.0.10"
+    assert get_device_address(config, "dev") == ("10.0.0.10", "ethernet_use_address")
 
 
 def test_get_device_address_ethernet_static_ip():
     config = {"ethernet": {"manual_ip": {"static_ip": "10.0.0.11"}}}
-    assert get_device_address(config, "dev") == "10.0.0.11"
+    assert get_device_address(config, "dev") == ("10.0.0.11", "ethernet_static_ip")
 
 
 def test_get_device_address_ethernet_default_to_mdns():
     config = {"ethernet": {"type": "LAN8720"}}
-    assert get_device_address(config, "dev") == "dev.local"
+    assert get_device_address(config, "dev") == ("dev.local", "mdns_default")
 
 
 def test_get_device_address_openthread_use_address():
     """Thread-only devices: openthread.use_address overrides everything."""
     config = {"openthread": {"use_address": "fd00::1"}}
-    assert get_device_address(config, "thread-dev") == "fd00::1"
+    assert get_device_address(config, "thread-dev") == ("fd00::1", "openthread_use_address")
 
 
 def test_get_device_address_openthread_default_to_mdns():
     """Thread-only device with no explicit address falls back to mDNS hostname."""
     config = {"openthread": {"network_key": "deadbeef"}}
-    assert get_device_address(config, "thread-dev") == "thread-dev.local"
+    assert get_device_address(config, "thread-dev") == ("thread-dev.local", "mdns_default")
 
 
 def test_get_device_address_nothing_configured():
     """Empty config (no network block at all) falls back to {name}.local."""
     config = {"esphome": {"name": "minimal"}}
-    assert get_device_address(config, "minimal") == "minimal.local"
+    assert get_device_address(config, "minimal") == ("minimal.local", "mdns_default")
 
 
 # Bonus: wifi takes precedence over ethernet/openthread when multiple are present
@@ -367,7 +368,7 @@ def test_get_device_address_wifi_wins_over_ethernet():
         "wifi": {"use_address": "192.168.1.42"},
         "ethernet": {"use_address": "10.0.0.10"},
     }
-    assert get_device_address(config, "dev") == "192.168.1.42"
+    assert get_device_address(config, "dev") == ("192.168.1.42", "wifi_use_address")
 
 
 # ---------------------------------------------------------------------------
@@ -391,10 +392,11 @@ def test_get_device_address_wifi_wins_over_ethernet():
 
 def test_static_ip_fixture_resolves_address():
     """Fixture: tests/fixtures/esphome_configs/static_ip_device.yaml"""
-    _, _, overrides = build_name_to_target_map(
+    _, _, overrides, sources = build_name_to_target_map(
         str(FIXTURES), ["static_ip_device.yaml"],
     )
     assert overrides.get("static-ip-device") == "192.168.1.99"
+    assert sources.get("static-ip-device") == "wifi_static_ip"
 
 
 def test_thread_only_fixture_resolves_to_mdns():
@@ -404,11 +406,12 @@ def test_thread_only_fixture_resolves_to_mdns():
     address override (falling back to {name}.local). Without this, the YAML
     row never exists and any later mDNS discovery duplicates it (#179).
     """
-    _, _, overrides = build_name_to_target_map(
+    _, _, overrides, sources = build_name_to_target_map(
         str(FIXTURES), ["thread_only_device.yaml"],
     )
     assert "thread-only-device" in overrides
     assert overrides["thread-only-device"] == "thread-only-device.local"
+    assert sources["thread-only-device"] == "mdns_default"
 
 
 def test_static_ip_fixture_metadata():

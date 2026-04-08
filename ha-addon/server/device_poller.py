@@ -56,6 +56,12 @@ class Device:
     last_seen: Optional[datetime] = None
     compile_target: Optional[str] = None  # e.g. "living_room.yaml"
     mac_address: Optional[str] = None  # e.g. "AA:BB:CC:DD:EE:FF"
+    # How was the IP resolved? One of: "mdns", "wifi_use_address",
+    # "ethernet_use_address", "openthread_use_address", "wifi_static_ip",
+    # "ethernet_static_ip", "mdns_default" (the {name}.local fallback).
+    # Surfaced in the UI under the IP so users can see how each device's
+    # address was determined (#184).
+    address_source: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +73,7 @@ class Device:
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "compile_target": self.compile_target,
             "mac_address": self.mac_address,
+            "address_source": self.address_source,
         }
 
 
@@ -83,6 +90,7 @@ class DevicePoller:
         self._name_to_target: dict[str, str] = {}
         self._encryption_keys: dict[str, str] = {}  # device_name → noise_psk (base64)
         self._address_overrides: dict[str, str] = {}  # device_name → use_address
+        self._address_sources: dict[str, str] = {}  # device_name → e.g. "wifi_use_address"
         self._lock = asyncio.Lock()
         self._zeroconf: Optional[AsyncZeroconf] = None
         self._browser: Optional[ServiceBrowser] = None
@@ -205,6 +213,7 @@ class DevicePoller:
                         name=device_name,
                         ip_address=ip or "",
                         compile_target=compile_target,
+                        address_source="mdns" if ip else None,
                     )
                     existing_key = device_name
 
@@ -213,6 +222,13 @@ class DevicePoller:
                 dev.last_seen = _utcnow()
                 if ip:
                     dev.ip_address = ip
+                    # mDNS only "wins" over the YAML-derived source if the
+                    # YAML had no explicit address (was just {name}.local).
+                    # Explicit user choices like wifi.use_address /
+                    # wifi.manual_ip.static_ip stay authoritative — that
+                    # mismatch is itself useful information.
+                    if dev.address_source in (None, "mdns_default"):
+                        dev.address_source = "mdns"
                 if txt_version:
                     dev.running_version = txt_version
                 self._save_cache()
@@ -438,6 +454,7 @@ class DevicePoller:
         name_to_target: Optional[dict[str, str]] = None,
         encryption_keys: Optional[dict[str, str]] = None,
         address_overrides: Optional[dict[str, str]] = None,
+        address_sources: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Inform the poller about known YAML targets so it can map device
@@ -450,12 +467,18 @@ class DevicePoller:
         *encryption_keys* maps device names to base64-encoded noise PSK keys
         for devices that require API encryption.
 
-        *address_overrides* maps device names to ``wifi.use_address`` values.
+        *address_overrides* maps device names to the canonical address from
+        ``scanner.get_device_address`` (always populated, may be ``{name}.local``).
+
+        *address_sources* maps device names to where the address came from
+        (e.g. ``wifi_use_address``, ``ethernet_static_ip``, ``mdns_default``).
+        Surfaced under the IP in the UI (#184).
         """
         self._compile_targets = list(targets)
         self._name_to_target = name_to_target or {}
         self._encryption_keys = encryption_keys or {}
         self._address_overrides = address_overrides or {}
+        self._address_sources = address_sources or {}
         for dev in self._devices.values():
             dev.compile_target = self._map_target(dev.name)
 
@@ -465,6 +488,7 @@ class DevicePoller:
         # YAML row exists before mDNS discovery — so the mDNS handler merges
         # into it instead of creating a duplicate (bug #179).
         for device_name, addr in self._address_overrides.items():
+            source = self._address_sources.get(device_name)
             existing_key = self._find_existing_device_key(device_name)
             if existing_key is None:
                 compile_target = self._map_target(device_name)
@@ -473,13 +497,16 @@ class DevicePoller:
                     ip_address=addr,
                     online=False,
                     compile_target=compile_target,
+                    address_source=source,
                 )
-                logger.debug("Created device %s from address %s (no mDNS yet)", device_name, addr)
+                logger.debug("Created device %s from address %s (%s, no mDNS yet)",
+                             device_name, addr, source)
             else:
                 # Update IP from address override if not already set from mDNS
                 dev = self._devices[existing_key]
                 if not dev.ip_address:
                     dev.ip_address = addr
+                    dev.address_source = source
 
     @staticmethod
     def _normalize(name: str) -> str:

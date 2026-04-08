@@ -267,6 +267,7 @@ async def get_targets(request: web.Request) -> web.Response:
                 else None
             ),
             "ip_address": dev.ip_address if dev else None,
+            "address_source": dev.address_source if dev else None,
             "last_seen": dev.last_seen.isoformat() if dev and dev.last_seen else None,
             "server_version": server_version,
             "has_api_key": has_api_key,
@@ -854,8 +855,8 @@ async def rename_target(request: web.Request) -> web.Response:
     if device_poller:
         cfg = _cfg(request)
         targets = scan_configs(cfg.config_dir)
-        name_map, enc_keys, addr_overrides = build_name_to_target_map(cfg.config_dir, targets)
-        device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides)
+        name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(cfg.config_dir, targets)
+        device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides, addr_sources)
 
     logger.info("Renamed config %s → %s", filename, new_filename)
 

@@ -23,6 +23,8 @@ export interface Target {
   project_name?: string;
   project_version?: string;
   ip_address?: string;
+  /** How the IP was resolved — see Device.address_source for the value list. */
+  address_source?: string | null;
   running_version?: string;
   online?: boolean | null;
   needs_update?: boolean;
@@ -44,6 +46,14 @@ export interface Device {
   compile_target?: string;
   last_seen?: string;
   compilation_time?: number;
+  /**
+   * How the IP address was resolved. One of: "mdns", "wifi_use_address",
+   * "ethernet_use_address", "openthread_use_address", "wifi_static_ip",
+   * "ethernet_static_ip", "mdns_default" (the {name}.local fallback).
+   * Surfaced under the IP in the Devices tab so users can see at a glance
+   * how each device's address was determined.
+   */
+  address_source?: string | null;
 }
 
 export interface SystemInfo {
