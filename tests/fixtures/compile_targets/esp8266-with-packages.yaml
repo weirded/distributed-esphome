@@ -1,0 +1,35 @@
+# Tests: packages from local include files, substitutions, ESP8266 Arduino
+# Modeled after Kauf PLF12 plug configs that caused metadata extraction issues
+substitutions:
+  name: "compile-test-pkg"
+  friendly_name: "Test Packages"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  area: Test Area
+  comment: "Test device with substitutions and packages"
+
+esp8266:
+  board: d1_mini
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+sensor:
+  - platform: uptime
+    name: "${friendly_name} Uptime"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "${friendly_name} IP"

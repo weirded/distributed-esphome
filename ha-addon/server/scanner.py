@@ -8,6 +8,8 @@ import tarfile
 from pathlib import Path
 from typing import Optional
 
+from constants import SECRETS_YAML
+
 logger = logging.getLogger(__name__)
 
 # Module-level selected version; set at startup and via POST /ui/api/esphome-version.
@@ -60,7 +62,7 @@ def scan_configs(config_dir: str) -> list[str]:
     for p in sorted(base.glob("*.yaml")):
         if p.name.startswith("."):
             continue
-        if p.name.lower() == "secrets.yaml":
+        if p.name.lower() == SECRETS_YAML:
             continue
         results.append(p.name)
 
@@ -301,22 +303,78 @@ def get_friendly_name(config_dir: str, target: str) -> Optional[str]:
     return meta["friendly_name"] or meta["device_name"]
 
 
+def get_device_address(config: dict, device_name: str) -> tuple[str, str]:
+    """Return the canonical address ESPHome would use for a device, plus its source.
+
+    Mirrors ESPHome's own resolver in ``esphome.core.CORE.address``: walks
+    ``wifi`` → ``ethernet`` → ``openthread`` in order, and for each block honors
+    ``use_address`` → ``manual_ip.static_ip`` → ``{device_name}.local``.
+
+    Used by ``build_name_to_target_map`` so we register an `address_override`
+    for EVERY target, not just wifi-with-explicit-use_address. Without this,
+    Thread-only and statically-IP'd devices have no proactive Device row, and
+    any later mDNS discovery creates a duplicate row instead of merging into
+    the YAML-derived one (bug #179).
+
+    Returns ``(address, source)`` where source is one of:
+      - ``"wifi_use_address"``, ``"ethernet_use_address"``, ``"openthread_use_address"``
+      - ``"wifi_static_ip"``, ``"ethernet_static_ip"``
+      - ``"mdns_default"`` — fell back to ``{device_name}.local``
+
+    The source is exposed in the UI so users can see how each device's IP
+    was resolved (#184).
+    """
+    fallback = (f"{device_name}.local", "mdns_default")
+
+    if not isinstance(config, dict):
+        return fallback
+
+    for block_name in ("wifi", "ethernet", "openthread"):
+        block = config.get(block_name)
+        if not isinstance(block, dict):
+            continue
+
+        # 1. Explicit use_address always wins
+        use_addr = block.get("use_address")
+        if use_addr:
+            return (str(use_addr), f"{block_name}_use_address")
+
+        # 2. manual_ip.static_ip is the second choice
+        manual_ip = block.get("manual_ip")
+        if isinstance(manual_ip, dict):
+            static_ip = manual_ip.get("static_ip")
+            if static_ip:
+                return (str(static_ip), f"{block_name}_static_ip")
+
+        # If we found this block but neither key, fall through to mDNS .local
+        return fallback
+
+    return fallback
+
+
 def build_name_to_target_map(
     config_dir: str, targets: list[str],
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """Build a mapping from ESPHome device name → YAML filename.
 
     For each target, resolve the full config (including packages) and extract
     ``esphome.name``.  Always also map the filename stem so filename-based
     matching works as a fallback.
 
-    Returns (name_map, encryption_keys, address_overrides) where:
-    - encryption_keys maps device names to base64-encoded noise PSK keys
-    - address_overrides maps device names to wifi.use_address values
+    Returns ``(name_map, encryption_keys, address_overrides, address_sources)``:
+    - ``encryption_keys`` maps device names to base64-encoded noise PSK keys
+    - ``address_overrides`` maps device names to the canonical address from
+      ``get_device_address`` (always populated, even if it's just
+      ``{device_name}.local``).
+    - ``address_sources`` maps device names to the source of the address
+      (``wifi_use_address``, ``wifi_static_ip``, ``ethernet_use_address``,
+      ``ethernet_static_ip``, ``openthread_use_address``, ``mdns_default``).
+      Used by the UI to show where each IP came from (#184).
     """
     name_map: dict[str, str] = {}
     encryption_keys: dict[str, str] = {}
     address_overrides: dict[str, str] = {}
+    address_sources: dict[str, str] = {}
     for target in targets:
         stem = Path(target).stem
         name_map[stem] = target  # fallback: filename stem
@@ -331,6 +389,11 @@ def build_name_to_target_map(
             if esph_name:
                 device_name = str(esph_name)
                 name_map[device_name] = target
+                # Also map the underscore-normalized variant so mDNS names
+                # (which replace hyphens with underscores) resolve correctly.
+                normalized = device_name.replace("-", "_")
+                if normalized != device_name:
+                    name_map[normalized] = target
 
         key_name = device_name or stem
 
@@ -343,12 +406,14 @@ def build_name_to_target_map(
                 if key:
                     encryption_keys[key_name] = str(key)
 
-        # Extract wifi.use_address override if present
-        wifi_block = config.get("wifi") or {}
-        if isinstance(wifi_block, dict):
-            use_addr = wifi_block.get("use_address")
-            if use_addr:
-                address_overrides[key_name] = str(use_addr)
-    return name_map, encryption_keys, address_overrides
+        # Always register an address override — get_device_address handles
+        # wifi/ethernet/openthread with use_address, manual_ip.static_ip, and
+        # {name}.local fallback. This ensures every YAML target has a
+        # proactive Device row that mDNS discovery can merge into instead of
+        # duplicating (bug #179).
+        addr, src = get_device_address(config, key_name)
+        address_overrides[key_name] = addr
+        address_sources[key_name] = src
+    return name_map, encryption_keys, address_overrides, address_sources
 
 

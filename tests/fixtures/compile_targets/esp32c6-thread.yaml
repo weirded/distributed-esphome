@@ -1,0 +1,17 @@
+# Thread/OpenThread device — ESP32-C6 with IEEE 802.15.4 radio
+# Tests: Thread networking stack, ESP-IDF framework, RISC-V toolchain
+esphome:
+  name: ct-thread-c6
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+network:
+  enable_ipv6: true
+
+openthread:
+  tlv: !secret openthread_tlv
+
+logger:

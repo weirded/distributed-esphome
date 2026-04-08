@@ -4,6 +4,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py .
+# IMAGE_VERSION is intentionally SEPARATE from CLIENT_VERSION (the source code
+# version). Workers auto-update their source code from the server in place via
+# os.execv, but the Docker image itself (system packages, Python, requirements)
+# can't change that way. When the image changes, this number should be bumped
+# so the server can detect workers running a stale image and prompt a rebuild.
+COPY IMAGE_VERSION .
 VOLUME /esphome-versions
 # Store PlatformIO toolchains inside the persistent esphome-versions volume
 # so they survive container recreations (avoid re-downloading toolchains each time).

@@ -193,7 +193,9 @@ class VersionManager:
 
             if wait_event is not None:
                 logger.debug("Waiting for esphome==%s install in progress...", version)
-                wait_event.wait()
+                if not wait_event.wait(timeout=600):  # 10 minute timeout
+                    logger.error("Timed out waiting for esphome==%s install", version)
+                    raise RuntimeError(f"Timed out waiting for esphome=={version} install (another thread may have crashed)")
                 continue  # re-check from the top
 
             # We own the install — run outside the lock (slow subprocess)

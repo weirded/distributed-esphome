@@ -21,7 +21,7 @@ pytest tests/test_client.py::TestVersionManager::test_lru_eviction
 
 ### Install Dependencies
 ```bash
-pip install pytest pytest-asyncio aiohttp aioesphomeapi zeroconf requests
+pip install pytest pytest-asyncio aiohttp aioesphomeapi zeroconf requests psutil esphome
 # Or from requirements files:
 pip install -r ha-addon/server/requirements.txt
 pip install -r ha-addon/client/requirements.txt
@@ -59,7 +59,7 @@ The server is an `aiohttp` async application with two authentication tiers:
 
 **Component responsibilities:**
 - `main.py` — App setup, auth middleware, background timeout checker (every 30s), HA Ingress compatibility (X-Ingress-Path header injection)
-- `job_queue.py` — In-memory job queue persisted to `/data/queue.json`. Jobs time out and retry up to 3 times before permanently failing.
+- `job_queue.py` — In-memory job queue persisted to `/data/queue.json`. Job state machine: `PENDING → ASSIGNED → RUNNING → SUCCESS/FAILED`. Jobs time out and retry up to 3 times before permanently failing. On server restart, `ASSIGNED`/`RUNNING` jobs reset to `PENDING`.
 - `scanner.py` — Discovers `.yaml` targets in `/config/esphome/` (excluding `secrets.yaml` from the target list but including it in bundles). `create_bundle()` produces a tar.gz of the full config directory.
 - `registry.py` — In-memory build worker registry (`WorkerRegistry`); workers are considered online if last heartbeat was within 30s.
 - `device_poller.py` — Discovers ESPHome devices via `_esphomelib._tcp` mDNS, polls them every 60s via `aioesphomeapi` for running firmware version and compilation time. Maps devices to YAML targets using a name map built from parsed `esphome.name` fields (handles cases where filename differs from device name).
@@ -81,7 +81,22 @@ When a worker claims a job, the server calls `scanner.create_bundle()` which tar
 
 Server config is loaded from `/data/options.json` (HA add-on) with environment variable fallbacks. Key env vars: `ESPHOME_CONFIG_DIR`, `SERVER_TOKEN`, `JOB_TIMEOUT` (600s), `OTA_TIMEOUT` (120s), `PORT` (8765).
 
-Worker config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERVAL` (5s), `JOB_TIMEOUT` (600s), `MAX_ESPHOME_VERSIONS` (3).
+Worker config is all via environment:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVER_URL` | required | e.g. `http://homeassistant.local:8765` |
+| `SERVER_TOKEN` | required | Shared auth token |
+| `POLL_INTERVAL` | `5` | Seconds between job polls when idle |
+| `HEARTBEAT_INTERVAL` | `10` | Seconds between heartbeats |
+| `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
+| `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
+| `MAX_ESPHOME_VERSIONS` | `3` | Max cached ESPHome versions on disk |
+| `MAX_PARALLEL_JOBS` | `2` | Concurrent build jobs per worker (0 = paused) |
+| `HOSTNAME` | system hostname | Worker name shown in UI |
+| `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup |
+| `ESPHOME_BIN` | — | Use this binary instead of the version-manager venvs |
+| `HOST_PLATFORM` | — | Override detected OS in UI (e.g. `macOS 15.3 (Apple M1 Pro)`) |
 
 ## Test Setup
 
@@ -101,21 +116,21 @@ Worker config is all via environment: `SERVER_URL`, `SERVER_TOKEN`, `POLL_INTERV
 - `main` — stable releases only. Users install from this branch.
 
 **Day-to-day development (on `develop`):**
-- Bump the dev version after each turn: `bash scripts/bump-dev.sh` (auto-increments `-dev.N`)
+- **Bump the dev version at the end of every turn:** `bash scripts/bump-dev.sh` (auto-increments `-dev.N`). This is mandatory — never skip it.
 - Push to GitHub freely — CI runs tests, no GHCR images published
 - Deploy to hass-4 for testing: `./push-to-hass-4.sh`
 
 **Stable releases (merge to `main`):**
-Follow `RELEASE_CHECKLIST.md` for the full step-by-step process. Key steps:
+Follow `dev-plans/RELEASE_CHECKLIST.md` for the full step-by-step process. Key steps:
 - Use `bash scripts/bump-version.sh X.Y.Z` for the stable version
 - Finalize `ha-addon/CHANGELOG.md` — consolidate dev changes into a clean release entry
-  (use `WORKITEMS.md` and `BUGS.md` as source material, group by category)
+  (use `dev-plans/WORKITEMS-X.Y.md` as source material — it has both the work items and the bug fixes for the release; group by category)
 - Update `README.md` and `ha-addon/DOCS.md` — ensure they accurately describe the current feature set, configuration options, and setup instructions
 - The pre-push hook enforces a changelog entry when pushing to `main`
 - Tag the release: `git tag vX.Y.Z && git push origin vX.Y.Z`
 - GHCR images are published automatically on push to `main`
 
-**Changelog is NOT updated during development on `develop`.** The WORKITEMS.md and BUGS.md files track progress with version numbers. The changelog is written once at release time.
+**Changelog is NOT updated during development on `develop`.** The `dev-plans/WORKITEMS-X.Y.md` files track progress with version numbers (work items + bug fixes for each release). The changelog is written once at release time.
 
 ## Documentation
 
@@ -156,10 +171,56 @@ cd ha-addon/ui && npx vite         # dev server
 - **One component per file, colocate related code.** Types, helpers, and constants used by a single component live near that component, not in a global utils grab-bag.
 - **Semantic HTML.** `<button>` not `<div onClick>`, `<table>` for tabular data. shadcn handles much of this — don't undermine it with custom markup.
 - **All API calls go through `api/client.ts`.** Components never call `fetch` directly.
+- **Batch operations get one toast.** When an action affects multiple items (e.g. "clean all caches"), use `Promise.all` and show a single summary toast — never one toast per item. Bulk actions should be handled in App.tsx, not by iterating callbacks in child components.
+- **Think about the UX.** Before shipping a UI change, mentally walk through it: does the layout make sense? Does it look right on the real dashboard with real data? Avoid `flex` on `<td>`, buttons that look like links, or anything that would look sloppy to a user.
+- **Update `.gitignore` whenever introducing a new tool, linter, framework, or library.** Most tools generate a cache, lock, build, or report directory (`.ruff_cache/`, `.pytest_cache/`, `.mypy_cache/`, `node_modules/`, `playwright-report/`, `test-results/`, `.vite/`, `htmlcov/`, `dist/`, `build/`, `.coverage`, etc.). Add the appropriate entries to `.gitignore` in the same commit that introduces the tool — don't wait for the cache to show up untracked.
+
+## Quality Standards (QG.1)
+
+Codified at the end of 1.3 from the conventions established during the Quality + Testing release. These are the bar for landing new code on `develop`. Most are automated; the rest are reviewed in the commit/PR.
+
+### Automated gates (CI must be green)
+
+Every push runs the following — they all must pass:
+
+1. **`pytest tests/`** with `pytest-cov` — full test suite (currently 264 tests, ~55% server+client coverage). Tests live alongside the code they cover (`tests/test_<module>.py`).
+2. **`ruff check ha-addon/server/ ha-addon/client/`** — Python lint. Zero warnings allowed. If a check is too strict for a real case, narrow it (per-file `# ruff: noqa: <code>`) rather than disabling globally.
+3. **`mypy ha-addon/server/ --ignore-missing-imports`** and **`mypy ha-addon/client/ --ignore-missing-imports`** — type check. Zero errors. New code should have type annotations on function signatures and dataclass fields.
+4. **`cd ha-addon/ui && npm run build`** — TypeScript + Vite production build. Zero errors. The build also runs `tsc -b` so type errors fail the build.
+5. **`cd ha-addon/ui && npm run test:e2e`** — mocked Playwright (37 tests, ~5s). Full UI flow against `page.route()` API mocks.
+6. **`.github/workflows/compile-test.yml`** — real `esphome compile` against 16 fixture YAMLs (matrix of platforms/frameworks) inside both the client and server Docker images.
+
+### Manual gates (developer discipline)
+
+1. **Test coverage for new code.** Any new server module or significant function gets unit tests in the same commit. Bug fixes get a regression test that fails before the fix and passes after. Don't ship a fix without proving it stays fixed.
+2. **End-to-end coverage for user-visible features.** New UI features get a Playwright test in `e2e/` (mocked) at minimum. If the feature touches the real compile path, also add a test in `e2e-hass-4/` against the author's real instance.
+3. **Constants over magic strings.** When a string, header name, file path, or numeric threshold appears in two or more places, extract it. `ha-addon/server/constants.py` is the canonical home for shared server constants. UI strings used in exactly one place stay inline (we explicitly skipped extracting these in PY.6 — the indirection isn't worth it).
+4. **Error handling at boundaries.** Use the helpers in `ha-addon/server/helpers.py` (`safe_resolve`, `json_error`, `clamp`, `constant_time_compare`) instead of inline path-traversal/auth/clamping logic. Never bypass these on a "trusted internal call" — every endpoint is a boundary.
+5. **Don't bypass the linter or type checker.** No `# noqa`, `# type: ignore`, `eslint-disable`, or `@ts-ignore` without a comment explaining why and a follow-up plan. If you find yourself wanting to silence a tool, the right move is usually to fix the root cause.
+6. **Update `dev-plans/WORKITEMS-X.Y.md` immediately after completing work.** Check the box, add the specific dev.N tag. See "Project Tracking" below for the rules. Don't batch up multiple fixes and update at the end — you'll forget what landed when.
+7. **Bump `ha-addon/client/IMAGE_VERSION` when the worker Docker image changes.** That's the system packages, Python version, requirements.txt, or anything else `COPY`'d into the image (other than the auto-updatable `.py` source). Bump `MIN_IMAGE_VERSION` in `constants.py` at the same time so old workers get the "image stale" badge in the UI.
+8. **Production smoke tests after each turn.** `./push-to-hass-4.sh` deploys to hass-4 and runs the full `e2e-hass-4` Playwright suite (real compile + OTA flash to `cyd-office-info`). Run this after every turn — it's part of the dev loop, not a release-only step.
+
+### What this is NOT
+
+- **No code style enforcement beyond ruff.** We don't enforce line length, import order, or formatting beyond what ruff defaults to. Personal preference is fine; ruff catches what matters.
+- **No 100% coverage target.** 55% baseline is fine. Aim for tests that prove non-obvious behavior (state machines, edge cases, regressions), not cosmetic coverage of trivial getters.
+- **No "comprehensive" PR templates or lint configs.** This is a single-developer project with an AI pair. Keep the bar high but the process light.
 
 ## Project Tracking
 
-- `WORKITEMS.md` — feature roadmap organized by release, with checkboxes
-- `BUGS.md` — numbered bug log with status (FIXED/IN PROGRESS/INVESTIGATING) and version tags
-- `RELEASE_CHECKLIST.md` — step-by-step release process (what Claude does vs. what the human does)
-- `PRD.md` — product requirements document for the full ESPHome dashboard replacement
+All roadmap, release process, and bug tracking lives in `dev-plans/`:
+
+- `dev-plans/README.md` — index of all the files
+- `dev-plans/WORKITEMS-X.Y.md` — one file per release. Each file mixes feature work items (with checkboxes) and bug fixes (numbered, with FIXED/WONTFIX/etc. status). Bug numbers are global and monotonic across releases.
+- `dev-plans/WORKITEMS-1.3.1.md` — **current release.** Open bugs go at the bottom under "Open Bugs", folded into the Bug Fixes list as they land.
+- `dev-plans/archive/` — released WORKITEMS files from prior versions (1.0, 1.1, 1.2, 1.3). Historical reference only; don't edit.
+- `dev-plans/SECURITY_AUDIT.md` — security audit findings (refer when making security-relevant changes)
+- `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process (what Claude does vs. what the human does)
+
+**Always update tracking files when completing work:**
+- Both work items and bug entries use the same checkbox format: `- [x] **#NNN** *(X.Y.Z-dev.N)* — description` (where `#NNN` only applies to bugs).
+- When a work item is done, check the box and add the specific version tag (e.g. `*(1.3.0-dev.7)*` — use the actual dev.N, not the generic `dev`).
+- When a bug is fixed, check the box and add the version tag. For wontfix/duplicate/stale entries, use `~~**#NNN**~~ WONTFIX —` (strike-through bold ID + label).
+- Do this immediately after the work is complete, not deferred to later.
+- **On release**, move the completed `WORKITEMS-X.Y.md` file into `dev-plans/archive/` and update both `dev-plans/README.md` and this file's "Project Tracking" section to reflect the new current release.

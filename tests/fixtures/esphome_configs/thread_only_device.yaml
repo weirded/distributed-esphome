@@ -1,0 +1,16 @@
+esphome:
+  name: thread-only-device
+  friendly_name: "Thread Only Device"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+network:
+  enable_ipv6: true
+
+openthread:
+  tlv: !secret openthread_tlv
+
+logger:

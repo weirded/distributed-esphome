@@ -193,6 +193,14 @@ export async function setWorkerParallelJobs(id: string, maxParallelJobs: number)
   }
 }
 
+export async function cleanWorkerCache(id: string): Promise<void> {
+  const r = await apiFetch(`./ui/api/workers/${id}/clean`, { method: 'POST' });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
 export async function removeWorker(id: string): Promise<void> {
   const r = await apiFetch(`./ui/api/workers/${id}`, { method: 'DELETE' });
   if (!r.ok) {

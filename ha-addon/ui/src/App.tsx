@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import {
   cancelJobs,
+  cleanWorkerCache,
   clearQueue,
   compile,
   deleteTarget,
@@ -277,6 +278,27 @@ export default function App() {
   }
 
 
+  async function handleCleanWorkerCache(id: string) {
+    try {
+      await cleanWorkerCache(id);
+      const workerName = workers.find(w => w.client_id === id)?.hostname || id;
+      addToast(`Clean build cache requested for ${workerName}`, 'success');
+    } catch (err) {
+      addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleCleanAllCaches() {
+    const onlineWorkers = workers.filter(w => w.online);
+    if (!onlineWorkers.length) return;
+    try {
+      await Promise.all(onlineWorkers.map(w => cleanWorkerCache(w.client_id)));
+      addToast(`Clean build cache requested for ${onlineWorkers.length} worker${onlineWorkers.length > 1 ? 's' : ''}`, 'success');
+    } catch (err) {
+      addToast('Error: ' + (err as Error).message, 'error');
+    }
+  }
+
   async function handleRemoveWorker(id: string) {
     try {
       await removeWorker(id);
@@ -405,6 +427,7 @@ export default function App() {
             targets={targets}
             devices={devices}
             workers={workers}
+            streamerMode={streamerMode}
             onCompile={handleCompile}
             onCompileOnWorker={handleCompileOnWorker}
             onEdit={setEditorTarget}
@@ -434,9 +457,11 @@ export default function App() {
             workers={workers}
             queue={displayQueue}
             serverClientVersion={serverInfo.server_client_version}
-
+            minImageVersion={serverInfo.min_image_version}
             onRemove={handleRemoveWorker}
             onSetParallelJobs={handleSetParallelJobs}
+            onCleanCache={handleCleanWorkerCache}
+            onCleanAllCaches={handleCleanAllCaches}
             onConnectWorker={() => setConnectModalOpen(true)}
           />
         )}

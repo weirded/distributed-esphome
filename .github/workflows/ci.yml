@@ -22,16 +22,65 @@ jobs:
       - name: Install dependencies
         run: |
           pip install \
-            pytest pytest-asyncio \
+            pytest pytest-asyncio pytest-cov \
             aiohttp aioesphomeapi zeroconf \
-            requests \
-            mypy types-requests types-PyYAML
+            requests psutil \
+            esphome \
+            mypy types-requests types-PyYAML \
+            ruff
 
-      - name: Run unit tests
-        run: pytest tests/ --ignore=tests/test_e2e_client.py -v
+      - name: Run all tests with coverage
+        run: pytest tests/ -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 14
+
+      - name: Ruff lint
+        run: ruff check ha-addon/server/ ha-addon/client/
 
       - name: mypy — server
         run: mypy ha-addon/server/ --ignore-missing-imports
 
       - name: mypy — client
         run: mypy ha-addon/client/ --ignore-missing-imports
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ha-addon/ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ha-addon/ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ha-addon/ui
+        run: npm run build
+
+      - name: Install Playwright browsers
+        working-directory: ha-addon/ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: ha-addon/ui
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ha-addon/ui/test-results/
+          retention-days: 14

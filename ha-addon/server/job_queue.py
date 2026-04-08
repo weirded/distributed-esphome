@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 QUEUE_FILE = Path("/data/queue.json")
 MAX_RETRIES = 3
+MAX_LOG_BYTES = 512 * 1024  # 512 KB per job
+LOG_TRUNCATED_MARKER = "\n\n--- LOG TRUNCATED (exceeded 512 KB) ---\n"
 
 
 class JobState(str, Enum):
@@ -457,12 +459,33 @@ class JobQueue:
             return True
 
     async def append_log(self, job_id: str, text: str) -> bool:
-        """Append streaming log text to a running job (transient; not persisted)."""
+        """Append streaming log text to a running job (transient; not persisted).
+
+        Caps the streaming log at MAX_LOG_BYTES to prevent OOM from
+        runaway build output.
+        """
         async with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 return False
-            job._streaming_log += text
+            current_len = len(job._streaming_log)
+            if current_len >= MAX_LOG_BYTES:
+                return True  # silently drop — already truncated
+            # Reserve space for the truncation marker so the final log
+            # never exceeds MAX_LOG_BYTES, and never concatenate the full
+            # incoming text first (which would itself risk OOM).
+            budget = MAX_LOG_BYTES - current_len
+            if len(text) <= budget:
+                job._streaming_log += text
+            else:
+                # Truncating. Final log must not exceed MAX_LOG_BYTES,
+                # including the marker — trim the existing log if needed.
+                marker_len = len(LOG_TRUNCATED_MARKER)
+                if budget >= marker_len:
+                    job._streaming_log += text[: budget - marker_len] + LOG_TRUNCATED_MARKER
+                else:
+                    trim_to = max(0, MAX_LOG_BYTES - marker_len)
+                    job._streaming_log = job._streaming_log[:trim_to] + LOG_TRUNCATED_MARKER
             return True
 
     def get_all(self) -> list[Job]:

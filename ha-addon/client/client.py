@@ -6,7 +6,6 @@ import base64
 import io
 import logging
 import os
-import platform
 import shutil
 import socket
 import subprocess
@@ -22,6 +21,7 @@ import requests
 
 
 from version_manager import VersionManager
+from sysinfo import collect_system_info
 
 # ---------------------------------------------------------------------------
 # Client version — must match the add-on VERSION file; bumped on each release.
@@ -29,228 +29,23 @@ from version_manager import VersionManager
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.2.0"
-
-# ---------------------------------------------------------------------------
-# System information gathering (stdlib only — no psutil dependency)
-# ---------------------------------------------------------------------------
-
-# Captured at process start so uptime can be computed on each heartbeat.
-_PROCESS_START_TIME: float = time.monotonic()
+CLIENT_VERSION = "1.3.0"
 
 
-def _benchmark_cpu() -> int:
-    """Run a quick CPU benchmark. Returns a relative performance score (SHA256 ops/sec / 1000)."""
-    import hashlib  # noqa: PLC0415
-    data = b"benchmark" * 1000
-    count = 0
-    deadline = time.monotonic() + 1.0  # run for 1 second
-    while time.monotonic() < deadline:
-        hashlib.sha256(data).digest()
-        count += 1
-    return count
+def _read_image_version() -> Optional[str]:
+    """Read the baked-in Docker image version from IMAGE_VERSION next to this file.
 
-
-# Computed once at startup; included in every heartbeat as a relative CPU score.
-_CPU_PERF_SCORE: int = _benchmark_cpu()
-
-
-def _get_os_version() -> str:
-    """Return a human-readable OS version string using only stdlib."""
-    system = platform.system()
-
-    if system == "Darwin":
-        # e.g. "macOS 15.3"
-        mac_ver = platform.mac_ver()[0]
-        return f"macOS {mac_ver}" if mac_ver else "macOS"
-
-    if system == "Linux":
-        # Parse /etc/os-release for NAME and VERSION_ID (most distros)
-        os_release: dict[str, str] = {}
-        try:
-            with open("/etc/os-release", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if "=" in line:
-                        key, _, val = line.partition("=")
-                        os_release[key.strip()] = val.strip().strip('"')
-        except OSError:
-            pass
-
-        name = os_release.get("NAME") or os_release.get("ID", "")
-        version = os_release.get("VERSION_ID", "")
-        if name and version:
-            return f"{name} {version}"
-        if name:
-            return name
-
-        # Fallback for minimal containers without /etc/os-release
-        kernel = platform.release()
-        return f"Linux {kernel}" if kernel else "Linux"
-
-    # Windows or other
-    return platform.platform()
-
-
-def _get_cpu_model() -> str:
-    """Return CPU model string using stdlib and /proc/cpuinfo or sysctl."""
-    system = platform.system()
-
-    if system == "Darwin":
-        try:
-            result = subprocess.run(
-                ["sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True, text=True, timeout=3,
-            )
-            model = result.stdout.strip()
-            if model:
-                return model
-        except Exception:
-            pass
-        # Apple Silicon reports via hw.model (e.g. "Apple M1 Pro")
-        try:
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.model"],
-                capture_output=True, text=True, timeout=3,
-            )
-            model = result.stdout.strip()
-            if model:
-                return model
-        except Exception:
-            pass
-
-    if system == "Linux":
-        # Try /proc/cpuinfo — "model name" on x86, "Model name" or "Hardware" on ARM
-        try:
-            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if ":" in line:
-                        key, _, val = line.partition(":")
-                        key = key.strip().lower()
-                        if key in ("model name", "hardware", "cpu model"):
-                            val = val.strip()
-                            if val:
-                                return val
-        except OSError:
-            pass
-
-    # Generic fallback
-    machine = platform.machine()
-    processor = platform.processor()
-    return processor or machine or "Unknown"
-
-
-def _get_total_memory_bytes() -> Optional[int]:
-    """Return total physical memory in bytes using stdlib only."""
-    system = platform.system()
-
-    if system == "Linux":
-        # Parse /proc/meminfo
-        try:
-            with open("/proc/meminfo", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        # Format: "MemTotal:     16384000 kB"
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            kb = int(parts[1])
-                            return kb * 1024
-        except (OSError, ValueError):
-            pass
-
-    if system == "Darwin":
-        try:
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True, text=True, timeout=3,
-            )
-            return int(result.stdout.strip())
-        except Exception:
-            pass
-
-    return None
-
-
-def _format_memory(bytes_: int) -> str:
-    """Return a human-readable memory string, e.g. '16 GB' or '512 MB'."""
-    gb = bytes_ / (1024 ** 3)
-    if gb >= 1:
-        # Round to nearest whole GB for clean display
-        return f"{round(gb)} GB"
-    mb = bytes_ / (1024 ** 2)
-    return f"{round(mb)} MB"
-
-
-def _format_uptime(seconds: float) -> str:
-    """Return uptime as a compact human-readable string, e.g. '2d 3h' or '45m'."""
-    total = int(seconds)
-    days, rem = divmod(total, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes, secs = divmod(rem, 60)
-    if days:
-        return f"{days}d {hours}h"
-    if hours:
-        return f"{hours}h {minutes}m"
-    if minutes:
-        return f"{minutes}m"
-    return f"{secs}s"
-
-
-def _get_cpu_usage() -> Optional[float]:
-    """Return CPU usage as a percentage (0-100) using load average.
-
-    Uses os.getloadavg() (1-minute average) divided by core count.
-    Works in Docker on both Linux and macOS without /proc/stat sampling.
+    Returns None if the file is missing (e.g. running from a source checkout
+    without a Docker build). The server treats None as "unknown".
     """
     try:
-        load1, _, _ = os.getloadavg()
-        cores = os.cpu_count() or 1
-        return round(min(load1 / cores * 100, 100.0), 1)
-    except Exception:
+        path = Path(__file__).parent / "IMAGE_VERSION"
+        return path.read_text(encoding="utf-8").strip() or None
+    except (FileNotFoundError, OSError):
         return None
 
 
-def collect_system_info() -> dict:
-    """Gather hardware/OS details using stdlib only. All fields are best-effort.
-
-    When running in Docker on a non-Linux host, the container sees the VM's
-    Linux.  Set ``HOST_PLATFORM`` to override ``os_version`` with the actual
-    host OS (e.g. ``macOS 15.3 (Apple M1 Pro)``).
-    """
-    cpu_count = os.cpu_count()
-    mem_bytes = _get_total_memory_bytes()
-
-    os_version = os.environ.get("HOST_PLATFORM") or _get_os_version()
-
-    # Disk space on the build volume
-    disk_total: Optional[str] = None
-    disk_free: Optional[str] = None
-    disk_pct: Optional[int] = None
-    try:
-        st = os.statvfs(_ESPHOME_VERSIONS_DIR)
-        total = st.f_frsize * st.f_blocks
-        free = st.f_frsize * st.f_bavail
-        used_pct = round((1 - free / total) * 100) if total > 0 else None
-        disk_total = _format_memory(total)
-        disk_free = _format_memory(free)
-        disk_pct = used_pct
-    except Exception:
-        pass
-
-    info: dict = {
-        "cpu_arch": platform.machine(),
-        "os_version": os_version,
-        "cpu_cores": cpu_count,
-        "cpu_model": _get_cpu_model(),
-        "total_memory": _format_memory(mem_bytes) if mem_bytes is not None else None,
-        "uptime": _format_uptime(time.monotonic() - _PROCESS_START_TIME),
-        "perf_score": _CPU_PERF_SCORE,
-        "cpu_usage": _get_cpu_usage(),
-        "disk_total": disk_total,
-        "disk_free": disk_free,
-        "disk_used_pct": disk_pct,
-    }
-    return info
+IMAGE_VERSION = _read_image_version()
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +112,10 @@ HEADERS = {
 # Set when the heartbeat detects a newer server-side client bundle.
 # Checked in the main loop so updates only happen between jobs.
 _update_available: threading.Event = threading.Event()
+
+# Sticky flag so we only log the "image upgrade required" warning once
+# per process rather than on every heartbeat.
+_image_upgrade_logged: bool = False
 
 # Active job counter — incremented/decremented by run_job(); main loop
 # waits for this to reach zero before applying updates or re-registering.
@@ -398,7 +197,7 @@ def _load_client_id() -> Optional[str]:
                 if cid:
                     return cid
     except OSError:
-        pass
+        logger.debug("Could not read client_id file: %s", _CLIENT_ID_FILE, exc_info=True)
     return None
 
 
@@ -418,7 +217,7 @@ def _clear_client_id() -> None:
         if os.path.exists(_CLIENT_ID_FILE):
             os.remove(_CLIENT_ID_FILE)
     except OSError:
-        pass
+        logger.debug("Could not remove client_id file: %s", _CLIENT_ID_FILE, exc_info=True)
 
 
 def deregister(client_id: str) -> None:
@@ -442,11 +241,12 @@ def register() -> str:
     existing_id = _load_client_id()
     while True:
         try:
-            sysinfo = collect_system_info()
+            sysinfo = collect_system_info(_ESPHOME_VERSIONS_DIR)
             payload: dict = {
                 "hostname": HOSTNAME,
                 "platform": PLATFORM,
                 "client_version": CLIENT_VERSION,
+                "image_version": IMAGE_VERSION,
                 "max_parallel_jobs": MAX_PARALLEL_JOBS,
                 "system_info": sysinfo,
             }
@@ -481,13 +281,34 @@ def _restart_self() -> None:
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
+def _clean_build_cache() -> None:
+    """Remove all build artifacts from the esphome-versions directory."""
+    import shutil
+    from version_manager import VERSIONS_BASE
+    base = Path(VERSIONS_BASE)
+    if not base.exists():
+        logger.info("No build cache to clean (%s does not exist)", base)
+        return
+    removed = 0
+    for entry in base.iterdir():
+        if entry.is_dir():
+            try:
+                shutil.rmtree(entry)
+                removed += 1
+                logger.info("Removed %s", entry.name)
+            except Exception as exc:
+                logger.warning("Failed to remove %s: %s", entry.name, exc)
+    logger.info("Build cache clean complete — removed %d version(s)", removed)
+
+
 def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
+    global _image_upgrade_logged
     while not stop_event.is_set():
         try:
             resp = post("/api/v1/workers/heartbeat", {
                 "client_id": client_id,
-                "system_info": collect_system_info(),
+                "system_info": collect_system_info(_ESPHOME_VERSIONS_DIR),
             })
             if resp.status_code == 401:
                 _on_auth_failed()
@@ -501,12 +322,25 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                 _on_server_reachable()
                 _on_auth_ok()
                 data = resp.json()
-                sv = data.get("server_client_version")
-                if sv and sv != CLIENT_VERSION:
-                    logger.info(
-                        "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
-                    )
-                    _update_available.set()
+                # Server may refuse source-code auto-updates if our Docker image
+                # is too old to safely receive them (missing system deps, etc.)
+                if data.get("image_upgrade_required"):
+                    min_v = data.get("min_image_version", "?")
+                    if not _image_upgrade_logged:
+                        logger.warning(
+                            "Docker image upgrade required: this worker reports IMAGE_VERSION=%s "
+                            "but the server's MIN_IMAGE_VERSION=%s. Auto-updates are disabled "
+                            "until the Docker image is rebuilt with `docker pull` + restart.",
+                            IMAGE_VERSION or "<none>", min_v,
+                        )
+                        _image_upgrade_logged = True
+                else:
+                    sv = data.get("server_client_version")
+                    if sv and sv != CLIENT_VERSION:
+                        logger.info(
+                            "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
+                        )
+                        _update_available.set()
                 # Check for max_parallel_jobs config change from UI
                 new_jobs = data.get("set_max_parallel_jobs")
                 if new_jobs is not None and isinstance(new_jobs, int) and new_jobs != MAX_PARALLEL_JOBS:
@@ -517,6 +351,10 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                     # Write new value to env so it persists across restart
                     os.environ["MAX_PARALLEL_JOBS"] = str(new_jobs)
                     _restart_self()
+                # Check for clean build cache request from UI
+                if data.get("clean_build_cache"):
+                    logger.info("Server requested build cache clean — clearing esphome-versions")
+                    _clean_build_cache()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             _on_server_unreachable(exc)
         except Exception as exc:
@@ -624,19 +462,41 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
         if port_match:
             ota_port = int(port_match.group(1))
     except Exception:
-        pass
+        logger.debug("Could not parse device address/port from YAML %s", target_path, exc_info=True)
 
-    # Extract device name for DNS fallback
+    # Extract device name from the esphome: block (not any other component's name: key).
+    # Parse with yaml.safe_load to avoid the regex pitfall of matching the wrong name:.
     device_name = None
     try:
+        import yaml as _yaml  # noqa: PLC0415
         with open(target_path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                m = _re.match(r'\s*name:\s*["\']?([a-zA-Z0-9_-]+)', line)
-                if m:
-                    device_name = m.group(1)
-                    break
+            raw = _yaml.safe_load(f)
+        if isinstance(raw, dict):
+            esphome_block = raw.get("esphome") or {}
+            if isinstance(esphome_block, dict) and esphome_block.get("name"):
+                device_name = str(esphome_block["name"])
     except Exception:
-        pass
+        # Fallback: look for name: directly under an esphome: line
+        try:
+            with open(target_path, encoding="utf-8", errors="replace") as f:
+                content_lines = f.readlines()
+            in_esphome = False
+            for line in content_lines:
+                stripped = line.lstrip()
+                # Top-level key (no indent) — check if it's esphome:
+                if line and not line[0].isspace() and stripped.startswith("esphome:"):
+                    in_esphome = True
+                    continue
+                elif line and not line[0].isspace():
+                    in_esphome = False
+                    continue
+                if in_esphome:
+                    m = _re.match(r'\s+name:\s*["\']?([a-zA-Z0-9_-]+)', line)
+                    if m:
+                        device_name = m.group(1)
+                        break
+        except Exception:
+            logger.debug("Could not extract device name from YAML %s", target_path, exc_info=True)
 
     # If use_address is a hostname (not IP), try to resolve it
     if device_addr and not _re.match(r'\d+\.\d+\.\d+\.\d+$', device_addr):
@@ -700,7 +560,7 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
             ["ping", "-c", "3", "-W", "2", device_addr],
             capture_output=True, text=True, timeout=10,
         )
-        ping_summary = [l for l in ping_result.stdout.splitlines() if "packet" in l.lower() or "rtt" in l.lower() or "round-trip" in l.lower()]
+        ping_summary = [ln for ln in ping_result.stdout.splitlines() if "packet" in ln.lower() or "rtt" in ln.lower() or "round-trip" in ln.lower()]
         for line in ping_summary:
             lines.append(f"Ping: {line.strip()}")
         if ping_result.returncode != 0 and not ping_summary:
@@ -716,7 +576,7 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
         sock.close()
         lines.append(f"Worker IP: {our_ip} (source for reaching {device_addr})")
     except Exception:
-        pass
+        logger.debug("Could not determine worker IP for OTA diagnostics", exc_info=True)
 
     # Docker network check
     try:
@@ -729,9 +589,9 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
                 if "docker" in cgroup:
                     lines.append("Network mode: bridge (NAT) — consider --network host if OTA fails consistently")
             except Exception:
-                pass
+                logger.debug("Could not read /proc/1/cgroup for Docker network check", exc_info=True)
     except Exception:
-        pass
+        logger.debug("Docker environment check failed", exc_info=True)
 
     diag_text = "\n".join(lines)
     logger.info("OTA diagnostics for %s:\n%s", device_addr, diag_text)
@@ -816,8 +676,10 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         # ---------------------------------------------------------------
         if validate_only:
             _report_status(job_id, "Validating")
+            validate_cmd = [esphome_bin, "config", target_path]
+            _log_invocation(job_id, validate_cmd)
             _compile_log, compile_ok = _run_subprocess(
-                [esphome_bin, "config", target_path],
+                validate_cmd,
                 cwd=tmp_dir,
                 timeout=60,  # validation is fast — 60s is plenty
                 label="validate",
@@ -829,12 +691,29 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
 
         # ---------------------------------------------------------------
         # Build + OTA via `esphome run` (compile and upload in one step)
+        #
+        # --no-logs is REQUIRED on `esphome run` so the worker doesn't hang
+        # tailing device logs after a successful OTA. It is NOT accepted by
+        # `esphome upload` — passing it to the retry path in bug #177 caused
+        # the retry to crash with "unrecognized arguments: --no-logs".
+        #
+        # --device is ALWAYS set:
+        #   - ota_address from the server if known (device poller has an IP)
+        #   - otherwise the literal string "OTA", which tells ESPHome to
+        #     resolve the device itself and skip the interactive upload
+        #     target prompt (#176). Without this, ESPHome prompts when the
+        #     worker has multiple possible targets (e.g. a USB serial dongle
+        #     plus the OTA target), and the worker has no stdin.
         # ---------------------------------------------------------------
+        ota_address = job.get("ota_address") or "OTA"
+
         _report_status(job_id, "Compiling + OTA" + (" (retry)" if ota_only else ""))
-        run_cmd = [esphome_bin, "run", target_path, "--no-logs"]
-        ota_address = job.get("ota_address")
-        if ota_address:
-            run_cmd.extend(["--device", ota_address])
+        run_cmd = [
+            esphome_bin, "run", target_path,
+            "--no-logs",
+            "--device", ota_address,
+        ]
+        _log_invocation(job_id, run_cmd)
 
         # Total timeout covers both compile + OTA
         total_timeout = timeout_seconds + OTA_TIMEOUT
@@ -859,12 +738,16 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             elif ota_failed:
                 # Compile succeeded but OTA failed — retry OTA before reporting.
                 # Keep job in WORKING state so timeout checker can re-queue if we die.
+                # Note: `esphome upload` does NOT accept --no-logs (it never tails
+                # device logs anyway), so this retry path only passes --device.
                 _flush_log_text(job_id, "\n--- OTA failed, retrying in 5s ---\n")
                 time.sleep(5)
                 _report_status(job_id, "OTA Retry")
-                upload_cmd = [esphome_bin, "upload", target_path, "--no-logs"]
-                if ota_address:
-                    upload_cmd.extend(["--device", ota_address])
+                upload_cmd = [
+                    esphome_bin, "upload", target_path,
+                    "--device", ota_address,
+                ]
+                _log_invocation(job_id, upload_cmd)
                 retry_log, retry_ok = _run_subprocess(
                     upload_cmd,
                     cwd=tmp_dir,
@@ -892,7 +775,7 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             shutil.rmtree(tmp_dir, ignore_errors=True)
             logger.debug("Cleaned up temp dir %s", tmp_dir)
         except Exception:
-            pass
+            logger.debug("Failed to clean up temp dir %s", tmp_dir, exc_info=True)
 
 
 def _colorize_log_line(line: str) -> str:
@@ -941,7 +824,7 @@ def _run_subprocess(
         try:
             post(f"/api/v1/jobs/{job_id}/log", {"lines": text}, timeout=5)
         except Exception:
-            pass  # non-critical
+            logger.debug("Log flush to server failed for job %s", job_id, exc_info=True)
 
     try:
         proc = subprocess.Popen(
@@ -959,7 +842,7 @@ def _run_subprocess(
         try:
             proc.kill()
         except Exception:
-            pass
+            logger.debug("Failed to kill timed-out subprocess for %s", label, exc_info=True)
 
     timer = threading.Timer(timeout, _kill_on_timeout)
     timer.start()
@@ -974,7 +857,7 @@ def _run_subprocess(
                 break
             text = chunk.decode("utf-8", errors="replace")
             # Colorize log lines for xterm.js display
-            colored = "\n".join(_colorize_log_line(l) for l in text.split("\n"))
+            colored = "\n".join(_colorize_log_line(ln) for ln in text.split("\n"))
             log_chunks.append(colored)
             flush_buffer.append(colored)
             now = time.monotonic()
@@ -1001,7 +884,20 @@ def _flush_log_text(job_id: str, text: str) -> None:
     try:
         post(f"/api/v1/jobs/{job_id}/log", {"lines": text}, timeout=5)
     except Exception:
-        pass
+        logger.debug("Log text flush failed for job %s", job_id, exc_info=True)
+
+
+def _log_invocation(job_id: str, cmd: list[str]) -> None:
+    """Log an esphome invocation to BOTH the Python logger and the user-visible
+    job log stream.
+
+    Bug reports are much easier to triage when the exact command line is in
+    the log the user copy-pastes from the UI.
+    """
+    line = "Invoking: " + " ".join(cmd)
+    logger.info(line)
+    # Blue-ish ANSI so it stands out in the xterm viewer without looking alarming.
+    _flush_log_text(job_id, f"\033[36m{line}\033[0m\n")
 
 
 def _report_status(job_id: str, status_text: str) -> None:
@@ -1009,7 +905,7 @@ def _report_status(job_id: str, status_text: str) -> None:
     try:
         post(f"/api/v1/jobs/{job_id}/status", {"status_text": status_text}, timeout=5)
     except Exception:
-        pass  # Non-critical; never block job execution on a status update failure
+        logger.debug("Status update failed for job %s (%s)", job_id, status_text, exc_info=True)
 
 
 def _submit_result(
@@ -1130,7 +1026,7 @@ def _initial_version_check(client_id: str) -> None:
     try:
         resp = post("/api/v1/workers/heartbeat", {
             "client_id": client_id,
-            "system_info": collect_system_info(),
+            "system_info": collect_system_info(_ESPHOME_VERSIONS_DIR),
         }, timeout=10)
         if resp.ok:
             sv = resp.json().get("server_client_version")

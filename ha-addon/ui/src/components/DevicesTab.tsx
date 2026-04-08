@@ -73,6 +73,7 @@ interface Props {
   targets: Target[];
   devices: Device[];
   workers: Worker[];
+  streamerMode: boolean;
   onCompile: (targets: string[] | 'all' | 'outdated') => void;
   onCompileOnWorker: (target: string, clientId: string) => void;
   onEdit: (target: string) => void;
@@ -86,6 +87,24 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
   if (!filter) return true;
   const q = filter.toLowerCase();
   return fields.some(f => f?.toLowerCase().includes(q));
+}
+
+/**
+ * Render a short label describing how the device's IP was resolved.
+ * Returns null when there's nothing useful to display (no source, or
+ * the address is just the {name}.local fallback no one configured).
+ */
+function formatAddressSource(source: string | null | undefined): string | null {
+  switch (source) {
+    case 'mdns': return 'via mDNS';
+    case 'wifi_use_address': return 'wifi.use_address';
+    case 'ethernet_use_address': return 'ethernet.use_address';
+    case 'openthread_use_address': return 'openthread.use_address';
+    case 'wifi_static_ip': return 'wifi static_ip';
+    case 'ethernet_static_ip': return 'ethernet static_ip';
+    case 'mdns_default': return null;
+    default: return null;
+  }
 }
 
 export function RenameModal({ currentName, onConfirm, onClose }: {
@@ -178,7 +197,7 @@ function DeleteModal({ target, onConfirm, onClose }: {
   );
 }
 
-export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
@@ -187,11 +206,15 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
 
-  // Persist column visibility to localStorage whenever it changes
+  // Persist column visibility and unmanaged toggle to localStorage
   useEffect(() => {
     saveColumnVisibility(columnVisibility);
   }, [columnVisibility]);
+  useEffect(() => {
+    localStorage.setItem('showUnmanaged', String(showUnmanaged));
+  }, [showUnmanaged]);
 
   // Build a set of device names that are already shown as managed targets
   // to prevent duplicates when compile_target mapping has a race condition
@@ -333,7 +356,10 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
       id: 'ip',
       header: ({ column }) => <SortHeader label="IP" column={column} />,
       cell: ({ row: { original: t } }) => {
-        const showIpLink = t.has_web_server && t.online && t.ip_address;
+        // In streamer mode: still blur via .sensitive CSS, but disable the
+        // link so screenshots can't be click-through targets.
+        const showIpLink = !streamerMode && t.has_web_server && t.online && t.ip_address;
+        const sourceLabel = formatAddressSource(t.address_source);
         return (
           <span style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
             {showIpLink
@@ -348,6 +374,14 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                 </a>
               )
               : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
+            {sourceLabel && (
+              <div
+                style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
+                title={`Address source: ${t.address_source}`}
+              >
+                {sourceLabel}
+              </div>
+            )}
           </span>
         );
       },
@@ -542,6 +576,13 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                       {col.label}
                     </DropdownMenuCheckboxItem>
                   ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={showUnmanaged}
+                    onCheckedChange={() => setShowUnmanaged(v => !v)}
+                  >
+                    Show unmanaged devices
+                  </DropdownMenuCheckboxItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -582,7 +623,7 @@ export function DevicesTab({ targets, devices, workers, onCompile, onCompileOnWo
                       ))}
                     </tr>
                   ))}
-                  {filteredUnmanaged.map(d => (
+                  {showUnmanaged && filteredUnmanaged.map(d => (
                     <UnmanagedRow key={d.name} device={d} isVisible={isVisible} />
                   ))}
                 </>
@@ -705,6 +746,19 @@ function DeviceMenu({
       <div className="fixed inset-0 z-50" onClick={onClose} />
       <div
         className="fixed z-50 min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
+        ref={(el) => {
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          // If menu extends below viewport, flip it upward
+          if (rect.bottom > window.innerHeight) {
+            el.style.top = `${Math.max(4, position.top - rect.height - 4)}px`;
+          }
+          // If menu extends beyond left edge after translateX(-100%), nudge right
+          if (rect.left < 0) {
+            el.style.left = `${position.left}px`;
+            el.style.transform = 'none';
+          }
+        }}
         style={{ top: position.top, left: position.left, transform: 'translateX(-100%)' }}
       >
         <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Device</div>
@@ -726,7 +780,32 @@ function DeviceMenu({
                 Upgrade on...
                 <span className="ml-auto text-xs">&#9666;</span>
               </div>
-              <div className="invisible group-hover/sub:visible absolute right-full top-0 mr-1 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10">
+              <div
+                className="invisible group-hover/sub:visible absolute top-0 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
+                ref={(el) => {
+                  if (!el) return;
+                  const parent = el.parentElement?.getBoundingClientRect();
+                  if (!parent) return;
+                  // Default: open to the left (right-full)
+                  const spaceLeft = parent.left;
+                  const subWidth = el.offsetWidth || 160;
+                  if (spaceLeft >= subWidth) {
+                    el.style.right = '100%';
+                    el.style.left = 'auto';
+                    el.style.marginRight = '4px';
+                  } else {
+                    el.style.left = '100%';
+                    el.style.right = 'auto';
+                    el.style.marginLeft = '4px';
+                  }
+                  // Vertical: flip up if it extends below viewport
+                  const rect = el.getBoundingClientRect();
+                  if (rect.bottom > window.innerHeight) {
+                    el.style.top = 'auto';
+                    el.style.bottom = '0';
+                  }
+                }}
+              >
                 {onlineWorkers.map(w => (
                   <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
                 ))}
@@ -757,7 +836,7 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
       {isVisible('status') && <td>{statusEl}</td>}
       {isVisible('ha') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('ip') && (
-        <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
+        <td style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
           <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
         </td>
       )}

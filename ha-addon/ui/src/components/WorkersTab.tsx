@@ -9,15 +9,18 @@ import {
 } from '@tanstack/react-table';
 import type { Job, SystemInfo, Worker } from '../types';
 import { Button } from './ui/button';
-import { stripYaml } from '../utils';
+import { stripYaml, timeAgo } from '../utils';
 import { StatusDot } from './StatusDot';
 
 interface Props {
   workers: Worker[];
   queue: Job[];
   serverClientVersion?: string;
+  minImageVersion?: string;
   onRemove: (id: string) => void;
   onSetParallelJobs: (id: string, count: number) => void;
+  onCleanCache: (id: string) => void;
+  onCleanAllCaches: () => void;
   onConnectWorker: () => void;
 }
 
@@ -62,16 +65,83 @@ function workerPlatformHtml(si: SystemInfo): React.ReactNode {
   );
 }
 
-function ClientVersionCell({ ver, scv }: { ver?: string; scv?: string }) {
-  if (!ver) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-  if (!scv || ver === scv) {
-    return <code style={{ fontSize: 11, color: 'var(--text-muted)' }}>{ver}</code>;
+function ClientVersionCell({
+  ver,
+  scv,
+  imageVer,
+  minImageVer,
+  onReinstall,
+}: {
+  ver?: string;
+  scv?: string;
+  imageVer?: string | null;
+  minImageVer?: string;
+  onReinstall: () => void;
+}) {
+  // Docker image version is checked first — a stale image blocks source-code
+  // auto-updates entirely, so that's the more important warning to surface.
+  const imageStale = imageIsStale(imageVer, minImageVer);
+
+  if (!ver) {
+    return (
+      <span style={{ color: 'var(--text-muted)' }}>
+        —
+        {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
+      </span>
+    );
   }
+
+  const isOutdated = scv && ver !== scv;
+  const color = imageStale ? 'var(--destructive)' : isOutdated ? 'var(--warn)' : 'var(--text-muted)';
+  const title = isOutdated ? `Source outdated — server: ${scv}` : undefined;
+
   return (
-    <code style={{ fontSize: 11, color: 'var(--warn)' }} title={`Outdated — server: ${scv}`}>
-      {ver} ↑
-    </code>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <code style={{ fontSize: 11, color }} title={title}>
+        {ver}
+        {isOutdated && ' ↑'}
+      </code>
+      {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
+    </span>
   );
+}
+
+function ImageStaleBadge({
+  imageVer,
+  minImageVer,
+  onReinstall,
+}: {
+  imageVer?: string | null;
+  minImageVer?: string;
+  onReinstall: () => void;
+}) {
+  const reported = imageVer ?? 'pre-LIB.0';
+  return (
+    <button
+      type="button"
+      onClick={onReinstall}
+      title={
+        `This worker's Docker image is out of date ` +
+        `(IMAGE_VERSION=${reported}, server requires ${minImageVer}). ` +
+        `Source-code auto-updates are disabled until the image is rebuilt.\n\n` +
+        `We recommend reinstalling the worker using the latest "docker run" ` +
+        `command from the Connect Worker modal — click this badge to open it.`
+      }
+      className="inline-flex items-center rounded-full border border-[var(--destructive)] bg-[var(--destructive)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--destructive)] cursor-pointer hover:bg-[var(--destructive)]/20"
+    >
+      image stale
+    </button>
+  );
+}
+
+/** Return true iff the reported image version is missing or below the server minimum. */
+function imageIsStale(reported: string | null | undefined, minimum: string | undefined): boolean {
+  if (!minimum) return false; // server doesn't enforce a minimum
+  if (reported == null) return true; // pre-LIB.0 worker
+  const r = parseInt(reported, 10);
+  const m = parseInt(minimum, 10);
+  if (Number.isNaN(r) || Number.isNaN(m)) return false;
+  return r < m;
 }
 
 /* Debounced slot control (#108) */
@@ -135,7 +205,7 @@ function getWorkerSortValue(w: Worker, colId: string): string {
 
 const columnHelper = createColumnHelper<Worker>();
 
-export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSetParallelJobs, onConnectWorker }: Props) {
+export function WorkersTab({ workers, queue, serverClientVersion, minImageVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'hostname', desc: false }]);
 
@@ -239,9 +309,19 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
             </>
           : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Idle</span>;
 
-      const uptimeEl = c.system_info?.uptime
-        ? <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }} title="Worker process uptime">up {c.system_info.uptime}</span></>
-        : null;
+      // When offline, show how long it's been gone instead of stale process uptime.
+      // When online, show worker process uptime from the last heartbeat.
+      let uptimeEl: React.ReactNode = null;
+      if (!c.online && c.last_seen) {
+        const duration = timeAgo(c.last_seen).replace(/ ago$/, '');
+        uptimeEl = (
+          <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }} title={`Last heartbeat: ${new Date(c.last_seen).toLocaleString()}`}>offline for {duration}</span></>
+        );
+      } else if (c.online && c.system_info?.uptime) {
+        uptimeEl = (
+          <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }} title="Worker process uptime">up {c.system_info.uptime}</span></>
+        );
+      }
 
       if (slot === 1) {
         rows.push(
@@ -253,7 +333,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
             <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
             <td>{statusEl}{uptimeEl}</td>
             <td>{jobEl}</td>
-            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} /></td>
+            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} onReinstall={onConnectWorker} /></td>
             <td>
               <SlotControl
                 slots={slots}
@@ -262,9 +342,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
               />
             </td>
             <td>
-              {!c.online && !isLocal && (
+              {c.online ? (
+                <Button variant="secondary" size="sm" onClick={() => onCleanCache(c.client_id)}>Clean Cache</Button>
+              ) : !isLocal ? (
                 <Button variant="destructive" size="sm" onClick={() => onRemove(c.client_id)}>Remove</Button>
-              )}
+              ) : null}
             </td>
           </tr>
         );
@@ -334,6 +416,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, onRemove, onSe
           </div>
           <div className="actions">
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{countText}</span>
+            <Button variant="outline" size="sm" onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>Clean All Caches</Button>
             <Button size="sm" onClick={onConnectWorker}>+ Connect Worker</Button>
           </div>
         </div>

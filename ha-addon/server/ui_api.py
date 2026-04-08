@@ -11,6 +11,7 @@ import aiohttp
 from aiohttp import web
 
 from app_config import AppConfig
+from helpers import safe_resolve, json_error
 from device_poller import Device
 from job_queue import JobState
 from scanner import scan_configs, get_esphome_version, set_esphome_version, get_device_metadata
@@ -97,6 +98,7 @@ async def get_server_info(request: web.Request) -> web.Response:
     ip_addrs = [a for a in addrs if a.replace(".", "").isdigit()]
     server_ip = ip_addrs[0] if ip_addrs else (addrs[0] if addrs else None)
 
+    from constants import MIN_IMAGE_VERSION  # noqa: PLC0415
     return web.json_response({
         "token": cfg.token,
         "port": cfg.port,
@@ -104,6 +106,7 @@ async def get_server_info(request: web.Request) -> web.Response:
         "server_addresses": addrs,
         "server_client_version": addon_version,
         "addon_version": addon_version,
+        "min_image_version": MIN_IMAGE_VERSION,
     })
 
 
@@ -264,6 +267,7 @@ async def get_targets(request: web.Request) -> web.Response:
                 else None
             ),
             "ip_address": dev.ip_address if dev else None,
+            "address_source": dev.address_source if dev else None,
             "last_seen": dev.last_seen.isoformat() if dev and dev.last_seen else None,
             "server_version": server_version,
             "has_api_key": has_api_key,
@@ -629,13 +633,11 @@ async def get_target_content(request: web.Request) -> web.Response:
     filename = request.match_info["filename"]
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
-    path = (config_dir / filename).resolve()
-    try:
-        path.relative_to(config_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid filename"}, status=400)
+    path = safe_resolve(config_dir, filename)
+    if path is None:
+        return json_error("Invalid filename")
     if not path.exists():
-        return web.json_response({"error": "File not found"}, status=404)
+        return json_error("File not found", 404)
     try:
         content = path.read_text(encoding="utf-8")
     except Exception as exc:
@@ -649,15 +651,13 @@ async def save_target_content(request: web.Request) -> web.Response:
     filename = request.match_info["filename"]
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
-    path = (config_dir / filename).resolve()
-    try:
-        path.relative_to(config_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid filename"}, status=400)
+    path = safe_resolve(config_dir, filename)
+    if path is None:
+        return json_error("Invalid filename")
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
+        return json_error("Invalid JSON")
     content = body.get("content", "")
     try:
         path.write_text(content, encoding="utf-8")
@@ -676,16 +676,12 @@ async def delete_target(request: web.Request) -> web.Response:
     filename = request.match_info["filename"]
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
-    path = (config_dir / filename).resolve()
-
-    # Security: ensure path is within config_dir
-    try:
-        path.relative_to(config_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid filename"}, status=400)
+    path = safe_resolve(config_dir, filename)
+    if path is None:
+        return json_error("Invalid filename")
 
     if not path.exists():
-        return web.json_response({"error": "File not found"}, status=404)
+        return json_error("File not found", 404)
 
     archive = request.rel_url.query.get("archive", "true") == "true"
 
@@ -739,15 +735,12 @@ async def restore_archive(request: web.Request) -> web.Response:
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
     archive_dir = config_dir / ".archive"
-    src = (archive_dir / filename).resolve()
-
-    try:
-        src.relative_to(archive_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid filename"}, status=400)
+    src = safe_resolve(archive_dir, filename)
+    if src is None:
+        return json_error("Invalid filename")
 
     if not src.exists():
-        return web.json_response({"error": "Archived file not found"}, status=404)
+        return json_error("Archived file not found", 404)
 
     dest = config_dir / filename
     if dest.exists():
@@ -768,15 +761,12 @@ async def delete_archived(request: web.Request) -> web.Response:
     filename = request.match_info["filename"]
     cfg = _cfg(request)
     archive_dir = Path(cfg.config_dir) / ".archive"
-    path = (archive_dir / filename).resolve()
-
-    try:
-        path.relative_to(archive_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid filename"}, status=400)
+    path = safe_resolve(archive_dir, filename)
+    if path is None:
+        return json_error("Invalid filename")
 
     if not path.exists():
-        return web.json_response({"error": "File not found"}, status=404)
+        return json_error("File not found", 404)
 
     try:
         path.unlink()
@@ -794,7 +784,7 @@ async def rename_target(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
+        return json_error("Invalid JSON")
 
     new_name = body.get("new_name", "").strip()
     if not new_name:
@@ -802,29 +792,21 @@ async def rename_target(request: web.Request) -> web.Response:
 
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
-    old_path = (config_dir / filename).resolve()
-
-    # Security: ensure path is within config_dir
-    try:
-        old_path.relative_to(config_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid filename"}, status=400)
+    old_path = safe_resolve(config_dir, filename)
+    if old_path is None:
+        return json_error("Invalid filename")
 
     if not old_path.exists():
-        return web.json_response({"error": "File not found"}, status=404)
+        return json_error("File not found", 404)
 
     # Derive new filename: lowercase, spaces → hyphens, ensure .yaml extension
     new_filename = new_name.replace(" ", "-").lower()
     if not new_filename.endswith(".yaml"):
         new_filename += ".yaml"
 
-    new_path = (config_dir / new_filename).resolve()
-
-    # Security: ensure new path is also within config_dir
-    try:
-        new_path.relative_to(config_dir.resolve())
-    except ValueError:
-        return web.json_response({"error": "Invalid new_name"}, status=400)
+    new_path = safe_resolve(config_dir, new_filename)
+    if new_path is None:
+        return json_error("Invalid new_name")
 
     if new_path.exists() and new_path != old_path:
         return web.json_response({"error": f"{new_filename} already exists"}, status=409)
@@ -873,8 +855,8 @@ async def rename_target(request: web.Request) -> web.Response:
     if device_poller:
         cfg = _cfg(request)
         targets = scan_configs(cfg.config_dir)
-        name_map, enc_keys, addr_overrides = build_name_to_target_map(cfg.config_dir, targets)
-        device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides)
+        name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(cfg.config_dir, targets)
+        device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides, addr_sources)
 
     logger.info("Renamed config %s → %s", filename, new_filename)
 
@@ -1078,6 +1060,19 @@ async def set_worker_parallel_jobs(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "max_parallel_jobs": value})
 
 
+@routes.post("/ui/api/workers/{client_id}/clean")
+async def clean_worker_cache(request: web.Request) -> web.Response:
+    """Request a worker to clean its build cache. Pushed via next heartbeat."""
+    client_id = request.match_info["client_id"]
+    registry = request.app["registry"]
+    worker = registry.get(client_id)
+    if not worker:
+        return web.json_response({"error": "Worker not found"}, status=404)
+    worker.pending_clean = True
+    logger.info("Worker %s (%s): clean build cache requested", client_id, worker.hostname)
+    return web.json_response({"ok": True})
+
+
 # Legacy client routes — kept for backwards compatibility
 
 @routes.delete("/ui/api/clients/{client_id}")
@@ -1191,7 +1186,8 @@ async def get_secret_keys(request: web.Request) -> web.Response:
     """Return list of secret key names from secrets.yaml (values are never sent)."""
     import yaml  # noqa: PLC0415
     cfg = _cfg(request)
-    path = Path(cfg.config_dir) / "secrets.yaml"
+    from constants import SECRETS_YAML  # noqa: PLC0415
+    path = Path(cfg.config_dir) / SECRETS_YAML
     if not path.exists():
         return web.json_response({"keys": []})
     try:

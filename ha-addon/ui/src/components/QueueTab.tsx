@@ -144,7 +144,7 @@ export function QueueTab({
       cell: ({ row: { original: job } }) => (
         <>
           <span className="device-name">{targetNameMap.get(job.target) || stripYaml(job.target)}</span>
-          <div className="device-filename">{stripYaml(job.target)} &middot; {timeAgo(job.created_at)}</div>
+          <div className="device-filename">{stripYaml(job.target)}</div>
         </>
       ),
       sortingFn: 'alphanumeric',
@@ -195,20 +195,45 @@ export function QueueTab({
       },
       sortingFn: 'alphanumeric',
     }),
-    columnHelper.accessor(row => row.duration_seconds ?? 0, {
-      id: 'duration',
-      header: ({ column }) => <SortHeader label="Duration" column={column} />,
+    columnHelper.accessor(row => new Date(row.created_at), {
+      id: 'created_at',
+      header: ({ column }) => <SortHeader label="Start Time" column={column} />,
+      cell: ({ row: { original: job } }) => {
+        const d = new Date(job.created_at);
+        const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        return (
+          <span style={{ fontSize: 12 }} title={d.toLocaleString()}>
+            {time}
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(job.created_at)}</div>
+          </span>
+        );
+      },
+      sortingFn: 'datetime',
+    }),
+    columnHelper.accessor(row => (row.finished_at ? new Date(row.finished_at) : null), {
+      id: 'finished_at',
+      header: ({ column }) => <SortHeader label="Finish Time" column={column} />,
       cell: ({ row: { original: job } }) => {
         const inProgress = isJobInProgress(job);
-        const dur =
-          job.duration_seconds != null
-            ? fmtDuration(job.duration_seconds)
-            : inProgress && job.assigned_at
-            ? fmtDuration((Date.now() - new Date(job.assigned_at).getTime()) / 1000)
-            : '—';
-        return <span style={{ fontSize: 12 }}>{dur}</span>;
+        if (inProgress) {
+          // Wall-clock elapsed since enqueue (not since worker pickup)
+          const elapsed = fmtDuration((Date.now() - new Date(job.created_at).getTime()) / 1000);
+          return <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>Elapsed {elapsed}</span>;
+        }
+        if (!job.finished_at) return <span style={{ fontSize: 12 }}>—</span>;
+        const finished = new Date(job.finished_at);
+        const time = finished.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        // Duration = wall clock from enqueue to finish, not just worker compile time
+        const wallSeconds = (finished.getTime() - new Date(job.created_at).getTime()) / 1000;
+        const dur = wallSeconds >= 0 ? fmtDuration(wallSeconds) : null;
+        return (
+          <span style={{ fontSize: 12 }} title={finished.toLocaleString()}>
+            {time}
+            {dur && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Took {dur}</div>}
+          </span>
+        );
       },
-      sortingFn: 'basic',
+      sortingFn: 'datetime',
     }),
     columnHelper.display({
       id: 'actions',

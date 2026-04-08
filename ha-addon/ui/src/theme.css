@@ -64,12 +64,21 @@ header img {
   /* shadcn variables follow app variables via var() references, no overrides needed */
 }
 
+/* Prevent the page from scrolling sideways on narrow viewports.
+   Must be set on BOTH html and body — the document-level scroll lives
+   on <html>, while body controls the visible viewport. The .table-wrap
+   inside each panel still scrolls horizontally for wide tables on
+   phones; we just don't want surprise body-level sideways scroll from
+   action buttons or min-width tables. */
+html { overflow-x: hidden; }
+
 body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 /* ---- Header ---- */
@@ -117,8 +126,12 @@ main {
 /* Panels now use Tailwind classes */
 .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 
-/* ---- Responsive tables ---- */
-.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* ---- Responsive tables ----
+   width: 100% is required so that .table-wrap inherits its parent's
+   constraint instead of expanding to fit the table's min-width. Without
+   it, overflow-x: auto has nothing to clip against and the table forces
+   the body wider than the viewport on narrow screens. */
+.table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 table {
   width: 100%;

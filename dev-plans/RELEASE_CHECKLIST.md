@@ -19,14 +19,14 @@ Copy the checklist into a GitHub issue or scratch file and check items off as yo
 - [ ] Bump version: `bash scripts/bump-version.sh X.Y.Z`
 - [ ] Write changelog entry in `ha-addon/CHANGELOG.md`:
   - Add `## X.Y.Z` section
-  - Source material: `WORKITEMS.md` (completed items), `BUGS.md` (fixes with version tags)
+  - Source material: `dev-plans/WORKITEMS-X.Y.md` — has both completed work items and the bug fixes for the release
   - Group by category (features, improvements, bug fixes)
   - Consolidate dev-iteration noise into clean user-facing descriptions
 - [ ] Update `README.md` — ensure feature list, config tables, and architecture match current state
 - [ ] Update `ha-addon/DOCS.md` — ensure HA add-on panel docs match current features and options
 - [ ] Audit both docs for stale content — remove outdated diagrams, references to removed features, and anything that duplicates what the code already says
 - [ ] Update `ha-addon/config.yaml` — verify `description`, `map`, `ports`, `options`, `schema` reflect any new config
-- [ ] Review `WORKITEMS.md` — mark completed items, move any deferred items to next release
+- [ ] Review `dev-plans/WORKITEMS-X.Y.md` — mark completed items, move any deferred items to the next release file
 - [ ] Grep for TODO/FIXME/HACK in changed files — resolve or document as known issues
 
 - [ ] Playwright smoke test against hass-4 (after deploy):
@@ -79,7 +79,7 @@ Copy the checklist into a GitHub issue or scratch file and check items off as yo
   git checkout develop
   bash scripts/bump-dev.sh
   ```
-- [ ] Update `WORKITEMS.md` — move released items to "Completed" section, set up next release heading
+- [ ] Create the next release file: `dev-plans/WORKITEMS-X.Y+1.md` (copy structure from previous file, leave items unchecked)
 
 ### You need to do
 

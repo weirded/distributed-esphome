@@ -5,6 +5,7 @@ export interface ServerInfo {
   server_addresses?: string[];
   addon_version?: string;
   server_client_version?: string;
+  min_image_version?: string;
 }
 
 export interface EsphomeVersions {
@@ -22,6 +23,8 @@ export interface Target {
   project_name?: string;
   project_version?: string;
   ip_address?: string;
+  /** How the IP was resolved — see Device.address_source for the value list. */
+  address_source?: string | null;
   running_version?: string;
   online?: boolean | null;
   needs_update?: boolean;
@@ -43,6 +46,14 @@ export interface Device {
   compile_target?: string;
   last_seen?: string;
   compilation_time?: number;
+  /**
+   * How the IP address was resolved. One of: "mdns", "wifi_use_address",
+   * "ethernet_use_address", "openthread_use_address", "wifi_static_ip",
+   * "ethernet_static_ip", "mdns_default" (the {name}.local fallback).
+   * Surfaced under the IP in the Devices tab so users can see at a glance
+   * how each device's address was determined.
+   */
+  address_source?: string | null;
 }
 
 export interface SystemInfo {
@@ -67,8 +78,10 @@ export interface Worker {
   max_parallel_jobs?: number;
   requested_max_parallel_jobs?: number | null;
   client_version?: string;
+  image_version?: string | null;
   system_info?: SystemInfo;
   current_job_id?: string;
+  last_seen?: string;
 }
 
 export interface Job {
@@ -82,6 +95,7 @@ export interface Job {
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;
+  finished_at?: string;
   status_text?: string;
   ota_only?: boolean;
   validate_only?: boolean;

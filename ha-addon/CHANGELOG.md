@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.3.0
+
+Theme: **Quality + Testing.** Mostly internal hardening to prevent regressions and increase confidence in future releases. A handful of user-visible bug fixes and small UX improvements ride along.
+
+**Reliability infrastructure**
+- 264 Python tests (up from 117) covering UI API, worker REST API, auth middleware, scanner metadata, queue pinning/retries, device poller IPv6 + name normalization, and more. ~55% server+client coverage baseline.
+- 37 mocked Playwright browser tests covering devices, queue, workers tabs, editor modal, theme + responsive behavior.
+- 16-target ESPHome compile matrix in CI (every push) — actual `esphome compile` runs against fixture YAMLs covering ESP8266, ESP32 (Arduino + IDF), ESP32-S2/S3/C3/C6 (IDF), RP2040, BK72xx, RTL87xx, plus complex configs (external components, packages, Bluetooth Proxy, Thread).
+- CI also runs ruff lint, mypy on server + client, pytest with coverage reporting, frontend build, and Playwright tests on every push.
+- Docker images now also published from `develop` (`ghcr.io/weirded/esphome-dist-{client,server}:develop`) so users can test unreleased changes without rebuilding locally. `:latest` stays pinned to `main`.
+
+**Worker image versioning** ([#16](https://github.com/weirded/distributed-esphome/issues/16))
+- Workers now report a Docker `IMAGE_VERSION` separate from the source code version. The server enforces a `MIN_IMAGE_VERSION` and refuses source-code auto-updates to workers running a stale image (since they'd just exec into a broken state).
+- Workers tab shows a red "image stale" badge next to outdated workers, clickable to open the Connect Worker modal with the latest `docker run` command.
+
+**Build worker uses psutil**
+- Worker system info (memory, CPU usage, disk) now comes from psutil instead of hand-rolled `/proc` parsing. Cross-platform (Windows works as a bonus) and more accurate CPU utilization.
+
+**Bug fixes**
+- Fixed duplicate device rows for Thread-only and statically-IP'd devices ([#2](https://github.com/weirded/distributed-esphome/issues/2)). The scanner now resolves addresses through ESPHome's full `wifi → ethernet → openthread` precedence chain (each honoring `use_address` → `manual_ip.static_ip` → `{name}.local`), and the device poller correctly handles IPv6 mDNS records and merges discovery into existing YAML-derived rows by normalized name.
+- Fixed `esphome run` prompting interactively when the worker host has multiple upload targets ([#22](https://github.com/weirded/distributed-esphome/issues/22)). The `--device` flag is now always passed (using the literal `"OTA"` when no specific address is known) so ESPHome never blocks waiting for stdin.
+- Fixed OTA-only retries crashing with `unrecognized arguments: --no-logs` ([#21](https://github.com/weirded/distributed-esphome/issues/21)). `esphome upload` doesn't accept that flag — only `esphome run` does. The retry path now invokes `upload` without it.
+- Fixed streamer mode not blurring IPs on unmanaged devices ([#19](https://github.com/weirded/distributed-esphome/issues/19)).
+- Fixed Workers tab showing "up 5m" for offline workers based on stale process uptime. Now shows "offline for Xm" using the last heartbeat timestamp.
+- Fixed queue duration showing the worker's compile time instead of wall-clock time. Now `Took 2m 14s` from enqueue to finish, and `Elapsed 45s` for in-progress jobs.
+- Fixed queue sort defaulting to time instead of state — running jobs are now back at the top by default.
+- Fixed validation request results showing the duplicate enqueue time twice in the queue.
+
+**UI improvements**
+- New "IP source" label under each device IP showing how the address was resolved: `via mDNS`, `wifi.use_address`, `wifi static_ip`, `ethernet static_ip`, `openthread.use_address`, or `{name}.local`. mDNS only "wins" over the default — explicit user choices stay authoritative because that mismatch is itself useful information.
+- Queue tab: separate "Start Time" and "Finish Time" columns with absolute HH:MM:SS plus relative duration.
+- "Clean Cache" button on online workers (per-worker) and "Clean All Caches" in the Workers tab header to clear stale ESPHome version caches without restarting workers.
+- "Show unmanaged devices" toggle in the Devices column picker to hide mDNS discoveries with no matching config.
+- Retry button now also available on successful jobs (not just failed) for the "I want to re-run this exactly" case.
+- Worker compile commands now logged in the user-visible job log (cyan text) so bug reports include the exact command that ran.
+- Image-stale badges turn the version cell red and link directly to the Connect Worker modal.
+
+**Security hardening**
+- Timing-safe Bearer token comparison (`secrets.compare_digest`) instead of `==`.
+- Bounded log storage: worker-streamed logs capped at 512 KB per job, truncated with a marker (prevents OOM from runaway build output).
+- `max_parallel_jobs` validation on worker registration (0–32, was unbounded).
+
+**Codebase cleanup**
+- New `helpers.py` (server) consolidates `safe_resolve`, `json_error`, `clamp`, `constant_time_compare` — replaces ~80 lines of inline path-traversal/error-response/auth code.
+- Worker system info code extracted from `client.py` into `sysinfo.py`.
+- Server constants (header names, supervisor IP, `secrets.yaml`) moved to `constants.py`.
+- Test anti-patterns cleaned up: removed redundant `sys.path` from 7 test files, replaced hardcoded `/tmp` with `tmp_path`, converted queue tests to native async.
+
+**Reorganized dev plans**
+- Moved roadmap, release process, security audit, and per-release work-item files into a new `dev-plans/` directory.
+- Released versions live under `dev-plans/archive/`.
+
 ## 1.2.0
 
 **Built-in Local Worker** ([#4](https://github.com/weirded/distributed-esphome/issues/4))

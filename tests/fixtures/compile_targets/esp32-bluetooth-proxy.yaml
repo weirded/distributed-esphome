@@ -1,0 +1,30 @@
+# Bluetooth proxy config — common use case, exercises BLE stack
+# Tests: ESP32 Arduino with Bluetooth components
+esphome:
+  name: compile-test-bt-proxy
+  friendly_name: "BT Proxy"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+bluetooth_proxy:
+  active: true

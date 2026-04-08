@@ -39,9 +39,9 @@ export function isJobFinished(job: { state: string; ota_result?: string }): bool
   return !isJobInProgress(job);
 }
 
-/** Job can be retried (terminal and not successful) */
+/** Job can be retried (any terminal state — failed or successful) */
 export function isJobRetryable(job: { state: string; ota_result?: string }): boolean {
-  return isJobFailed(job);
+  return isJobFinished(job);
 }
 
 const BADGE_BASE = 'inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide';

@@ -3,16 +3,34 @@
 from __future__ import annotations
 
 import io
-import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 
-# Make server code importable
-sys.path.insert(0, str(Path(__file__).parent.parent / "ha-addon" / "server"))
+from scanner import (
+    _extract_metadata,
+    build_name_to_target_map,
+    create_bundle,
+    get_device_address,
+    get_device_metadata,
+    get_esphome_version,
+    scan_configs,
+)
 
-from scanner import create_bundle, get_esphome_version, scan_configs  # noqa: E402
+
+def _empty_meta() -> dict:
+    """Return a fresh empty metadata dict matching get_device_metadata's shape."""
+    return {
+        "friendly_name": None,
+        "device_name": None,
+        "device_name_raw": None,
+        "comment": None,
+        "area": None,
+        "project_name": None,
+        "project_version": None,
+        "has_web_server": False,
+    }
 
 FIXTURES = Path(__file__).parent / "fixtures" / "esphome_configs"
 
@@ -154,3 +172,250 @@ def test_get_esphome_version_returns_unknown_when_not_installed():
         assert ver == "unknown"
     finally:
         meta.version = original
+
+
+# ---------------------------------------------------------------------------
+# get_device_metadata — extracting name/friendly_name/area/comment/project
+# ---------------------------------------------------------------------------
+
+def _write_yaml(config_dir: Path, name: str, content: str) -> None:
+    (config_dir / name).write_text(content)
+
+
+# ---------------------------------------------------------------------------
+# _extract_metadata — call directly with hand-crafted dicts.
+#
+# These tests deliberately bypass _resolve_esphome_config (which is fragile
+# across ESPHome versions: a tiny test fixture that the local 2026.3.1
+# accepts can be rejected by 2026.3.3 in CI). Calling _extract_metadata with
+# a pre-resolved dict tests OUR extraction logic, not ESPHome's schema.
+#
+# End-to-end coverage of the resolver path lives in the fixture-based tests
+# below, which use the known-good device1.yaml fixture.
+# ---------------------------------------------------------------------------
+
+def test_metadata_extracts_name_and_friendly_name():
+    config = {
+        "esphome": {
+            "name": "living-room-sensor",
+            "friendly_name": "Living Room Sensor",
+        },
+    }
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["device_name_raw"] == "living-room-sensor"
+    assert meta["device_name"] == "Living Room Sensor"
+    assert meta["friendly_name"] == "Living Room Sensor"
+
+
+def test_metadata_extracts_area_and_comment():
+    config = {
+        "esphome": {
+            "name": "dev",
+            "area": "Kitchen",
+            "comment": "Over the sink",
+        },
+    }
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["area"] == "Kitchen"
+    assert meta["comment"] == "Over the sink"
+
+
+def test_metadata_extracts_project():
+    config = {
+        "esphome": {
+            "name": "dev",
+            "project": {"name": "example.device", "version": "1.2.3"},
+        },
+    }
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["project_name"] == "example.device"
+    assert meta["project_version"] == "1.2.3"
+
+
+def test_metadata_detects_web_server():
+    config = {
+        "esphome": {"name": "dev"},
+        "web_server": {"port": 80},
+    }
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["has_web_server"] is True
+
+
+def test_metadata_missing_web_server():
+    config = {"esphome": {"name": "dev"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["has_web_server"] is False
+
+
+def test_metadata_all_fields_none_for_minimal_config():
+    """A minimal config with only esphome.name leaves the optional fields untouched."""
+    config = {"esphome": {"name": "dev"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["device_name_raw"] == "dev"
+    assert meta["friendly_name"] is None
+    assert meta["area"] is None
+    assert meta["comment"] is None
+    assert meta["project_name"] is None
+    assert meta["project_version"] is None
+    assert meta["has_web_server"] is False
+
+
+def test_metadata_no_esphome_block():
+    """A config that's missing the esphome block leaves metadata as defaults."""
+    meta = _empty_meta()
+    _extract_metadata({}, meta)
+    assert meta["device_name_raw"] is None
+    assert meta["friendly_name"] is None
+
+
+# ---------------------------------------------------------------------------
+# build_name_to_target_map
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# build_name_to_target_map — exercised against the known-good FIXTURES dir
+# instead of inline tmp_path configs (which break across ESPHome versions).
+# device1.yaml has esphome.name=device1 + api.encryption.key, so it covers
+# the stem fallback, the device-name mapping, and encryption key extraction
+# in one shot.
+# ---------------------------------------------------------------------------
+
+def test_name_map_uses_filename_stem_fallback():
+    """Filename stem is always in the map as a fallback."""
+    name_map, _, _, _ = build_name_to_target_map(str(FIXTURES), ["device1.yaml"])
+    assert name_map["device1"] == "device1.yaml"
+
+
+def test_name_map_extracts_encryption_key():
+    """API encryption keys are extracted and keyed by device name."""
+    _, keys, _, _ = build_name_to_target_map(str(FIXTURES), ["device1.yaml"])
+    # The fixture's secrets.yaml maps api_encryption_key to a real base64 key
+    assert "device1" in keys
+    assert keys["device1"]  # non-empty
+
+
+def test_name_map_empty_targets(tmp_path):
+    name_map, keys, overrides, sources = build_name_to_target_map(str(tmp_path), [])
+    assert name_map == {}
+    assert keys == {}
+    assert overrides == {}
+    assert sources == {}
+
+
+# ---------------------------------------------------------------------------
+# get_device_address — bug #179
+# Mirrors ESPHome CORE.address: wifi → ethernet → openthread, each honoring
+# use_address → manual_ip.static_ip → {name}.local fallback.
+# ---------------------------------------------------------------------------
+
+def test_get_device_address_wifi_use_address():
+    config = {"wifi": {"use_address": "192.168.1.42"}}
+    assert get_device_address(config, "dev") == ("192.168.1.42", "wifi_use_address")
+
+
+def test_get_device_address_wifi_static_ip():
+    config = {"wifi": {"manual_ip": {"static_ip": "10.0.0.5"}}}
+    assert get_device_address(config, "dev") == ("10.0.0.5", "wifi_static_ip")
+
+
+def test_get_device_address_wifi_default_to_mdns():
+    config = {"wifi": {"ssid": "test"}}
+    assert get_device_address(config, "dev") == ("dev.local", "mdns_default")
+
+
+def test_get_device_address_ethernet_use_address():
+    config = {"ethernet": {"use_address": "10.0.0.10"}}
+    assert get_device_address(config, "dev") == ("10.0.0.10", "ethernet_use_address")
+
+
+def test_get_device_address_ethernet_static_ip():
+    config = {"ethernet": {"manual_ip": {"static_ip": "10.0.0.11"}}}
+    assert get_device_address(config, "dev") == ("10.0.0.11", "ethernet_static_ip")
+
+
+def test_get_device_address_ethernet_default_to_mdns():
+    config = {"ethernet": {"type": "LAN8720"}}
+    assert get_device_address(config, "dev") == ("dev.local", "mdns_default")
+
+
+def test_get_device_address_openthread_use_address():
+    """Thread-only devices: openthread.use_address overrides everything."""
+    config = {"openthread": {"use_address": "fd00::1"}}
+    assert get_device_address(config, "thread-dev") == ("fd00::1", "openthread_use_address")
+
+
+def test_get_device_address_openthread_default_to_mdns():
+    """Thread-only device with no explicit address falls back to mDNS hostname."""
+    config = {"openthread": {"network_key": "deadbeef"}}
+    assert get_device_address(config, "thread-dev") == ("thread-dev.local", "mdns_default")
+
+
+def test_get_device_address_nothing_configured():
+    """Empty config (no network block at all) falls back to {name}.local."""
+    config = {"esphome": {"name": "minimal"}}
+    assert get_device_address(config, "minimal") == ("minimal.local", "mdns_default")
+
+
+# Bonus: wifi takes precedence over ethernet/openthread when multiple are present
+def test_get_device_address_wifi_wins_over_ethernet():
+    config = {
+        "wifi": {"use_address": "192.168.1.42"},
+        "ethernet": {"use_address": "10.0.0.10"},
+    }
+    assert get_device_address(config, "dev") == ("192.168.1.42", "wifi_use_address")
+
+
+# ---------------------------------------------------------------------------
+# build_name_to_target_map populates address_overrides for ALL targets (#179)
+# ---------------------------------------------------------------------------
+
+# The static-IP, DHCP, and Thread-only cases are exercised by the
+# FIXTURE-based tests below, which use real known-good ESPHome configs in
+# tests/fixtures/esphome_configs/. Inline tmp_path tests for these would be
+# fragile across ESPHome versions because the resolver's schema changes
+# from version to version.
+
+
+# ---------------------------------------------------------------------------
+# Fixture-based integration tests for #186 — verify the real fixture YAMLs
+# (which include !secret + manual_ip / openthread blocks) actually parse
+# through ESPHome's full resolution pipeline and yield the right metadata.
+# These exercise the same code path the production code uses, not isolated
+# helper functions.
+# ---------------------------------------------------------------------------
+
+def test_static_ip_fixture_resolves_address():
+    """Fixture: tests/fixtures/esphome_configs/static_ip_device.yaml"""
+    _, _, overrides, sources = build_name_to_target_map(
+        str(FIXTURES), ["static_ip_device.yaml"],
+    )
+    assert overrides.get("static-ip-device") == "192.168.1.99"
+    assert sources.get("static-ip-device") == "wifi_static_ip"
+
+
+def test_thread_only_fixture_resolves_to_mdns():
+    """Fixture: tests/fixtures/esphome_configs/thread_only_device.yaml
+
+    A Thread-only device with no wifi/ethernet block should still get an
+    address override (falling back to {name}.local). Without this, the YAML
+    row never exists and any later mDNS discovery duplicates it (#179).
+    """
+    _, _, overrides, sources = build_name_to_target_map(
+        str(FIXTURES), ["thread_only_device.yaml"],
+    )
+    assert "thread-only-device" in overrides
+    assert overrides["thread-only-device"] == "thread-only-device.local"
+    assert sources["thread-only-device"] == "mdns_default"
+
+
+def test_static_ip_fixture_metadata():
+    """Static-IP device's friendly_name still resolves correctly."""
+    meta = get_device_metadata(str(FIXTURES), "static_ip_device.yaml")
+    assert meta["friendly_name"] == "Static IP Device"
+    assert meta["device_name_raw"] == "static-ip-device"

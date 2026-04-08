@@ -1,0 +1,32 @@
+# Based on GitHub issue #2 — device names with hyphens
+# Tests: hyphen-to-underscore mDNS normalization, device matching
+# ESPHome normalizes "led-controller-v2" to "led_controller_v2" for mDNS
+esphome:
+  name: led-controller-v2
+  friendly_name: "LED Controller V2"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+light:
+  - platform: monochromatic
+    output: pwm_output
+    name: "LED"
+
+output:
+  - platform: ledc
+    pin: GPIO2
+    id: pwm_output

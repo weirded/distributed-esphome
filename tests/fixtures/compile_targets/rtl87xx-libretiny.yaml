@@ -1,0 +1,11 @@
+esphome:
+  name: compile-test-rtl87xx
+
+rtl87xx:
+  board: generic-rtl8710bn-2mb-788k
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
