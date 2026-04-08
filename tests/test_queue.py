@@ -490,3 +490,128 @@ async def test_append_log_drops_after_truncation(queue):
     # Further appends should not change the log
     await queue.append_log(job.id, "more data")
     assert queue.get(job.id)._streaming_log == log_after_truncate
+
+
+# ---------------------------------------------------------------------------
+# Pinned jobs — pinned_client_id semantics
+# ---------------------------------------------------------------------------
+
+async def test_pinned_job_stored_on_enqueue(queue):
+    job = await queue.enqueue(
+        "device.yaml", "2024.3.1", "run1", 300,
+        pinned_client_id="worker-42",
+    )
+    assert job is not None
+    assert job.pinned_client_id == "worker-42"
+
+
+async def test_pinned_job_only_claimable_by_pinned_worker(queue):
+    await queue.enqueue(
+        "device.yaml", "2024.3.1", "run1", 300,
+        pinned_client_id="worker-42",
+    )
+
+    # Other worker can't claim
+    job = await queue.claim_next("worker-other")
+    assert job is None
+
+    # Pinned worker can
+    job = await queue.claim_next("worker-42")
+    assert job is not None
+    assert job.assigned_client_id == "worker-42"
+
+
+async def test_unpinned_job_claimable_by_any_worker(queue):
+    await _enqueue(queue, "device.yaml")
+    job = await queue.claim_next("any-worker")
+    assert job is not None
+
+
+async def test_retry_preserves_pinned_client_id(queue):
+    """All retried jobs (not just OTA retries) must keep their original pin."""
+    await queue.enqueue(
+        "device.yaml", "2024.3.1", "run1", 300,
+        pinned_client_id="worker-42",
+    )
+    claimed = await queue.claim_next("worker-42")
+    await queue.submit_result(claimed.id, "failed", log="error")
+
+    new_jobs = await queue.retry([claimed.id], "2024.3.1", "run2", 300)
+    assert len(new_jobs) == 1
+    assert new_jobs[0].pinned_client_id == "worker-42"
+
+
+# ---------------------------------------------------------------------------
+# OTA-only retry — submit ota_result preserves compile success
+# ---------------------------------------------------------------------------
+
+async def test_submit_result_ota_only(queue):
+    """A job with ota_only=True represents a re-upload of an already-compiled target."""
+    await queue.enqueue("device.yaml", "2024.3.1", "run1", 300)
+    claimed = await queue.claim_next("worker")
+    await queue.submit_result(claimed.id, "success", log="ok", ota_result="success")
+
+    stored = queue.get(claimed.id)
+    assert stored.state == JobState.SUCCESS
+    assert stored.ota_result == "success"
+
+
+async def test_submit_result_compile_success_but_ota_failed(queue):
+    """Compile succeeded but OTA failed → state=SUCCESS, ota_result=failed."""
+    await queue.enqueue("device.yaml", "2024.3.1", "run1", 300)
+    claimed = await queue.claim_next("worker")
+    await queue.submit_result(claimed.id, "success", log="ok", ota_result="failed")
+
+    stored = queue.get(claimed.id)
+    assert stored.state == JobState.SUCCESS
+    assert stored.ota_result == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Status text + claim race detection
+# ---------------------------------------------------------------------------
+
+async def test_update_status_sets_status_text(queue):
+    """update_status is used by workers to report phase changes (e.g. 'Compiling')."""
+    await _enqueue(queue, "device.yaml")
+    claimed = await queue.claim_next("worker")
+
+    await queue.update_status(claimed.id, "Compiling + OTA")
+    stored = queue.get(claimed.id)
+    assert stored.status_text == "Compiling + OTA"
+
+    await queue.update_status(claimed.id, "OTA Retry")
+    stored = queue.get(claimed.id)
+    assert stored.status_text == "OTA Retry"
+
+
+async def test_update_status_unknown_job_is_noop(queue):
+    """Updating a nonexistent job must not raise."""
+    # Should not raise — the return value depends on the implementation
+    await queue.update_status("nonexistent-id", "something")
+
+
+# ---------------------------------------------------------------------------
+# finished_at is set on terminal transitions
+# ---------------------------------------------------------------------------
+
+async def test_finished_at_set_on_success(queue):
+    await _enqueue(queue, "d.yaml")
+    claimed = await queue.claim_next("w")
+    await queue.submit_result(claimed.id, "success")
+    assert queue.get(claimed.id).finished_at is not None
+
+
+async def test_finished_at_set_on_failure(queue):
+    await _enqueue(queue, "d.yaml")
+    claimed = await queue.claim_next("w")
+    await queue.submit_result(claimed.id, "failed")
+    assert queue.get(claimed.id).finished_at is not None
+
+
+async def test_finished_at_unset_on_pending(queue):
+    await _enqueue(queue, "d.yaml")
+    job = await _enqueue(queue, "d.yaml")  # deduped — returns None
+    assert job is None
+    stored = queue.get_all()[0]
+    assert stored.finished_at is None

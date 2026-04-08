@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from scanner import create_bundle, get_esphome_version, scan_configs
+from scanner import (
+    build_name_to_target_map,
+    create_bundle,
+    get_device_metadata,
+    get_esphome_version,
+    scan_configs,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "esphome_configs"
 
@@ -150,3 +156,195 @@ def test_get_esphome_version_returns_unknown_when_not_installed():
         assert ver == "unknown"
     finally:
         meta.version = original
+
+
+# ---------------------------------------------------------------------------
+# get_device_metadata — extracting name/friendly_name/area/comment/project
+# ---------------------------------------------------------------------------
+
+def _write_yaml(config_dir: Path, name: str, content: str) -> None:
+    (config_dir / name).write_text(content)
+
+
+def test_metadata_extracts_name_and_friendly_name(tmp_path):
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: living-room-sensor
+  friendly_name: Living Room Sensor
+
+esp8266:
+  board: d1_mini
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["device_name_raw"] == "living-room-sensor"
+    assert meta["device_name"] == "Living Room Sensor"
+    assert meta["friendly_name"] == "Living Room Sensor"
+
+
+def test_metadata_extracts_area_and_comment(tmp_path):
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+  area: Kitchen
+  comment: Over the sink
+
+esp8266:
+  board: d1_mini
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["area"] == "Kitchen"
+    assert meta["comment"] == "Over the sink"
+
+
+def test_metadata_extracts_project(tmp_path):
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+  project:
+    name: example.device
+    version: "1.2.3"
+
+esp8266:
+  board: d1_mini
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["project_name"] == "example.device"
+    assert meta["project_version"] == "1.2.3"
+
+
+def test_metadata_detects_web_server(tmp_path):
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+
+esp8266:
+  board: d1_mini
+
+web_server:
+  port: 80
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["has_web_server"] is True
+
+
+def test_metadata_missing_web_server(tmp_path):
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+
+esp8266:
+  board: d1_mini
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["has_web_server"] is False
+
+
+def test_metadata_substitutions_resolved(tmp_path):
+    """${substitutions} in area/comment should be resolved from the substitutions block."""
+    _write_yaml(tmp_path, "dev.yaml", """\
+substitutions:
+  device_name: living_room
+  room_area: Living Room
+
+esphome:
+  name: ${device_name}
+  area: ${room_area}
+
+esp8266:
+  board: d1_mini
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["area"] == "Living Room"
+
+
+def test_metadata_all_fields_none_for_empty_config(tmp_path):
+    """A minimal config with no metadata still returns a well-formed dict."""
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+
+esp8266:
+  board: d1_mini
+""")
+    meta = get_device_metadata(str(tmp_path), "dev.yaml")
+    assert meta["device_name_raw"] == "dev"
+    assert meta["friendly_name"] is None
+    assert meta["area"] is None
+    assert meta["comment"] is None
+    assert meta["project_name"] is None
+    assert meta["project_version"] is None
+    assert meta["has_web_server"] is False
+
+
+# ---------------------------------------------------------------------------
+# build_name_to_target_map
+# ---------------------------------------------------------------------------
+
+def test_name_map_uses_filename_stem_fallback(tmp_path):
+    """Filename stem is always in the map as a fallback."""
+    _write_yaml(tmp_path, "bedroom.yaml", """\
+esphome:
+  name: bedroom
+
+esp8266:
+  board: d1_mini
+""")
+    name_map, _, _ = build_name_to_target_map(str(tmp_path), ["bedroom.yaml"])
+    assert name_map["bedroom"] == "bedroom.yaml"
+
+
+def test_name_map_maps_esphome_name_to_target(tmp_path):
+    """esphome.name (may differ from filename) is mapped to the filename."""
+    _write_yaml(tmp_path, "kitchen.yaml", """\
+esphome:
+  name: kitchen-under-cabinet
+
+esp8266:
+  board: d1_mini
+""")
+    name_map, _, _ = build_name_to_target_map(str(tmp_path), ["kitchen.yaml"])
+    assert name_map["kitchen-under-cabinet"] == "kitchen.yaml"
+    # And the underscore-normalized variant for mDNS (bug #159)
+    assert name_map["kitchen_under_cabinet"] == "kitchen.yaml"
+
+
+def test_name_map_extracts_encryption_key(tmp_path):
+    """API encryption keys are extracted and keyed by device name."""
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+
+esp8266:
+  board: d1_mini
+
+api:
+  encryption:
+    key: "SGVsbG9Xb3JsZEhlbGxvV29ybGRIZWxsb1dvcmxkRWVFRQ=="
+""")
+    _, keys, _ = build_name_to_target_map(str(tmp_path), ["dev.yaml"])
+    assert keys["dev"] == "SGVsbG9Xb3JsZEhlbGxvV29ybGRIZWxsb1dvcmxkRWVFRQ=="
+
+
+def test_name_map_extracts_use_address(tmp_path):
+    """wifi.use_address overrides are captured."""
+    _write_yaml(tmp_path, "dev.yaml", """\
+esphome:
+  name: dev
+
+esp8266:
+  board: d1_mini
+
+wifi:
+  ssid: test
+  password: test
+  use_address: 192.168.1.42
+""")
+    _, _, overrides = build_name_to_target_map(str(tmp_path), ["dev.yaml"])
+    assert overrides["dev"] == "192.168.1.42"
+
+
+def test_name_map_empty_targets(tmp_path):
+    name_map, keys, overrides = build_name_to_target_map(str(tmp_path), [])
+    assert name_map == {}
+    assert keys == {}
+    assert overrides == {}

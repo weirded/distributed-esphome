@@ -18,8 +18,8 @@ Fixture YAML configs that cover every supported ESPHome platform/framework combi
 - [x] **T.0 Fix test anti-patterns** *(1.3.0-dev.3)* — removed redundant sys.path from 7 files, replaced hardcoded /tmp with tmp_path, converted test_queue.py to native async tests (167 tests total)
 - [x] **T.1 Auth middleware tests** *(1.3.0-dev.1)* — 13 tests in `tests/test_auth.py`: Bearer token, Ingress trust, dev bypass
 - [x] **T.2 Worker API tests** *(1.3.0-dev.1)* — 37 tests in `tests/test_api.py`: registration, heartbeat, scheduling, pinned jobs, result submission
-- [ ] **T.3 UI API tests** (~23) — targets, compile, config CRUD, rename, queue management
-- [ ] **T.4 Extend existing module tests** (~15) — scanner metadata, queue pinning, poller cache
+- [x] **T.3 UI API tests** *(1.3.0-dev.25)* — 36 tests in `tests/test_ui_api.py` covering server-info, targets listing, content GET/POST (+ path traversal rejection), archive/restore/permanent-delete, compile (all/specific/outdated/pinned/invalid), validate, rename, queue listing, retry (specific + all_failed), cancel, clear by state, remove by ID, workers list/set-parallel-jobs (with bounds check)/remove (online refused, offline ok)/clean-cache. `ui_api.py` coverage went from 12% → 50%.
+- [x] **T.4 Extend existing module tests** *(1.3.0-dev.25)* — 12 new scanner tests (`get_device_metadata` for name/friendly_name/area/comment/project/web_server/substitutions; `build_name_to_target_map` for stem fallback, hyphen→underscore normalization, encryption key extraction, use_address overrides, empty-target case) + 11 new queue tests (pinned_client_id semantics + retry preservation, ota_only results, `update_status` status_text, `finished_at` on success/failure/pending). scanner.py 61% → 81%, job_queue.py 74% → 83%.
 
 ## Playwright Browser Tests
 
