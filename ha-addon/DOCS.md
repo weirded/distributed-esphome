@@ -18,7 +18,7 @@ Configuration options (token, timeouts, polling intervals) are available in the 
 
 **Queue** — live job status with build logs. Retry failed jobs, cancel in-progress ones. Entries auto-prune after one hour.
 
-**Workers** — connected build workers with online status, current jobs, system info (CPU, memory, disk), and ESPHome version. Adjust slot count per worker (0 = paused) or remove offline workers.
+**Workers** — connected build workers with online status, current jobs, system info (CPU, memory, disk), and ESPHome version. Adjust slot count per worker (0 = paused), clean per-worker or all build caches, or remove offline workers. Workers running an outdated Docker image are flagged with a clickable "image stale" badge that opens the Connect Worker modal so you can re-run the latest `docker run` command.
 
 ## Troubleshooting
 

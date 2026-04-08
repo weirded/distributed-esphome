@@ -51,13 +51,15 @@ docker run -d \
 
 The web UI is available at `http://your-host:8765`. Use `--network host` for mDNS device discovery.
 
+To test pre-release builds from the `develop` branch, use the `:develop` tag instead of `:latest`. The tag is updated on every push to `develop`.
+
 ## Web UI
 
 Access via the HA sidebar (**ESPH Distributed**) or directly at `http://your-ha-host:8765`.
 
 - **Devices** — all ESPHome configs with online/offline status, firmware version, config-changed indicator, and HA integration status. Compile individual, all, or only outdated devices. Inline Monaco YAML editor with ESPHome schema autocomplete and validation. Rename, delete, restart devices, copy API keys, view live logs. Search/filter, configurable columns, bulk operations.
 - **Queue** — live job status with build logs. Retry failed jobs, cancel in-progress ones. Auto-prunes after one hour.
-- **Workers** — connected build workers with system info (CPU, memory, disk, ESPHome version). Adjust slot count (0 = paused), remove offline workers. **+ Connect Worker** provides a ready-to-run `docker run` command.
+- **Workers** — connected build workers with system info (CPU, memory, disk, ESPHome version). Adjust slot count (0 = paused), clean per-worker or all build caches, remove offline workers. **+ Connect Worker** provides a ready-to-run `docker run` command. Workers running an out-of-date Docker image are flagged with a clickable "image stale" badge.
 
 Dark/light theme toggle in the header.
 
