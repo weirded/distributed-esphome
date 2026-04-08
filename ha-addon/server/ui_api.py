@@ -466,9 +466,18 @@ async def get_clients(request: web.Request) -> web.Response:
 
 @routes.get("/ui/api/devices")
 async def get_devices(request: web.Request) -> web.Response:
-    """Return known ESPHome devices with version info."""
+    """Return known ESPHome devices with version info.
+
+    Enriches every device — managed *and* unmanaged — with HA configured /
+    connected state by cross-referencing the device MAC and name against the
+    HA entity registry snapshot. This lets the UI distinguish "random mDNS
+    broadcast we happened to pick up" from "real ESPHome device HA also
+    knows about, but we don't have its YAML yet" on the unmanaged rows.
+    """
     device_poller = request.app.get("device_poller")
     server_version = get_esphome_version()
+    ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
+    ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
 
     if not device_poller:
         return web.json_response([])
@@ -482,6 +491,20 @@ async def get_devices(request: web.Request) -> web.Response:
             if dev.running_version
             else None
         )
+
+        # Cross-reference against HA. We synthesise a minimal ``meta`` so we
+        # can reuse the same matcher the targets endpoint uses — no
+        # friendly_name, just the raw device name.
+        meta = {"device_name_raw": dev.name}
+        ha_configured, ha_connected = _ha_status_for_target(
+            ha_entity_status,
+            target=dev.name,
+            meta=meta,
+            device_mac=dev.mac_address,
+            ha_mac_set=ha_mac_set,
+        )
+        d["ha_configured"] = ha_configured
+        d["ha_connected"] = ha_connected
         result.append(d)
 
     return web.json_response(result)

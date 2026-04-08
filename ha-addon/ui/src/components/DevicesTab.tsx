@@ -824,8 +824,13 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
     : <StatusDot status="offline" />;
 
   const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>;
+  const sourceLabel = formatAddressSource(d.address_source);
 
-  // Unmanaged devices (no config) don't have web_server info — never link their IP
+  // Unmanaged devices (no config) don't have web_server info — never link their IP.
+  // The IP column still gets the "via mDNS" / "wifi.use_address" / etc. source
+  // label plus an "in HA" marker when Home Assistant confirms the device exists
+  // (MAC or entity match). That lets the user tell a real ESPHome device without
+  // a YAML from a stray mDNS broadcast at a glance.
   return (
     <tr>
       <td></td>
@@ -834,10 +839,28 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
         <div className="device-filename" style={{ color: '#6b7280' }}>No config</div>
       </td>
       {isVisible('status') && <td>{statusEl}</td>}
-      {isVisible('ha') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ha') && (
+        <td style={{ fontSize: 12 }}>
+          {d.ha_configured
+            ? <span style={{ color: 'var(--success)' }}>Yes</span>
+            : dash}
+        </td>
+      )}
       {isVisible('ip') && (
         <td style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
           <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
+          {(sourceLabel || d.ha_configured) && (
+            <div
+              style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
+              title={
+                d.ha_configured
+                  ? `Address source: ${d.address_source ?? 'unknown'} · Home Assistant confirms this device exists`
+                  : `Address source: ${d.address_source ?? 'unknown'}`
+              }
+            >
+              {[sourceLabel, d.ha_configured ? 'in HA' : null].filter(Boolean).join(' · ')}
+            </div>
+          )}
         </td>
       )}
       {isVisible('running') && <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>}

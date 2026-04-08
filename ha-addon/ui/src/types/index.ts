@@ -40,10 +40,11 @@ export interface Target {
 
 export interface Device {
   name: string;
+  mac_address?: string;
   ip_address?: string;
   running_version?: string;
   online?: boolean;
-  compile_target?: string;
+  compile_target?: string | null;
   last_seen?: string;
   compilation_time?: number;
   /**
@@ -54,6 +55,20 @@ export interface Device {
    * how each device's address was determined.
    */
   address_source?: string | null;
+  /**
+   * True when Home Assistant confirms this device exists (MAC in the HA
+   * ESPHome-device MAC set, or a matching entity in the HA registry).
+   * Populated for both managed and unmanaged devices — particularly
+   * useful on unmanaged rows to distinguish "random mDNS broadcast" from
+   * "real ESPHome device we don't have YAML for yet".
+   */
+  ha_configured?: boolean;
+  /**
+   * HA-reported connectivity: true if the device is currently reachable
+   * via HA, false if not, null if HA doesn't expose a status entity for it.
+   * Only meaningful when ha_configured is true.
+   */
+  ha_connected?: boolean | null;
 }
 
 export interface SystemInfo {
