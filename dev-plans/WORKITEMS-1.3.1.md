@@ -57,9 +57,18 @@ Do this **last**, after A–C land, so the file reflects reality.
 - [ ] **D.4 Clarify Project Tracking** — define "turn" for `bump-dev.sh`, state explicitly that bug numbers are global/monotonic across releases, state when to create the next `WORKITEMS-X.Y+1.md`.
 - [ ] **D.5 `scripts/check-invariants.sh`** — small grep-based linter for the enforced invariants. Wire into the CI `ruff` job. This is what makes Enforced Invariants actually enforced — without it, D.2 decays.
 
-## Open Bugs
+## Bug Fixes & Small Improvements
 
-(none yet — this release starts clean)
+Numbered locally for this release. Where a GitHub issue exists, it's linked. Items without a number link were found internally or via review.
+
+- [ ] **1** ([#25](https://github.com/weirded/distributed-esphome/issues/25)) — UI doesn't load on HAOS w/ 1.3.0. Two real bugs combined: (a) `on_startup` blocked for up to 25s on `_fetch_ha_esphome_version` + `_fetch_pypi_versions` before the listener accepted connections → HA Ingress saw connection refused → 502; (b) `ha_entity_poller` only set `first_poll = False` on the success path, so any exception or non-200 `continue` skipped the 30s sleep and spun in a tight retry loop, hammering the event loop. Fix in PR #26 (Copilot agent): move Supervisor + PyPI calls into the existing `pypi_version_refresher` background task with run-immediately-then-sleep semantics, and add a `finally: first_poll = False` clause to the poller.
+- [ ] **2** ([#27](https://github.com/weirded/distributed-esphome/issues/27)) — Devices tab: divider line between the last managed row and the first unmanaged row disappears when "show unmanaged" is toggled. Caused by `tr:last-child td { border-bottom: none }` in `theme.css` interacting with the conditionally-rendered unmanaged rows. Fix: drop the rule entirely — the table header already has a matching `border-bottom`, so a bottom border on the last row is consistent and removes a whole class of "last-child border" surprises.
+
+## Followup hardening (no GH issue, surfaced by #25 triage)
+
+- [ ] **3** — `auth_middleware` (main.py:51–84): log a structured reason on every 401 so we can actually diagnose Ingress vs token vs peer-IP rejections. Also folded into Workstream C.2.
+- [ ] **4** — `_fetch_ha_esphome_version` (main.py:318): discover the ESPHome add-on slug via `GET /addons` instead of hard-coding `("5c53de3b_esphome", "core_esphome", "local_esphome")`. Davidcoulson's install used a hashed slug; the current loop is a footgun for any user with a custom install path.
+- [ ] **5** — Demote repeated identical `ha_entity_poller` warnings to DEBUG after the second occurrence in a row, so a persistent failure doesn't drown the logs and mask other problems.
 
 ---
 

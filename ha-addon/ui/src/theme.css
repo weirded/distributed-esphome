@@ -158,7 +158,6 @@ td {
   vertical-align: middle;
 }
 
-tr:last-child td { border-bottom: none; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface2); }
 
