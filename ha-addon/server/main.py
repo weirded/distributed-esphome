@@ -284,6 +284,11 @@ async def ha_entity_poller(app: web.Application) -> None:
 
         except Exception:
             logger.warning("Error polling HA entity status", exc_info=True)
+        finally:
+            # Always clear first_poll so subsequent retries sleep 30s,
+            # even when the first attempt fails with an exception or a
+            # non-200 status (which uses `continue` to restart the loop).
+            first_poll = False
 
 
 async def config_scanner(app: web.Application) -> None:
@@ -370,11 +375,22 @@ async def _fetch_pypi_versions(session: aiohttp.ClientSession, limit: int = 50) 
 
 
 async def pypi_version_refresher(app: web.Application) -> None:
-    """Background task: refresh PyPI versions hourly and re-check HA ESPHome add-on every 5 min."""
+    """Background task: refresh PyPI versions hourly and re-check HA ESPHome add-on every 30s.
+
+    Runs immediately on first iteration so that the HA Supervisor version and
+    the PyPI version list are populated shortly after startup, without blocking
+    the server startup path.
+    """
     check_interval = 30   # check HA add-on version every 30 seconds
     pypi_countdown = 0    # fetch PyPI immediately on first loop
+    first_run = True
     while True:
-        await asyncio.sleep(check_interval)
+        # Run immediately on first iteration, then every 30s.
+        # first_run is set to False before the try block so that a failure on
+        # the first attempt still causes subsequent attempts to sleep.
+        if not first_run:
+            await asyncio.sleep(check_interval)
+        first_run = False
         try:
             async with aiohttp.ClientSession() as session:
                 # Re-check HA ESPHome add-on version
@@ -484,25 +500,22 @@ def create_app() -> web.Application:
         logger.info("Config dir: %s", cfg.config_dir)
         logger.info("Token configured: %s", bool(cfg.token))
 
-        # Detect ESPHome version: HA add-on → installed package → "unknown"
+        # Use the locally installed ESPHome package version as the initial
+        # active version.  The pypi_version_refresher background task will
+        # contact the HA Supervisor API shortly after startup and update the
+        # version if it detects a different version in the ESPHome add-on.
+        # Doing this at startup (instead of blocking on the Supervisor API
+        # here) avoids a 10–15 s startup delay when the Supervisor is slow
+        # or the hassio_api permission is not yet granted, which previously
+        # caused the web server to refuse connections during that window.
         from scanner import (  # noqa: PLC0415
             scan_configs, build_name_to_target_map,
             set_esphome_version, _get_installed_esphome_version,
         )
 
-        async with aiohttp.ClientSession() as session:
-            detected = await _fetch_ha_esphome_version(session)
-            available = await _fetch_pypi_versions(session)
-
-        app["esphome_detected_version"] = detected
-        if available:
-            app["esphome_available_versions"] = available
-            app["esphome_versions_fetched_at"] = time.monotonic()
-
-        # Select initial version: HA detected → installed package → "unknown"
-        selected = detected or _get_installed_esphome_version()
+        selected = _get_installed_esphome_version()
         set_esphome_version(selected)
-        logger.info("Active ESPHome version: %s (detected: %s)", selected, detected)
+        logger.info("Active ESPHome version: %s (background task will refine from HA Supervisor)", selected)
 
         # Update device poller with known targets
         targets = scan_configs(cfg.config_dir)
