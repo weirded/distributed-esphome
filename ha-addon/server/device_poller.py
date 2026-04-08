@@ -405,7 +405,16 @@ class DevicePoller:
     # ------------------------------------------------------------------
 
     def _load_cache(self) -> None:
-        """Populate _devices from last-known state so UI has data before mDNS fires."""
+        """Populate _devices from last-known state so UI has data before mDNS fires.
+
+        Only the STABLE bits are cached: running_version, compilation_time,
+        mac_address. The IP address and address_source are deliberately NOT
+        cached because they can change between restarts (DHCP lease renewal,
+        WiFi reconfiguration, etc.). Stale cached IPs would point at the
+        wrong device. Both are repopulated by update_compile_targets at
+        startup (from the YAML's get_device_address) and then overridden
+        by mDNS discovery as devices come back online (#187).
+        """
         try:
             if not DEVICE_CACHE_FILE.exists():
                 return
@@ -414,23 +423,27 @@ class DevicePoller:
                 compile_target = self._map_target(name)
                 self._devices[name] = Device(
                     name=name,
-                    ip_address=info.get("ip_address", ""),
+                    ip_address="",  # NOT from cache — see docstring
                     online=False,  # unknown until mDNS confirms
                     running_version=info.get("running_version"),
                     compilation_time=info.get("compilation_time"),
                     compile_target=compile_target,
                     mac_address=info.get("mac_address"),
+                    # address_source intentionally not cached
                 )
             logger.info("Loaded %d devices from cache", len(data))
         except Exception:
             logger.debug("Failed to load device cache", exc_info=True)
 
     def _save_cache(self) -> None:
-        """Persist current device IPs and versions to disk."""
+        """Persist current device versions and MAC addresses to disk.
+
+        Does NOT persist ip_address or address_source — see _load_cache
+        docstring for why.
+        """
         try:
             data = {
                 name: {
-                    "ip_address": dev.ip_address,
                     "running_version": dev.running_version,
                     "compilation_time": dev.compilation_time,
                     "mac_address": dev.mac_address,
@@ -502,10 +515,15 @@ class DevicePoller:
                 logger.debug("Created device %s from address %s (%s, no mDNS yet)",
                              device_name, addr, source)
             else:
-                # Update IP from address override if not already set from mDNS
                 dev = self._devices[existing_key]
+                # Update IP from address override if not already set from mDNS
                 if not dev.ip_address:
                     dev.ip_address = addr
+                # ALWAYS fill in the address source if it's missing — this
+                # covers cached devices loaded from /data/device_cache.json
+                # (which were saved before address_source was a field) where
+                # the IP is already populated but the source is None (#187).
+                if dev.address_source is None and source:
                     dev.address_source = source
 
     @staticmethod

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -433,3 +434,111 @@ def test_update_compile_targets_does_not_duplicate_when_yaml_and_mdns_both_prese
     assert existing == "my-thread"
     # Only one row total
     assert len([k for k in poller._devices if k in ("my-thread", "my_thread")]) == 1
+
+
+# ---------------------------------------------------------------------------
+# bug #187 — cached devices missing address_source
+# ---------------------------------------------------------------------------
+
+def test_update_compile_targets_fills_missing_address_source_on_existing_device(poller):
+    """A device loaded from cache before address_source existed has IP but no
+    source. update_compile_targets should backfill the source from the YAML
+    side, even though the IP is already populated."""
+    # Simulate a device loaded from a pre-LIB.0 cache: IP set, no source
+    poller._devices["my-device"] = Device(
+        name="my-device",
+        ip_address="192.168.1.42",  # already set, e.g. from cache
+        address_source=None,  # missing — this is the bug
+    )
+
+    poller.update_compile_targets(
+        ["my-device.yaml"],
+        name_to_target={"my-device": "my-device.yaml", "my-device.yaml": "my-device.yaml"},
+        address_overrides={"my-device": "192.168.1.42"},
+        address_sources={"my-device": "wifi_use_address"},
+    )
+
+    dev = poller._devices["my-device"]
+    # IP is unchanged (already set)
+    assert dev.ip_address == "192.168.1.42"
+    # Source is now backfilled from the YAML
+    assert dev.address_source == "wifi_use_address"
+
+
+def test_update_compile_targets_does_not_overwrite_existing_address_source(poller):
+    """If a device already has an address_source (e.g. from mDNS), don't
+    clobber it with the YAML default. Explicit user choices stay authoritative
+    in the other direction (mDNS handler), and pre-existing values stay too."""
+    poller._devices["my-device"] = Device(
+        name="my-device",
+        ip_address="192.168.1.42",
+        address_source="mdns",  # already set
+    )
+
+    poller.update_compile_targets(
+        ["my-device.yaml"],
+        name_to_target={"my-device": "my-device.yaml", "my-device.yaml": "my-device.yaml"},
+        address_overrides={"my-device": "my-device.local"},
+        address_sources={"my-device": "mdns_default"},
+    )
+
+    # The pre-existing "mdns" source should be preserved
+    assert poller._devices["my-device"].address_source == "mdns"
+
+
+def test_cache_does_not_persist_ip_or_address_source(tmp_path, monkeypatch):
+    """Cache must not persist ip_address or address_source — DHCP IPs go stale
+    between restarts. Only running_version, compilation_time, and mac_address
+    are stable enough to cache (#187)."""
+    import device_poller as dp
+    cache_file = tmp_path / "device_cache.json"
+    monkeypatch.setattr(dp, "DEVICE_CACHE_FILE", cache_file)
+
+    p = DevicePoller(poll_interval=60)
+    p._devices["dev1"] = Device(
+        name="dev1",
+        ip_address="192.168.1.42",  # would go stale on DHCP renewal
+        running_version="2026.3.2",
+        compilation_time="Mar 29 2026, 17:00:00",
+        mac_address="AA:BB:CC:DD:EE:FF",
+        address_source="mdns",  # also tied to a specific IP
+    )
+    p._save_cache()
+
+    saved = json.loads(cache_file.read_text())
+    assert "dev1" in saved
+    assert saved["dev1"].get("ip_address") is None  # NOT persisted
+    assert saved["dev1"].get("address_source") is None  # NOT persisted
+    # But the stable bits ARE persisted
+    assert saved["dev1"]["running_version"] == "2026.3.2"
+    assert saved["dev1"]["mac_address"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_cache_load_does_not_restore_ip_or_address_source(tmp_path, monkeypatch):
+    """Loading cached devices must leave ip_address blank and address_source
+    None — both will be repopulated by update_compile_targets and mDNS (#187)."""
+    import device_poller as dp
+    cache_file = tmp_path / "device_cache.json"
+    # Simulate an OLD cache that had IP and address_source persisted
+    cache_file.write_text(json.dumps({
+        "dev1": {
+            "ip_address": "192.168.1.42",  # might be stale
+            "address_source": "mdns",
+            "running_version": "2026.3.2",
+            "compilation_time": "Mar 29 2026, 17:00:00",
+            "mac_address": "AA:BB:CC:DD:EE:FF",
+        }
+    }))
+    monkeypatch.setattr(dp, "DEVICE_CACHE_FILE", cache_file)
+
+    p = DevicePoller(poll_interval=60)
+    # Load explicitly (constructor already called once on the empty path)
+    p._load_cache()
+
+    dev = p._devices["dev1"]
+    # IP and source NOT restored — start fresh, get repopulated by YAML/mDNS
+    assert dev.ip_address == ""
+    assert dev.address_source is None
+    # Stable bits ARE restored
+    assert dev.running_version == "2026.3.2"
+    assert dev.mac_address == "AA:BB:CC:DD:EE:FF"
