@@ -25,6 +25,7 @@ jobs:
             pytest pytest-asyncio pytest-cov \
             aiohttp aioesphomeapi zeroconf \
             requests psutil \
+            esphome \
             mypy types-requests types-PyYAML \
             ruff
 
