@@ -166,6 +166,20 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         "project_name": None,
         "project_version": None,
         "has_web_server": False,
+        # #14: detected from the YAML so the UI can gray out the Restart menu
+        # item before the user clicks it (rather than letting a click hit the
+        # endpoint and fail with "no restart button"). True iff the resolved
+        # config has a ``button:`` entry with ``platform: restart``.
+        "has_restart_button": False,
+        # Network facts surfaced in the Devices tab via toggleable columns (#10).
+        # network_type is the first matching connectivity block (wifi → ethernet
+        # → openthread); the other three are independent yes/no flags derived
+        # from the same block plus the top-level network: component.
+        "network_type": None,        # 'wifi' | 'ethernet' | 'thread' | None — primary
+        "network_static_ip": False,  # any block has manual_ip.static_ip
+        "network_ipv6": False,       # top-level network.enable_ipv6 is true
+        "network_ap_fallback": False,  # wifi.ap block configured
+        "network_matter": False,     # matter: block present OR openthread: present
     }
     config = _resolve_esphome_config(config_dir, target)
     if config is not None:
@@ -210,6 +224,65 @@ def _extract_metadata(config: dict, result: dict) -> None:
     # Detect presence of the web_server component
     if config.get("web_server") is not None:
         result["has_web_server"] = True
+
+    # #14: detect a `button: - platform: restart` entry in the resolved config.
+    # ESPHome's button component is a list — scan all entries.
+    button_block = config.get("button")
+    if isinstance(button_block, list):
+        for entry in button_block:
+            if isinstance(entry, dict) and entry.get("platform") == "restart":
+                result["has_restart_button"] = True
+                break
+
+    # Network type detection (#10). Track each block independently — a matter
+    # device often has BOTH wifi (from a common include) AND openthread (the
+    # actual network it uses). Picking the "first match wins" by literal block
+    # order gives the wrong answer for matter-test.yaml (#13). Precedence for
+    # the *primary* type label: openthread > ethernet > wifi, because more
+    # specific signals beat the lowest-common-denominator wifi.
+    blocks = {
+        "wifi": isinstance(config.get("wifi"), dict),
+        "ethernet": isinstance(config.get("ethernet"), dict),
+        "openthread": isinstance(config.get("openthread"), dict),
+    }
+    if blocks["openthread"]:
+        result["network_type"] = "thread"
+    elif blocks["ethernet"]:
+        result["network_type"] = "ethernet"
+    elif blocks["wifi"]:
+        result["network_type"] = "wifi"
+
+    # Static-IP detection: scan ALL present blocks; any one with
+    # manual_ip.static_ip flips the flag (a multi-block config might be
+    # static on one and DHCP on another — surfacing "static" in that case
+    # is the safer signal for the user).
+    for name in ("wifi", "ethernet", "openthread"):
+        if not blocks[name]:
+            continue
+        block = config.get(name)
+        manual_ip = block.get("manual_ip") if isinstance(block, dict) else None
+        if isinstance(manual_ip, dict) and manual_ip.get("static_ip"):
+            result["network_static_ip"] = True
+            break
+
+    # AP fallback is wifi-only.
+    wifi_block = config.get("wifi") if blocks["wifi"] else None
+    if isinstance(wifi_block, dict) and isinstance(wifi_block.get("ap"), dict):
+        result["network_ap_fallback"] = True
+
+    # IPv6: top-level network: component with enable_ipv6: true. ESPHome
+    # exposes this as a config-time flag; runtime IPv6 capability is implied
+    # by the chip + network stack but the YAML toggle is the user's choice.
+    network_block = config.get("network")
+    if isinstance(network_block, dict) and network_block.get("enable_ipv6") is True:
+        result["network_ipv6"] = True
+
+    # Matter detection (#13). ESPHome 2024+ has an experimental ``matter:``
+    # top-level component. The ``openthread:`` component, in ESPHome's data
+    # model, only exists in the context of Matter support — there's no
+    # "Thread without Matter" path. So either signal flips the flag.
+    if isinstance(config.get("matter"), dict) or blocks["openthread"]:
+        result["network_matter"] = True
 
 
 def _is_literal(value: str) -> bool:

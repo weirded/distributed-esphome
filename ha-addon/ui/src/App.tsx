@@ -27,6 +27,7 @@ import {
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
 import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
+import { UpgradeModal } from './components/UpgradeModal';
 import { EditorModal } from './components/EditorModal';
 import { EsphomeVersionDropdown } from './components/EsphomeVersionDropdown';
 import { LogModal } from './components/LogModal';
@@ -142,6 +143,8 @@ export default function App() {
   const [editorTarget, setEditorTarget] = useState<string | null>(null);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [connectModalPreset, setConnectModalPreset] = useState<import('./types').WorkerPreset | null>(null);
+  // #16: per-target Upgrade modal. Stores the target filename + display name.
+  const [upgradeModalTarget, setUpgradeModalTarget] = useState<{ target: string; displayName: string } | null>(null);
   const [renameModalTarget, setRenameModalTarget] = useState<string | null>(null);
 
   // Apply theme to <html> element on mount and on change
@@ -188,19 +191,39 @@ export default function App() {
       const data = await compile(targets_);
       addToast(`Queued ${data.enqueued} device(s)`, 'success');
       switchTab('queue');
+      // Mutate BOTH queue and devices: queue so the new job appears on the
+      // queue tab immediately, devices so the orange "Upgrading" dot
+      // appears on the source row immediately (#11). Without the devices
+      // mutate the dot lags by up to one poll interval.
       mutateQueue();
+      mutateDevices();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
   }
 
-  async function handleCompileOnWorker(target: string, clientId: string) {
+  // #16: open the Upgrade modal for a single target. The modal collects
+  // worker + ESPHome version preferences and calls handleUpgradeConfirm.
+  function handleOpenUpgradeModal(target: string) {
+    const t = targets.find(x => x.target === target);
+    const displayName = t?.friendly_name || stripYaml(target);
+    setUpgradeModalTarget({ target, displayName });
+  }
+
+  async function handleUpgradeConfirm(params: { pinnedClientId: string | null; esphomeVersion: string | null }) {
+    const ctx = upgradeModalTarget;
+    if (!ctx) return;
+    setUpgradeModalTarget(null);
     try {
-      await compile([target], clientId);
-      const workerName = workers.find(w => w.client_id === clientId)?.hostname || clientId;
-      addToast(`Queued ${stripYaml(target)} on ${workerName}`, 'success');
+      await compile([ctx.target], params.pinnedClientId ?? undefined, params.esphomeVersion ?? undefined);
+      const versionSuffix = params.esphomeVersion ? ` (ESPHome ${params.esphomeVersion})` : '';
+      const workerSuffix = params.pinnedClientId
+        ? ` on ${workers.find(w => w.client_id === params.pinnedClientId)?.hostname ?? params.pinnedClientId}`
+        : '';
+      addToast(`Queued ${ctx.displayName}${workerSuffix}${versionSuffix}`, 'success');
       switchTab('queue');
       mutateQueue();
+      mutateDevices();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -302,6 +325,9 @@ export default function App() {
       await cleanWorkerCache(id);
       const workerName = workers.find(w => w.client_id === id)?.hostname || id;
       addToast(`Clean build cache requested for ${workerName}`, 'success');
+      // #11: mutate so the worker's pending_clean flag shows in the UI
+      // immediately rather than after the next 1Hz tick.
+      mutateWorkers();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -313,6 +339,7 @@ export default function App() {
     try {
       await Promise.all(onlineWorkers.map(w => cleanWorkerCache(w.client_id)));
       addToast(`Clean build cache requested for ${onlineWorkers.length} worker${onlineWorkers.length > 1 ? 's' : ''}`, 'success');
+      mutateWorkers();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -449,7 +476,7 @@ export default function App() {
             streamerMode={streamerMode}
             activeJobsByTarget={activeJobsByTarget}
             onCompile={handleCompile}
-            onCompileOnWorker={handleCompileOnWorker}
+            onUpgradeOne={handleOpenUpgradeModal}
             onEdit={setEditorTarget}
             onLogs={setDeviceLogTarget}
             onToast={addToast}
@@ -525,6 +552,18 @@ export default function App() {
           esphomeVersion={seedVersion}
           preset={connectModalPreset}
           onClose={() => { setConnectModalOpen(false); setConnectModalPreset(null); }}
+        />
+      )}
+
+      {upgradeModalTarget && (
+        <UpgradeModal
+          target={upgradeModalTarget.target}
+          displayName={upgradeModalTarget.displayName}
+          workers={workers}
+          esphomeVersions={esphomeVersions.available}
+          defaultEsphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? null}
+          onConfirm={handleUpgradeConfirm}
+          onClose={() => setUpgradeModalTarget(null)}
         />
       )}
 

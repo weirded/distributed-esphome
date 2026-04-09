@@ -84,10 +84,18 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
     // the new one we're about to create
     const before = await latestJobIdFor(request, TARGET_FILENAME);
 
-    // Click the row's Upgrade button
+    // Click the row's Upgrade button — opens the UpgradeModal (#16). The
+    // modal lets the user pick a worker + ESPHome version; we accept the
+    // defaults and click the modal's Upgrade button to actually enqueue.
     const upgradeBtn = targetRow.getByRole('button', { name: /^upgrade$/i });
     await expect(upgradeBtn).toBeVisible();
     await upgradeBtn.click();
+
+    // Modal is open — find the confirm button (the second "Upgrade" button on
+    // the page, since the row's button is still in the DOM behind the modal).
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 5_000 });
+    await dialog.getByRole('button', { name: /^upgrade$/i }).click();
 
     // Wait for a NEW job (different ID) to appear via the API — source of truth
     await expect.poll(
@@ -158,6 +166,70 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
       finalJob!.ota_result,
       `OTA result: ${finalJob!.ota_result}`,
     ).toBe('success');
+  });
+
+  test('editor opens, shows YAML, edits comment, saves, persists', async ({ page, request }) => {
+    // Regression for #15 — the editor stuck on a loading state because the
+    // E.9 CSP blocked Monaco's CDN load. Rather than just verifying it
+    // opens, we round-trip a real edit through the save endpoint and
+    // confirm the new content survives a reopen.
+    test.setTimeout(60_000);
+
+    await page.goto('/');
+    const targetRow = await findTargetRow(page);
+    await expect(targetRow).toBeVisible({ timeout: 30_000 });
+
+    // Click the row's Edit button
+    await targetRow.getByRole('button', { name: /^edit$/i }).click();
+
+    // Monaco container appears…
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 15_000 });
+    // …and actually rendered text (regression guard for the empty-loader
+    // failure mode where the div appears but Monaco never finished loading).
+    const firstViewLine = page.locator('.monaco-editor .view-line').first();
+    await expect(firstViewLine).toContainText(/esphome|wifi|api|substitutions/, { timeout: 15_000 });
+
+    // Read the original content via the API so we can edit it precisely
+    // (Monaco-driven keyboard input is fragile across platforms).
+    const beforeResp = await request.get(`./ui/api/targets/${TARGET_FILENAME}/content`);
+    expect(beforeResp.ok()).toBeTruthy();
+    const before = (await beforeResp.json() as { content: string }).content;
+
+    // Stamp a marker into the comment line so the test is idempotent and
+    // visible after the fact. Replace any prior marker to keep the file tidy.
+    const marker = `e2e-test-marker-${Date.now()}`;
+    let edited: string;
+    if (/comment:\s*(['"])?[^\n]*\1?/.test(before)) {
+      edited = before.replace(
+        /comment:\s*(['"])?[^\n]*\1?/,
+        `comment: "${marker}"`,
+      );
+    } else {
+      // No comment field — append one under the esphome: block
+      edited = before.replace(/(esphome:\s*\n)/, `$1  comment: "${marker}"\n`);
+    }
+    expect(edited).not.toBe(before);
+
+    // Save via the API directly (deterministic; doesn't rely on Save button
+    // wiring or toast timing).
+    const saveResp = await request.post(`./ui/api/targets/${TARGET_FILENAME}/content`, {
+      data: { content: edited },
+    });
+    expect(saveResp.ok(), 'save endpoint should accept the edit').toBeTruthy();
+
+    // Reopen the editor and verify the marker shows up.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await targetRow.getByRole('button', { name: /^edit$/i }).click();
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 15_000 });
+    // Wait for any view-line containing the marker. Monaco may not have
+    // scrolled it into view, so search across all lines.
+    await expect.poll(
+      async () => (await page.locator('.monaco-editor').first().textContent()) ?? '',
+      { timeout: 10_000, message: 'edited marker should be in the editor after reopen' },
+    ).toContain(marker);
+
+    await page.keyboard.press('Escape');
   });
 
   test('live device logs stream from cyd-office-info', async ({ page }) => {

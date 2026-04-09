@@ -121,6 +121,7 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 These aren't grep-checkable but matter just as much. They're how the codebase stays coherent.
 
+- **Disable, don't fail.** When a feature isn't available for a target/worker/job (no restart button in YAML, no API key, worker offline, etc.), render the button or menu item **disabled with an explanatory tooltip** rather than letting the user click it and watch it fail. The tooltip should tell them what's missing and ideally how to fix it. Detect availability up-front from data we already have (YAML metadata, registry state) — don't probe by trying. **Exception: the Upgrade button is always enabled** regardless of device state, because compiling for a target is meaningful even if the device is offline (the firmware is still produced and OTA-pending). Origin: bug #14 — Restart was always clickable but silently no-op'd for devices whose YAML had no restart button.
 - **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, selects) uses the shadcn wrappers in `components/ui/`. Don't hand-roll components that already exist there. If shadcn doesn't have it yet, add a thin wrapper (see `components/ui/input.tsx`, `components/ui/select.tsx`).
 - **Use library components as intended.** Prefer composition over override. Adjust layout to accommodate library behavior rather than stripping features.
 - **Server state in SWR, UI state in React.** SWR is the cache — read from it, don't copy it into `useState`.

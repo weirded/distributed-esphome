@@ -6,7 +6,8 @@ Roadmap and bug tracking for distributed-esphome, organized by release.
 
 - **[WORKITEMS-1.3.1.md](WORKITEMS-1.3.1.md)** — **Current release.** Hardening point release between 1.3 and 1.4: typed server↔worker contracts, targeted regression tests, fragility fixes, CLAUDE.md rewrite
 - **[WORKITEMS-1.4.md](WORKITEMS-1.4.md)** — Planned: ESPHome Dashboard parity (create device, firmware download, web serial)
-- **[WORKITEMS-1.5.md](WORKITEMS-1.5.md)** — Planned: Power-user features (file tree editor, AI/LLM, config diff)
+- **[WORKITEMS-1.5.md](WORKITEMS-1.5.md)** — Planned: Power-user features (file tree editor, config diff)
+- **[WORKITEMS-1.6.md](WORKITEMS-1.6.md)** — Planned: LLM-powered assistance (AI editor, release breaking-change analyzer)
 - **[WORKITEMS-future.md](WORKITEMS-future.md)** — Backlog without committed scope
 - **[SECURITY_AUDIT.md](SECURITY_AUDIT.md)** — Security audit findings (refer when making security-relevant changes)
 - **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)** — Step-by-step release process

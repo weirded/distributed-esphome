@@ -84,12 +84,24 @@ export async function getQueue(): Promise<Job[]> {
   return r.json();
 }
 
+/**
+ * Trigger a compile run.
+ *
+ * @param targets       'all', 'outdated', or an explicit list of YAML filenames
+ * @param pinnedClientId optional — pin every job to one specific worker
+ * @param esphomeVersion optional — override the global default ESPHome version
+ *                        for this run only (#16). The server does NOT mutate
+ *                        the global default; it just stamps the version onto
+ *                        the enqueued jobs.
+ */
 export async function compile(
   targets: string[] | 'all' | 'outdated',
   pinnedClientId?: string,
+  esphomeVersion?: string,
 ): Promise<{ enqueued: number }> {
   const body: Record<string, unknown> = { targets };
   if (pinnedClientId) body.pinned_client_id = pinnedClientId;
+  if (esphomeVersion) body.esphome_version = esphomeVersion;
   const r = await apiFetch('./ui/api/compile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

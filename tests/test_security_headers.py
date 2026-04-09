@@ -64,6 +64,9 @@ async def test_ui_api_response_carries_all_security_headers():
         assert "frame-ancestors 'self'" in csp
         assert "https://schema.esphome.io" in csp
         assert "wss:" in csp
+        # @monaco-editor/react loads from jsDelivr by default — must be allowed
+        # in script-src and connect-src or the editor breaks (regression #15).
+        assert "https://cdn.jsdelivr.net" in csp
         # Common attribute checks
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
         assert resp.headers["Referrer-Policy"] == "no-referrer"

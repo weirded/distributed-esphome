@@ -384,6 +384,21 @@ async def submit_job_result(request: web.Request) -> web.Response:
     if not ok:
         return _protocol_error("job_not_found_or_wrong_state", status=404)
 
+    # #11: trigger an immediate device-info refresh after a successful OTA so
+    # the UI sees the new running_version + compilation_time within ~1s
+    # instead of waiting up to one device_poller cycle (default 60s). Skip on
+    # failures and on validate-only jobs (which don't change the device).
+    if msg.status == "success" and msg.ota_result == "success" and job is not None:
+        device_poller = request.app.get("device_poller")
+        if device_poller is not None:
+            try:
+                # Don't block the response on the device-info round-trip;
+                # fire-and-forget on the event loop.
+                import asyncio  # noqa: PLC0415
+                asyncio.create_task(device_poller.refresh_target(job.target))
+            except Exception:
+                logger.exception("Failed to schedule post-OTA device refresh for %s", job.target)
+
     return web.json_response(OkResponse().model_dump())
 
 

@@ -33,7 +33,7 @@ import {
 } from './ui/dialog';
 
 /* ---- Column configuration ---- */
-type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project';
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipmode' | 'ipv6' | 'ap';
 
 interface OptionalColumnDef {
   id: OptionalColumnId;
@@ -45,7 +45,11 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'ha', label: 'HA', defaultVisible: true },
   { id: 'ip', label: 'IP', defaultVisible: true },
+  { id: 'net', label: 'Net', defaultVisible: true },
   { id: 'running', label: 'Version', defaultVisible: true },
+  { id: 'ipmode', label: 'IP Mode', defaultVisible: false },
+  { id: 'ipv6', label: 'IPv6', defaultVisible: false },
+  { id: 'ap', label: 'AP', defaultVisible: false },
   { id: 'area', label: 'Area', defaultVisible: false },
   { id: 'comment', label: 'Comment', defaultVisible: false },
   { id: 'project', label: 'Project', defaultVisible: false },
@@ -82,7 +86,13 @@ interface Props {
    */
   activeJobsByTarget: Map<string, Job>;
   onCompile: (targets: string[] | 'all' | 'outdated') => void;
-  onCompileOnWorker: (target: string, clientId: string) => void;
+  /**
+   * Per-row click handler for the Upgrade button (#16). Opens the
+   * UpgradeModal which collects worker + ESPHome version preferences. The
+   * onCompile prop is still used for the bulk Upgrade dropdown actions
+   * (Upgrade All, Upgrade Outdated, etc.) — those don't go through the modal.
+   */
+  onUpgradeOne: (target: string) => void;
   onEdit: (target: string) => void;
   onLogs: (target: string) => void;
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
@@ -101,6 +111,20 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
  * Returns null when there's nothing useful to display (no source, or
  * the address is just the {name}.local fallback no one configured).
  */
+/**
+ * Render a short display label for the device's primary network type (#10).
+ * Returns null when the YAML didn't declare any of wifi/ethernet/openthread —
+ * the column shows a dash in that case.
+ */
+function formatNetworkType(t: 'wifi' | 'ethernet' | 'thread' | null | undefined): string | null {
+  switch (t) {
+    case 'wifi': return 'WiFi';
+    case 'ethernet': return 'Eth';
+    case 'thread': return 'Thread';
+    default: return null;
+  }
+}
+
 function formatAddressSource(source: string | null | undefined): string | null {
   switch (source) {
     case 'mdns': return 'via mDNS';
@@ -204,7 +228,7 @@ function DeleteModal({ target, onConfirm, onClose }: {
   );
 }
 
-export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
@@ -412,6 +436,92 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       },
       sortingFn: 'alphanumeric',
     }),
+    // #10 — network type (default-visible). Sorts by primary network then
+    // by ip mode (static before dhcp), so an ascending sort groups
+    // "WiFi · Static" together followed by "WiFi · DHCP", then Ethernet,
+    // then Thread. Tooltip shows all five facts in one line. The "·M"
+    // suffix marks Matter devices (#13).
+    columnHelper.accessor(
+      row => `${row.network_type ?? 'zzz'}-${row.network_static_ip ? '0' : '1'}-${row.network_matter ? '0' : '1'}`,
+      {
+        id: 'net',
+        header: ({ column }) => <SortHeader label="Net" column={column} />,
+        cell: ({ row: { original: t } }) => {
+          const label = formatNetworkType(t.network_type);
+          if (!label) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          const ipMode = t.network_static_ip ? 'Static' : 'DHCP';
+          const facts: string[] = [label, ipMode];
+          if (t.network_ipv6) facts.push('IPv6');
+          if (t.network_ap_fallback) facts.push('AP fallback');
+          if (t.network_matter) facts.push('Matter');
+          const tooltip = facts.join(' · ');
+          return (
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--text)',
+                whiteSpace: 'nowrap',
+              }}
+              title={tooltip}
+            >
+              {label}
+              {t.network_static_ip && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 3 }} title="Static IP">·S</span>
+              )}
+              {t.network_matter && (
+                <span style={{ color: 'var(--accent)', fontSize: 10, marginLeft: 3 }} title="Matter">·M</span>
+              )}
+            </span>
+          );
+        },
+        sortingFn: 'alphanumeric',
+      },
+    ),
+    columnHelper.accessor(
+      row => row.network_type
+        ? (row.network_static_ip ? 'Static' : 'DHCP')
+        : '',
+      {
+        id: 'ipmode',
+        header: ({ column }) => <SortHeader label="IP Mode" column={column} />,
+        cell: ({ row: { original: t } }) => {
+          if (!t.network_type) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          return (
+            <span style={{ fontSize: 12 }}>
+              {t.network_static_ip ? 'Static' : 'DHCP'}
+            </span>
+          );
+        },
+        sortingFn: 'alphanumeric',
+      },
+    ),
+    columnHelper.accessor(row => row.network_ipv6 ? 'yes' : '', {
+      id: 'ipv6',
+      header: ({ column }) => <SortHeader label="IPv6" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span style={{ fontSize: 12 }}>
+          {t.network_ipv6
+            ? <span style={{ color: 'var(--success)' }}>Yes</span>
+            : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(row => row.network_ap_fallback ? 'yes' : '', {
+      id: 'ap',
+      header: ({ column }) => <SortHeader label="AP" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span
+          style={{ fontSize: 12 }}
+          title={t.network_ap_fallback ? 'Fallback access point configured (wifi.ap)' : undefined}
+        >
+          {t.network_ap_fallback
+            ? <span style={{ color: 'var(--success)' }}>Yes</span>
+            : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
     columnHelper.accessor(row => row.running_version || '', {
       id: 'running',
       header: ({ column }) => <SortHeader label="Version" column={column} />,
@@ -482,7 +592,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
               size="sm"
               disabled={inFlight}
               title={upgradeTitle}
-              onClick={() => onCompile([t.target])}
+              onClick={() => onUpgradeOne(t.target)}
             >
               Upgrade
             </Button>
@@ -502,7 +612,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCompile, onCompileOnWorker, onEdit, onLogs, onToast]);
+  ], [workers, onCompile, onUpgradeOne, onEdit, onLogs, onToast]);
 
   const table = useReactTable({
     data: filteredTargets,
@@ -702,13 +812,11 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       {menuTarget && menuPos && (
         <DeviceMenu
           target={menuTarget}
-          workers={workers}
           position={menuPos}
           onToast={onToast}
           onDelete={(t) => { setMenuTarget(null); setMenuPos(null); setDeleteTarget(t); }}
           onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
           onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
-          onCompileOnWorker={(t, w) => { setMenuTarget(null); setMenuPos(null); onCompileOnWorker(t, w); }}
           onClose={() => { setMenuTarget(null); setMenuPos(null); }}
         />
       )}
@@ -734,23 +842,19 @@ function SortHeader({ label, column }: { label: string; column: { getIsSorted: (
 
 function DeviceMenu({
   target: t,
-  workers,
   position,
   onToast,
   onDelete,
   onRename,
   onLogs,
-  onCompileOnWorker,
   onClose,
 }: {
   target: Target;
-  workers: Worker[];
   position: { top: number; left: number };
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string) => void;
   onRename: (target: string) => void;
   onLogs: (target: string) => void;
-  onCompileOnWorker: (target: string, clientId: string) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -778,10 +882,6 @@ function DeviceMenu({
     }
   }
 
-  const onlineWorkers = [...workers]
-    .filter(w => w.online && !w.disabled && (w.max_parallel_jobs ?? 0) > 0)
-    .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
-
   return (
     <>
       {/* Backdrop to close on outside click */}
@@ -805,7 +905,18 @@ function DeviceMenu({
       >
         <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Device</div>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onLogs(t.target)}>Live Logs</button>
-        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={handleRestart}>Restart</button>
+        {/* #14: gray out Restart when the YAML doesn't expose a restart button.
+            We follow the same disabled-with-tooltip pattern as the API Key
+            button below — disabled rather than hidden so the user knows the
+            option exists and what they need to do (add `button: - platform:
+            restart` to the YAML). */}
+        <button
+          className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_restart_button ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`}
+          onClick={handleRestart}
+          title={t.has_restart_button ? undefined : 'No restart button in this device\'s YAML — add `button: [{platform: restart}]` to enable.'}
+        >
+          Restart
+        </button>
         <button className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_api_key ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`} onClick={handleCopyApiKey}>Copy API Key</button>
 
         <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
@@ -814,60 +925,14 @@ function DeviceMenu({
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
 
-        {onlineWorkers.length > 0 && (
-          <>
-            <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
-            <div className="group/sub relative">
-              <div className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-sm cursor-default hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]">
-                Upgrade on...
-                <span className="ml-auto text-xs">&#9666;</span>
-              </div>
-              {/*
-                #31: width + hover-bridge fixes.
-                - Width: drop the fixed min-w-[140px] in favour of `w-max`
-                  (grow to content) bounded by `max-w-[280px]` so a long
-                  hostname wraps inside the menu rather than running off
-                  the viewport. `whitespace-nowrap` on the parent's text
-                  is intentional — only the hostnames wrap.
-                - Hover bridge: previously the popup had marginRight/Left:
-                  4px, leaving a 4px gap between parent and popup. While
-                  the cursor crossed that gap it was outside `.group/sub`,
-                  so `group-hover/sub:visible` un-rendered the popup
-                  before the cursor reached it. Drop the margins entirely
-                  so the popup sits flush with the parent's edge — the
-                  combined hover area is now contiguous.
-              */}
-              <div
-                className="invisible group-hover/sub:visible absolute top-0 w-max max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
-                ref={(el) => {
-                  if (!el) return;
-                  const parent = el.parentElement?.getBoundingClientRect();
-                  if (!parent) return;
-                  // Default: open to the left (right-full)
-                  const spaceLeft = parent.left;
-                  const subWidth = el.offsetWidth || 160;
-                  if (spaceLeft >= subWidth) {
-                    el.style.right = '100%';
-                    el.style.left = 'auto';
-                  } else {
-                    el.style.left = '100%';
-                    el.style.right = 'auto';
-                  }
-                  // Vertical: flip up if it extends below viewport
-                  const rect = el.getBoundingClientRect();
-                  if (rect.bottom > window.innerHeight) {
-                    el.style.top = 'auto';
-                    el.style.bottom = '0';
-                  }
-                }}
-              >
-                {onlineWorkers.map(w => (
-                  <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] text-left break-words" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+        {/*
+          #16: the "Upgrade on..." submenu was removed from the per-row
+          context menu. Worker selection now lives in the UpgradeModal that
+          opens from the row's Upgrade button itself, which also lets the
+          user pick the ESPHome version. The hover-bridge / width work from
+          #31 was on this submenu — that fix lives on in the historical
+          1.3.1 dev cycle but the affected element no longer exists.
+        */}
       </div>
     </>
   );
@@ -918,6 +983,14 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
           )}
         </td>
       )}
+      {/* #10 — Net/IP Mode/IPv6/AP columns. Unmanaged devices have no YAML so
+          we can't know any of this; render dashes. The cell order MUST match
+          the columns array order in the columns memo above:
+            status → ha → ip → net → ipmode → ipv6 → ap → running → area → comment → project */}
+      {isVisible('net') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ipmode') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ipv6') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ap') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('running') && <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>}
       {isVisible('area') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('comment') && <td style={{ fontSize: 12 }}>{dash}</td>}

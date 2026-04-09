@@ -24,8 +24,17 @@ async function openEditor(page: import('@playwright/test').Page) {
 
 test('clicking Edit opens the editor modal with Monaco', async ({ page }) => {
   await openEditor(page);
-  // Editor body should contain the fixture YAML content
+  // Editor body should contain the fixture YAML content. The .monaco-editor
+  // div being visible isn't enough — Monaco can fail to load and leave an
+  // empty container. Assert the YAML text is actually rendered. Regression
+  // guard for #15 where the CSP from E.9 blocked Monaco's CDN load and the
+  // editor showed an empty loading state forever.
   await expect(page.locator('.monaco-editor').first()).toBeVisible();
+  // The fixture configContent in fixtures.ts starts with "esphome:".
+  // Monaco renders text into spans inside .view-line elements.
+  await expect(
+    page.locator('.monaco-editor .view-line').first(),
+  ).toContainText(/esphome|wifi|api/, { timeout: 10_000 });
 });
 
 test('editor modal has Save, Validate, and Save & Upgrade buttons', async ({ page }) => {

@@ -34,8 +34,33 @@ export interface Target {
   server_version?: string;
   has_api_key?: boolean;
   has_web_server?: boolean;
+  /**
+   * #14: true if the resolved YAML has a ``button: - platform: restart``
+   * entry. Used to gray out the Restart menu item when no such button
+   * exists, instead of letting the click fail.
+   */
+  has_restart_button?: boolean;
   ha_configured?: boolean;
   ha_connected?: boolean | null;
+  /**
+   * Primary network connectivity block (#10). Mirrors ESPHome's own
+   * resolver precedence: wifi → ethernet → openthread. Null when none of
+   * the three blocks is present in the resolved config.
+   */
+  network_type?: 'wifi' | 'ethernet' | 'thread' | null;
+  /** Any of the connectivity blocks declared a manual_ip.static_ip. */
+  network_static_ip?: boolean;
+  /** Top-level ``network: {enable_ipv6: true}`` in the resolved config. */
+  network_ipv6?: boolean;
+  /** wifi.ap fallback access point configured. */
+  network_ap_fallback?: boolean;
+  /**
+   * True when the device participates in Matter — either an explicit
+   * top-level ``matter:`` block, or an ``openthread:`` block (ESPHome's
+   * openthread component only exists for Matter support, so the latter
+   * is treated as a Matter signal too).
+   */
+  network_matter?: boolean;
 }
 
 export interface Device {

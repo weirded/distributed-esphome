@@ -63,13 +63,20 @@ async def version_header_middleware(request: web.Request, handler):
 # - worker-src 'self' blob: covers Monaco's editor worker.
 # - frame-ancestors 'self' enforces clickjacking protection without breaking
 #   HA Ingress (which loads us in an iframe served from the same origin).
+# NOTE: ``cdn.jsdelivr.net`` is allowed in script-src + connect-src because
+# the @monaco-editor/react wrapper loads Monaco's runtime from jsDelivr by
+# default. Bundling Monaco locally (via vite-plugin-monaco-editor) would let
+# us drop this origin entirely and ship a fully self-hosted UI; tracked as a
+# follow-up after #15 was found mid-1.3.1 (the editor was breaking because
+# the CSP from E.9 blocked the CDN). For now we allow it explicitly so the
+# editor works in all install topologies.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
     "img-src 'self' data: https:; "
-    "font-src 'self' data:; "
-    "connect-src 'self' ws: wss: https://schema.esphome.io; "
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    "connect-src 'self' ws: wss: https://schema.esphome.io https://cdn.jsdelivr.net; "
     "worker-src 'self' blob:; "
     "frame-ancestors 'self'; "
     "base-uri 'self'; "
