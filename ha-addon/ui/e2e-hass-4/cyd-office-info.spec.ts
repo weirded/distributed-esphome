@@ -296,6 +296,89 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
     // Close it
     await page.keyboard.press('Escape');
   });
+
+  // #24: parallel-compile coverage. Pin garage-door-big to the local-worker
+  // (which has 1 slot) and verify it runs to completion against a real ESP
+  // device. The local-worker existing on hass-4 with 1 slot is enforced as a
+  // precondition; the test fails fast if the topology has drifted.
+  test('parallel compile: garage-door-big pinned to local-worker', async ({ request }) => {
+    test.setTimeout(COMPILE_BUDGET_MS + 60_000);
+
+    // Precondition: local-worker is online with exactly 1 slot. Anything else
+    // means the test environment has drifted from the intended setup.
+    const workersResp = await request.get('./ui/api/workers');
+    expect(workersResp.ok(), 'workers endpoint should return 2xx').toBeTruthy();
+    const workers = (await workersResp.json()) as Array<{
+      client_id: string;
+      hostname: string;
+      online: boolean;
+      max_parallel_jobs?: number;
+    }>;
+    const localWorker = workers.find(w => w.hostname === 'local-worker');
+    expect(localWorker, 'local-worker should be registered').toBeDefined();
+    expect(localWorker!.online, 'local-worker should be online').toBe(true);
+    expect(
+      localWorker!.max_parallel_jobs,
+      `local-worker should have exactly 1 parallel slot (got ${localWorker!.max_parallel_jobs})`,
+    ).toBe(1);
+
+    // Trigger a pinned compile via the UI API. The bulk endpoint accepts a
+    // single-target list + pinned_client_id, same path the UpgradeModal uses.
+    const compileResp = await request.post('./ui/api/compile', {
+      data: {
+        targets: ['garage-door-big.yaml'],
+        pinned_client_id: localWorker!.client_id,
+      },
+    });
+    expect(compileResp.ok(), 'compile endpoint should accept the pinned request').toBeTruthy();
+    const compileJson = (await compileResp.json()) as { enqueued: number };
+    expect(compileJson.enqueued).toBeGreaterThan(0);
+
+    // Find the new job in the queue. We don't get the job_id from the
+    // compile endpoint directly; poll the queue for the most recent
+    // garage-door-big job pinned to our worker.
+    let jobId: string | null = null;
+    await expect.poll(
+      async () => {
+        const queue = await getQueue(request);
+        const candidates = queue
+          .filter(j => j.target === 'garage-door-big.yaml' && j.pinned_client_id === localWorker!.client_id)
+          .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        if (candidates[0]) {
+          jobId = candidates[0].id;
+          return jobId;
+        }
+        return null;
+      },
+      { timeout: 15_000, message: 'pinned garage-door-big job should appear in the queue' },
+    ).not.toBeNull();
+    expect(jobId).toBeTruthy();
+
+    // Poll for terminal state. Pinned to a 1-slot worker, the job will run
+    // sequentially with whatever else local-worker is doing — same overall
+    // budget as the cyd-office-info compile is plenty.
+    let finalJob: QueueJob | null = null;
+    await expect.poll(
+      async () => {
+        const job = await getJob(request, jobId!);
+        if (job && isTerminal(job.state)) {
+          finalJob = job;
+          return job.state;
+        }
+        return job?.state ?? 'missing';
+      },
+      {
+        timeout: COMPILE_BUDGET_MS,
+        intervals: [2_000, 5_000, 10_000],
+        message: `garage-door-big compile did not finish within ${COMPILE_BUDGET_MS}ms`,
+      },
+    ).toMatch(/^(success|failed|timed_out)$/);
+
+    expect(finalJob, 'final job should be set').not.toBeNull();
+    expect(finalJob!.state, `final state: ${finalJob!.state}`).toBe('success');
+    // The job ran where we asked it to run.
+    expect(finalJob!.assigned_client_id).toBe(localWorker!.client_id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -309,6 +392,8 @@ interface QueueJob {
   ota_result?: string;
   created_at: string;
   finished_at?: string;
+  pinned_client_id?: string;
+  assigned_client_id?: string;
 }
 
 function isTerminal(state: string): boolean {

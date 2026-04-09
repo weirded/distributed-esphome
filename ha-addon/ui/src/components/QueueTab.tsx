@@ -154,7 +154,22 @@ export function QueueTab({
       header: ({ column }) => <SortHeader label="State" column={column} />,
       cell: ({ row: { original: job } }) => {
         const { label: badgeLabel, cls: badgeCls } = getJobBadge(job);
-        return <span className={badgeCls}>{badgeLabel}</span>;
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className={badgeCls}>{badgeLabel}</span>
+            {/* #23: a follow-up job is "queued behind" another running job
+                for the same target. Show a small badge next to the State so
+                the user knows it won't start until the predecessor finishes. */}
+            {job.is_followup && job.state === 'pending' && (
+              <span
+                className="inline-flex items-center rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--accent)]"
+                title="This compile is queued and will start after the running compile for the same device finishes. Re-clicking Upgrade replaces this entry instead of adding more."
+              >
+                Queued
+              </span>
+            )}
+          </span>
+        );
       },
       sortingFn: stateSort,
     }),

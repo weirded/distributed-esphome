@@ -738,3 +738,101 @@ async def test_load_recovers_from_partial_corruption(tmp_queue_file, caplog):
     )
     # An error should be logged for the bad entry.
     assert any(r.levelno >= logging.ERROR for r in caplog.records if r.name == "job_queue")
+
+
+# ---------------------------------------------------------------------------
+# #23 — coalesced follow-up enqueue rules
+# ---------------------------------------------------------------------------
+
+async def test_enqueue_coalesces_followup_while_working(tmp_queue_file):
+    """A second enqueue while the first job is WORKING creates a follow-up
+    (PENDING, is_followup=True). The follow-up is not claimable while the
+    first job is still WORKING."""
+    q = JobQueue(queue_file=Path(tmp_queue_file))
+    j1 = await q.enqueue("dev.yaml", "2024.3.1", "run1", timeout_seconds=600)
+    assert j1 is not None and not j1.is_followup
+    claimed = await q.claim_next("worker-a")
+    assert claimed is not None and claimed.id == j1.id
+    assert claimed.state == JobState.WORKING
+
+    # Second enqueue while j1 is WORKING → creates a follow-up.
+    j2 = await q.enqueue("dev.yaml", "2024.3.1", "run2", timeout_seconds=600)
+    assert j2 is not None
+    assert j2.id != j1.id
+    assert j2.is_followup is True
+    assert j2.state == JobState.PENDING
+
+    # claim_next must NOT pick the follow-up while j1 is still WORKING.
+    blocked = await q.claim_next("worker-b")
+    assert blocked is None
+
+    # Once j1 finishes, the follow-up becomes eligible.
+    await q.submit_result(j1.id, "success")
+    next_job = await q.claim_next("worker-b")
+    assert next_job is not None and next_job.id == j2.id
+    assert next_job.state == JobState.WORKING
+    # is_followup is cleared once it's claimed — it's no longer "queued behind".
+    assert next_job.is_followup is False
+
+
+async def test_enqueue_no_followup_for_pending(tmp_queue_file):
+    """A second enqueue while the first is still PENDING (not yet claimed)
+    is a no-op — the user's edits will be picked up at claim time."""
+    q = JobQueue(queue_file=Path(tmp_queue_file))
+    j1 = await q.enqueue("dev.yaml", "2024.3.1", "run1", timeout_seconds=600)
+    assert j1 is not None
+    j2 = await q.enqueue("dev.yaml", "2024.3.1", "run2", timeout_seconds=600)
+    assert j2 is None  # no-op
+    assert len(q.get_all()) == 1
+
+
+async def test_enqueue_updates_existing_followup(tmp_queue_file):
+    """A third enqueue while one is WORKING and one follow-up exists
+    UPDATES the follow-up rather than creating a second follow-up."""
+    q = JobQueue(queue_file=Path(tmp_queue_file))
+    j1 = await q.enqueue("dev.yaml", "2024.3.1", "run1", timeout_seconds=600)
+    assert j1 is not None
+    await q.claim_next("worker-a")  # j1 → WORKING
+
+    j2 = await q.enqueue("dev.yaml", "2024.3.1", "run2", timeout_seconds=600, pinned_client_id="worker-a")
+    assert j2 is not None and j2.is_followup
+    assert j2.pinned_client_id == "worker-a"
+
+    # Third enqueue with different params should UPDATE j2, not create j3.
+    j3 = await q.enqueue("dev.yaml", "2025.1.0", "run3", timeout_seconds=600, pinned_client_id="worker-b")
+    assert j3 is not None
+    assert j3.id == j2.id  # same job, updated in place
+    assert j3.esphome_version == "2025.1.0"
+    assert j3.pinned_client_id == "worker-b"
+    assert j3.run_id == "run3"
+    # Still exactly 2 jobs total.
+    assert len([x for x in q.get_all() if x.state in (JobState.PENDING, JobState.WORKING)]) == 2
+
+
+async def test_followup_does_not_block_other_targets(tmp_queue_file):
+    """A WORKING job for target A must not block claiming a PENDING job
+    for target B (only the same-target follow-ups are blocked)."""
+    q = JobQueue(queue_file=Path(tmp_queue_file))
+    a1 = await q.enqueue("a.yaml", "2024.3.1", "run1", timeout_seconds=600)
+    await q.claim_next("worker-a")  # a1 → WORKING
+    b1 = await q.enqueue("b.yaml", "2024.3.1", "run1", timeout_seconds=600)
+    assert b1 is not None and not b1.is_followup
+    next_b = await q.claim_next("worker-b")
+    assert next_b is not None and next_b.id == b1.id
+    assert a1 is not None  # silence type-checker — only used for setup
+
+
+async def test_validate_only_jobs_bypass_coalescing(tmp_queue_file):
+    """Validate-only jobs are independent and should not be turned into
+    follow-ups even when a normal compile is WORKING for the same target."""
+    q = JobQueue(queue_file=Path(tmp_queue_file))
+    compile_job = await q.enqueue("dev.yaml", "2024.3.1", "run1", timeout_seconds=600)
+    await q.claim_next("worker-a")
+    validate_job = await q.enqueue("dev.yaml", "2024.3.1", "run2", timeout_seconds=60, validate_only=True)
+    assert validate_job is not None
+    assert validate_job.is_followup is False
+    assert validate_job.validate_only is True
+    # Validate job is immediately claimable — it doesn't depend on compile completing.
+    next_job = await q.claim_next("worker-b")
+    assert next_job is not None and next_job.id == validate_job.id
+    assert compile_job is not None  # silence

@@ -64,6 +64,14 @@ class Job:
     validate_only: bool = False  # run esphome config (validation) instead of compile+OTA
     ota_address: Optional[str] = None  # override OTA target address (used after rename)
     pinned_client_id: Optional[str] = None  # only this client can claim the job
+    # #23: True if this job is a coalesced "follow-up" — created while another
+    # job for the same target was already WORKING. Follow-ups are not eligible
+    # to be claimed until their predecessor reaches a terminal state. Surfaced
+    # in the UI so the user can see "queued behind running" without inferring
+    # it from state. At most one follow-up per target at a time; subsequent
+    # enqueue calls update the existing follow-up's esphome_version /
+    # pinned_client_id rather than creating new entries.
+    is_followup: bool = False
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -88,6 +96,7 @@ class Job:
             "validate_only": self.validate_only,
             "ota_address": self.ota_address,
             "pinned_client_id": self.pinned_client_id,
+            "is_followup": self.is_followup,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -118,6 +127,7 @@ class Job:
             validate_only=d.get("validate_only", False),
             ota_address=d.get("ota_address"),
             pinned_client_id=d.get("pinned_client_id"),
+            is_followup=d.get("is_followup", False),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -231,23 +241,71 @@ class JobQueue:
         """
         Create and enqueue a new job for *target*.
 
-        Returns the new Job, or None if a job for this target is already
-        pending/assigned/running (deduplication).
+        Coalescing rules (#23) — at most ONE active + ONE follow-up per target:
+          - No PENDING/WORKING for target → create new active job (PENDING).
+          - PENDING for target (not yet WORKING) → no-op, return None.
+            The user's edits will be picked up when the existing job claims
+            (the bundle is generated at claim time, not enqueue time).
+          - WORKING for target, no follow-up → create a follow-up (PENDING,
+            ``is_followup=True``). It will be skipped by ``claim_next`` until
+            the WORKING predecessor reaches a terminal state.
+          - WORKING for target AND follow-up exists → update the follow-up's
+            ``esphome_version``, ``pinned_client_id``, ``ota_address``, and
+            ``timeout_seconds`` from the new request, then return it. Lets
+            the user "change their mind" about the next compile without
+            piling up queue entries.
+
+        Validate-only jobs intentionally bypass coalescing — they're cheap,
+        independent, and the user explicitly asked for that specific run.
 
         Any existing terminal (success/failed/timed_out) jobs for the same
         target are removed so the queue stays tidy.
         """
         async with self._lock:
-            # Deduplication: only one active job per target
+            # Find current active + follow-up state for this target.
+            active: Optional[Job] = None
+            followup: Optional[Job] = None
             for job in self._jobs.values():
-                if job.target == target and job.state in (
-                    JobState.PENDING,
-                    JobState.WORKING,
-                ):
-                    logger.debug("Skipping duplicate job for target %s", target)
-                    return None
+                if job.target != target:
+                    continue
+                if job.state == JobState.WORKING:
+                    active = job
+                elif job.state == JobState.PENDING:
+                    if job.is_followup:
+                        followup = job
+                    else:
+                        active = job  # PENDING-but-not-yet-claimed counts as active
 
-            # Clear old terminal jobs for this target before adding the new one
+            # Validate-only jobs bypass coalescing — see docstring.
+            if validate_only:
+                pass  # fall through to "create new" path
+            elif followup is not None:
+                # 1 active + 1 follow-up → update the follow-up in place.
+                # Preserves the order in _jobs but reflects the latest user
+                # intent (version override, worker pin, etc.).
+                followup.esphome_version = esphome_version
+                followup.pinned_client_id = pinned_client_id
+                followup.ota_address = ota_address
+                followup.timeout_seconds = timeout_seconds
+                followup.run_id = run_id  # belongs to the latest request
+                self._persist()
+                logger.info(
+                    "Updated existing follow-up job %s for target %s "
+                    "(version=%s pinned=%s)",
+                    followup.id, target, esphome_version, pinned_client_id,
+                )
+                return followup
+            elif active is not None and active.state == JobState.PENDING:
+                # Active is queued but not yet running — no follow-up needed.
+                logger.debug(
+                    "Target %s already has a pending job %s; skipping enqueue",
+                    target, active.id,
+                )
+                return None
+            # else: active is WORKING (or None) → fall through to create.
+            # When active is WORKING the new job becomes a follow-up.
+
+            # Clear old terminal jobs for this target before adding the new one.
             stale = [
                 jid for jid, j in self._jobs.items()
                 if j.target == target and j.state in (
@@ -259,6 +317,7 @@ class JobQueue:
             if stale:
                 logger.debug("Removed %d stale job(s) for target %s", len(stale), target)
 
+            is_followup = active is not None and active.state == JobState.WORKING and not validate_only
             job = Job(
                 id=str(uuid.uuid4()),
                 target=target,
@@ -269,10 +328,18 @@ class JobQueue:
                 validate_only=validate_only,
                 ota_address=ota_address,
                 pinned_client_id=pinned_client_id,
+                is_followup=is_followup,
             )
             self._jobs[job.id] = job
             self._persist()
-            logger.info("Enqueued job %s for target %s", job.id, target)
+            if is_followup:
+                logger.info(
+                    "Enqueued follow-up job %s for target %s "
+                    "(behind running job %s)",
+                    job.id, target, active.id if active else "?",
+                )
+            else:
+                logger.info("Enqueued job %s for target %s", job.id, target)
             return job
 
     async def claim_next(
@@ -292,6 +359,13 @@ class JobQueue:
         """
         now = _utcnow()
         async with self._lock:
+            # #23: a follow-up job is blocked until its predecessor for the
+            # same target reaches a terminal state. Pre-compute the set of
+            # targets that currently have a WORKING job so we can skip
+            # follow-ups for those targets in O(1).
+            blocked_targets = {
+                j.target for j in self._jobs.values() if j.state == JobState.WORKING
+            }
             for job in self._jobs.values():
                 if job.state != JobState.PENDING:
                     continue
@@ -301,7 +375,14 @@ class JobQueue:
                 # Defer to faster workers — but never defer pinned jobs
                 if faster_idle_worker_exists and not job.pinned_client_id:
                     continue
+                # Skip follow-ups whose predecessor is still WORKING.
+                if job.is_followup and job.target in blocked_targets:
+                    continue
                 job.state = JobState.WORKING
+                # Once claimed, a follow-up is no longer "queued behind
+                # running" — it IS the running job. Clear the flag so the
+                # UI badge disappears at the right moment.
+                job.is_followup = False
                 job.assigned_client_id = client_id
                 job.assigned_hostname = hostname
                 job.assigned_at = now

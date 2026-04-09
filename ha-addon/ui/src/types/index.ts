@@ -145,6 +145,13 @@ export interface Job {
   assigned_hostname?: string;
   worker_id?: number | null;
   pinned_client_id?: string;
+  /**
+   * #23: true when this job is a "follow-up" — created while another job
+   * for the same target was already running. Follow-ups are blocked from
+   * claiming until the predecessor finishes; surfaced in the queue UI as
+   * a "Queued" badge so the user can see "next compile is waiting".
+   */
+  is_followup?: boolean;
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;
