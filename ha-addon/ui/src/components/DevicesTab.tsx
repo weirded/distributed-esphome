@@ -572,21 +572,23 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       enableHiding: false,
       cell: ({ row: { original: t } }) => {
         const upgradeVariant = t.needs_update ? 'success' : 'secondary';
-        // #32: leave the Upgrade button visible but disabled while a compile
-        // is in flight, with a tooltip explaining why. Less jarring than the
-        // button disappearing under the cursor and dedupe-prevents wasted
-        // double-clicks (the server already deduplicates by target, but the
-        // user still gets a confusing "click did nothing" experience).
+        // #23 revision: the Upgrade button stays enabled even while a job
+        // is running for this target. Clicking it re-opens the UpgradeModal
+        // and the server-side coalescing rules (#23) take care of the rest:
+        // the second click creates a single "Queued" follow-up; a third
+        // click updates that follow-up in place. This matches the
+        // CLAUDE.md "Disable, don't fail" guideline's explicit Upgrade
+        // exception — compiling for a target is always meaningful, even
+        // if one is already running, because the latest YAML will be used.
         const inFlight = activeJobsByTarget.has(t.target);
         const upgradeTitle = inFlight
-          ? `A build is already running for this device — wait for it to finish (status: ${activeJobsByTarget.get(t.target)?.status_text || activeJobsByTarget.get(t.target)?.state || 'in progress'})`
+          ? `A build is already running. Click to queue the next compile (will use the latest YAML at the time it starts).`
           : undefined;
         return (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <Button
               variant={upgradeVariant as 'success' | 'secondary'}
               size="sm"
-              disabled={inFlight}
               title={upgradeTitle}
               onClick={() => onUpgradeOne(t.target)}
             >

@@ -53,15 +53,25 @@ jobs:
         run: mypy ha-addon/client/ --ignore-missing-imports
 
       # E.5: pip-audit against the hash-pinned lockfiles. Fails the job on any
-      # known high/critical advisory in the resolved dep tree (server + client).
-      # If a known advisory has no fix available yet, add it to the ignore list
-      # below with an inline comment + a follow-up entry in WORKITEMS.
-      - name: pip-audit (server + client lockfiles)
+      # known high/critical advisory in the resolved dep tree.
+      #
+      # Run server + client lockfiles in SEPARATE invocations — they're
+      # installed into independent Docker images, so there's no requirement
+      # that their transitive dep versions agree. Combining them into a
+      # single `--requirement` call makes pip-audit try to install both
+      # into one venv, which fails when (e.g.) server pins requests==2.32.5
+      # and client pins requests==2.33.1.
+      #
+      # If a known advisory has no fix available yet, add `--ignore-vuln <id>`
+      # here with an inline comment + a follow-up entry in WORKITEMS.
+      - name: pip-audit (server lockfile)
         run: |
           pip install pip-audit
-          pip-audit \
-            --requirement ha-addon/server/requirements.lock \
-            --requirement ha-addon/client/requirements.lock
+          pip-audit --requirement ha-addon/server/requirements.lock
+
+      - name: pip-audit (client lockfile)
+        run: |
+          pip-audit --requirement ha-addon/client/requirements.lock
 
   frontend:
     runs-on: ubuntu-latest
