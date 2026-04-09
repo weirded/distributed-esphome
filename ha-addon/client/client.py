@@ -42,7 +42,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.1-dev.12"
+CLIENT_VERSION = "1.3.1-dev.13"
 
 
 def _read_image_version() -> Optional[str]:
@@ -671,6 +671,16 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     if server_tz:
         subprocess_env["TZ"] = server_tz
         logger.debug("Using server timezone: %s", server_tz)
+
+    # Network timeouts for uv/pip during ESPHome's penv bootstrap. Defaults are
+    # aggressive (uv HTTP read = 30s, pip socket = 15s) and cause intermittent
+    # "Failed to install Python dependencies into penv" failures on slow or
+    # flaky links — see GitHub #6. setdefault lets operators override via the
+    # worker env if needed. Both PIP_DEFAULT_TIMEOUT and PIP_TIMEOUT map to
+    # pip's --timeout option (verified in pip source).
+    subprocess_env.setdefault("UV_HTTP_TIMEOUT", "180")
+    subprocess_env.setdefault("UV_HTTP_CONNECT_TIMEOUT", "30")
+    subprocess_env.setdefault("PIP_DEFAULT_TIMEOUT", "180")
 
     # Install ESPHome version (BEFORE starting the timeout timer)
     if ESPHOME_BIN:
