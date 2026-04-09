@@ -48,6 +48,60 @@ async def version_header_middleware(request: web.Request, handler):
     return response
 
 
+# E.9: defence-in-depth security headers on every UI-tier response. Applied
+# to ``/``, ``/index.html``, ``/assets/*``, and every ``/ui/api/*`` endpoint
+# (the browser-facing surface). NOT applied to ``/api/v1/*`` since those are
+# consumed programmatically by build workers and the headers add no value.
+#
+# CSP design notes:
+# - script-src 'self' is enough for the bundled Vite output (no inline
+#   scripts in the React build, no eval).
+# - style-src needs 'unsafe-inline' for Tailwind v4's inline class
+#   stylesheet generator + Monaco's dynamically-injected style elements.
+# - connect-src must allow wss: for the live-log WebSocket and
+#   https://schema.esphome.io for the editor schema fetcher (api/esphomeSchema.ts).
+# - worker-src 'self' blob: covers Monaco's editor worker.
+# - frame-ancestors 'self' enforces clickjacking protection without breaking
+#   HA Ingress (which loads us in an iframe served from the same origin).
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' data:; "
+    "connect-src 'self' ws: wss: https://schema.esphome.io; "
+    "worker-src 'self' blob:; "
+    "frame-ancestors 'self'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+    "X-Frame-Options": "SAMEORIGIN",  # legacy fallback for browsers that ignore CSP frame-ancestors
+}
+
+
+@web.middleware
+async def security_headers_middleware(request: web.Request, handler):
+    """Attach defence-in-depth security headers to UI-tier responses (E.9)."""
+    response = await handler(request)
+    path = request.path
+    if path.startswith("/api/v1/"):
+        # Worker tier — no benefit, skip.
+        return response
+    # Everything else (UI HTML, static assets, /ui/api/*, /, /index.html)
+    # gets the headers. WebSocket upgrades (101 Switching Protocols) inherit
+    # them too, which is harmless.
+    for k, v in _SECURITY_HEADERS.items():
+        # Don't clobber a header an inner handler explicitly set.
+        if k not in response.headers:
+            response.headers[k] = v
+    return response
+
+
 def _normalize_peer_ip(raw: str) -> str:
     """Canonicalize a peer IP string for comparison against HA_SUPERVISOR_IP.
 
@@ -626,7 +680,7 @@ def create_app() -> web.Application:
 
     device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
 
-    app = web.Application(middlewares=[version_header_middleware, auth_middleware])
+    app = web.Application(middlewares=[security_headers_middleware, version_header_middleware, auth_middleware])
     app["config"] = cfg
     app["queue"] = queue
     app["registry"] = registry

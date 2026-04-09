@@ -10,7 +10,7 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import { getApiKey, restartDevice } from '../api/client';
-import type { Device, Target, Worker } from '../types';
+import type { Device, Job, Target, Worker } from '../types';
 import { stripYaml, timeAgo } from '../utils';
 import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
@@ -74,6 +74,13 @@ interface Props {
   devices: Device[];
   workers: Worker[];
   streamerMode: boolean;
+  /**
+   * Map of target filename → currently active (PENDING/WORKING) job for that
+   * target, derived in App.tsx from the live queue. Used to render an
+   * "Upgrading…" status and disable the Upgrade button while a compile is
+   * in flight (#32).
+   */
+  activeJobsByTarget: Map<string, Job>;
   onCompile: (targets: string[] | 'all' | 'outdated') => void;
   onCompileOnWorker: (target: string, clientId: string) => void;
   onEdit: (target: string) => void;
@@ -197,7 +204,7 @@ function DeleteModal({ target, onConfirm, onClose }: {
   );
 }
 
-export function DevicesTab({ targets, devices, workers, streamerMode, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
@@ -322,7 +329,13 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       }
     ),
     columnHelper.accessor(
-      row => row.online == null ? 'unknown' : row.online ? 'online' : 'offline',
+      row => {
+        // Active job sorts first so a "currently upgrading" group sticks to
+        // the top of an ascending sort.
+        if (activeJobsByTarget.has(row.target)) return 'a-upgrading';
+        if (row.online == null) return 'b-unknown';
+        return row.online ? 'c-online' : 'd-offline';
+      },
       {
         id: 'status',
         header: ({ column }) => <SortHeader label="Status" column={column} />,
@@ -330,6 +343,18 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
           const lastSeenEl = t.last_seen
             ? <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>
             : null;
+          // Active job takes priority over the device's online state — even
+          // an offline device can have a job in flight (the worker compiles
+          // first, OTA happens later).
+          const activeJob = activeJobsByTarget.get(t.target);
+          if (activeJob) {
+            const statusText = activeJob.status_text || (activeJob.state === 'pending' ? 'Pending…' : 'Compiling…');
+            return (
+              <span title={statusText}>
+                <StatusDot status="upgrading" label={statusText} />
+              </span>
+            );
+          }
           if (t.online == null) return <StatusDot status="checking" />;
           if (t.online) return <><StatusDot status="online" />{lastSeenEl}</>;
           return <><StatusDot status="offline" />{lastSeenEl}</>;
@@ -441,9 +466,26 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       enableHiding: false,
       cell: ({ row: { original: t } }) => {
         const upgradeVariant = t.needs_update ? 'success' : 'secondary';
+        // #32: leave the Upgrade button visible but disabled while a compile
+        // is in flight, with a tooltip explaining why. Less jarring than the
+        // button disappearing under the cursor and dedupe-prevents wasted
+        // double-clicks (the server already deduplicates by target, but the
+        // user still gets a confusing "click did nothing" experience).
+        const inFlight = activeJobsByTarget.has(t.target);
+        const upgradeTitle = inFlight
+          ? `A build is already running for this device — wait for it to finish (status: ${activeJobsByTarget.get(t.target)?.status_text || activeJobsByTarget.get(t.target)?.state || 'in progress'})`
+          : undefined;
         return (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <Button variant={upgradeVariant as 'success' | 'secondary'} size="sm" onClick={() => onCompile([t.target])}>Upgrade</Button>
+            <Button
+              variant={upgradeVariant as 'success' | 'secondary'}
+              size="sm"
+              disabled={inFlight}
+              title={upgradeTitle}
+              onClick={() => onCompile([t.target])}
+            >
+              Upgrade
+            </Button>
             <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
             <span
               className="action-menu-trigger"
@@ -780,8 +822,23 @@ function DeviceMenu({
                 Upgrade on...
                 <span className="ml-auto text-xs">&#9666;</span>
               </div>
+              {/*
+                #31: width + hover-bridge fixes.
+                - Width: drop the fixed min-w-[140px] in favour of `w-max`
+                  (grow to content) bounded by `max-w-[280px]` so a long
+                  hostname wraps inside the menu rather than running off
+                  the viewport. `whitespace-nowrap` on the parent's text
+                  is intentional — only the hostnames wrap.
+                - Hover bridge: previously the popup had marginRight/Left:
+                  4px, leaving a 4px gap between parent and popup. While
+                  the cursor crossed that gap it was outside `.group/sub`,
+                  so `group-hover/sub:visible` un-rendered the popup
+                  before the cursor reached it. Drop the margins entirely
+                  so the popup sits flush with the parent's edge — the
+                  combined hover area is now contiguous.
+              */}
               <div
-                className="invisible group-hover/sub:visible absolute top-0 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
+                className="invisible group-hover/sub:visible absolute top-0 w-max max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
                 ref={(el) => {
                   if (!el) return;
                   const parent = el.parentElement?.getBoundingClientRect();
@@ -792,11 +849,9 @@ function DeviceMenu({
                   if (spaceLeft >= subWidth) {
                     el.style.right = '100%';
                     el.style.left = 'auto';
-                    el.style.marginRight = '4px';
                   } else {
                     el.style.left = '100%';
                     el.style.right = 'auto';
-                    el.style.marginLeft = '4px';
                   }
                   // Vertical: flip up if it extends below viewport
                   const rect = el.getBoundingClientRect();
@@ -807,7 +862,7 @@ function DeviceMenu({
                 }}
               >
                 {onlineWorkers.map(w => (
-                  <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
+                  <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] text-left break-words" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
                 ))}
               </div>
             </div>

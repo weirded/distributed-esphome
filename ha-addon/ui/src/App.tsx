@@ -114,6 +114,20 @@ export default function App() {
   );
   // Exclude validation-only jobs from display (they run server-side and auto-prune)
   const displayQueue = useMemo(() => queue.filter(j => !j.validate_only), [queue]);
+  // Map of target filename → active (PENDING or WORKING) job, used by the
+  // Devices tab to render an "Upgrading…" status on rows whose compile is
+  // currently in flight (#32). The most recent active job wins if a target
+  // somehow has more than one — the queue dedupes by target so this should
+  // be at most one in practice.
+  const activeJobsByTarget = useMemo(() => {
+    const map = new Map<string, typeof displayQueue[number]>();
+    for (const j of displayQueue) {
+      if (j.state === 'pending' || j.state === 'working') {
+        map.set(j.target, j);
+      }
+    }
+    return map;
+  }, [displayQueue]);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme);
   const [streamerMode, setStreamerMode] = useState(() => localStorage.getItem('streamerMode') === 'true');
@@ -433,6 +447,7 @@ export default function App() {
             devices={devices}
             workers={workers}
             streamerMode={streamerMode}
+            activeJobsByTarget={activeJobsByTarget}
             onCompile={handleCompile}
             onCompileOnWorker={handleCompileOnWorker}
             onEdit={setEditorTarget}

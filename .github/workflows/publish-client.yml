@@ -19,6 +19,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # E.10: required for cosign keyless signing via OIDC
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +53,7 @@ jobs:
             type=sha,prefix=
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ha-addon/client
@@ -61,3 +63,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # E.10: cosign keyless signing via GitHub OIDC. Each tag from the
+      # metadata step gets signed against the multi-arch manifest digest.
+      # No long-lived keys; the signature is anchored to the workflow's
+      # OIDC identity, which downstream verifiers check via
+      # ``cosign verify --certificate-identity-regexp ... --certificate-oidc-issuer ...``.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign published images with cosign
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "${TAGS}" | xargs -I {} cosign sign --yes "{}@${DIGEST}"

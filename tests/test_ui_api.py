@@ -97,7 +97,7 @@ async def test_server_info_returns_version_and_token(tmp_path):
         assert data["token"] == "ui-test-token"
         assert "addon_version" in data
         assert "min_image_version" in data
-        assert data["min_image_version"] == "3"
+        assert data["min_image_version"] == "4"
     finally:
         await ta.close()
 
@@ -556,8 +556,8 @@ async def test_queue_remove_by_id(tmp_path):
 async def test_workers_lists_registered(tmp_path):
     ta = await _make_ui_app(tmp_path)
     try:
-        ta.registry.register("worker-1", "linux/amd64", image_version="3")
-        ta.registry.register("worker-2", "linux/arm64", image_version="3")
+        ta.registry.register("worker-1", "linux/amd64", image_version="4")
+        ta.registry.register("worker-2", "linux/arm64", image_version="4")
         resp = await ta.get("/ui/api/workers")
         assert resp.status == 200
         data = await resp.json()
@@ -571,7 +571,7 @@ async def test_workers_lists_registered(tmp_path):
 async def test_worker_set_parallel_jobs(tmp_path):
     ta = await _make_ui_app(tmp_path)
     try:
-        client_id = ta.registry.register("w", "linux/amd64", image_version="3")
+        client_id = ta.registry.register("w", "linux/amd64", image_version="4")
         resp = await ta.post(
             f"/ui/api/workers/{client_id}/parallel-jobs",
             json={"max_parallel_jobs": 4},
@@ -586,7 +586,7 @@ async def test_worker_set_parallel_jobs(tmp_path):
 async def test_worker_set_parallel_jobs_rejects_out_of_range(tmp_path):
     ta = await _make_ui_app(tmp_path)
     try:
-        client_id = ta.registry.register("w", "linux/amd64", image_version="3")
+        client_id = ta.registry.register("w", "linux/amd64", image_version="4")
         resp = await ta.post(
             f"/ui/api/workers/{client_id}/parallel-jobs",
             json={"max_parallel_jobs": 99},
@@ -612,7 +612,7 @@ async def test_worker_remove_offline(tmp_path):
     ta = await _make_ui_app(tmp_path)
     try:
         from datetime import datetime, timedelta, timezone
-        client_id = ta.registry.register("w", "linux/amd64", image_version="3")
+        client_id = ta.registry.register("w", "linux/amd64", image_version="4")
         # Backdate last_seen so the worker is considered offline
         ta.registry.get(client_id).last_seen = datetime.now(timezone.utc) - timedelta(minutes=5)
 
@@ -627,7 +627,7 @@ async def test_worker_remove_online_refused(tmp_path):
     """Can't remove an online worker — must be marked offline first."""
     ta = await _make_ui_app(tmp_path)
     try:
-        client_id = ta.registry.register("w", "linux/amd64", image_version="3")
+        client_id = ta.registry.register("w", "linux/amd64", image_version="4")
         resp = await ta.delete(f"/ui/api/workers/{client_id}")
         assert resp.status == 409
         # Worker is still in the registry
@@ -639,7 +639,7 @@ async def test_worker_remove_online_refused(tmp_path):
 async def test_worker_clean_cache_sets_pending_flag(tmp_path):
     ta = await _make_ui_app(tmp_path)
     try:
-        client_id = ta.registry.register("w", "linux/amd64", image_version="3")
+        client_id = ta.registry.register("w", "linux/amd64", image_version="4")
         resp = await ta.post(f"/ui/api/workers/{client_id}/clean")
         assert resp.status == 200
         assert ta.registry.get(client_id).pending_clean is True

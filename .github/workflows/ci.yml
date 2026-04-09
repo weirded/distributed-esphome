@@ -52,6 +52,17 @@ jobs:
       - name: mypy — client
         run: mypy ha-addon/client/ --ignore-missing-imports
 
+      # E.5: pip-audit against the hash-pinned lockfiles. Fails the job on any
+      # known high/critical advisory in the resolved dep tree (server + client).
+      # If a known advisory has no fix available yet, add it to the ignore list
+      # below with an inline comment + a follow-up entry in WORKITEMS.
+      - name: pip-audit (server + client lockfiles)
+        run: |
+          pip install pip-audit
+          pip-audit \
+            --requirement ha-addon/server/requirements.lock \
+            --requirement ha-addon/client/requirements.lock
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -67,6 +78,14 @@ jobs:
       - name: Install dependencies
         working-directory: ha-addon/ui
         run: npm ci
+
+      # E.5: npm audit on the locked tree. ``--audit-level=high`` blocks on
+      # high/critical advisories only — moderate/low ones are reported but
+      # don't fail the job, since the npm tree carries a lot of low-severity
+      # dev-only noise.
+      - name: npm audit (frontend)
+        working-directory: ha-addon/ui
+        run: npm audit --audit-level=high --omit=dev
 
       - name: Build frontend
         working-directory: ha-addon/ui

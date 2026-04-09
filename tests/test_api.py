@@ -109,8 +109,8 @@ async def _enqueue_job(
 
 async def _register(ta: _App, hostname: str = "build-box", platform: str = "linux/amd64",
                     system_info: dict | None = None,
-                    image_version: str | None = "3") -> str:
-    # Defaults to image_version="3" (current MIN_IMAGE_VERSION) so most tests
+                    image_version: str | None = "4") -> str:
+    # Defaults to image_version="4" (current MIN_IMAGE_VERSION) so most tests
     # exercise the happy path. Tests that want to simulate a stale-image worker
     # explicitly pass image_version=None or an older number.
     body: dict = {"hostname": hostname, "platform": platform}
@@ -1038,10 +1038,11 @@ async def test_get_client_code_allows_fresh_image(tmp_path):
     [
         (None, True),        # pre-LIB.0 worker — no field at all
         ("", True),          # empty string — falsy, cannot parse as int
-        ("1", True),         # integer but below MIN_IMAGE_VERSION=3
-        ("2", True),         # still stale — pydantic was added in image v3
-        ("3", False),        # exactly MIN_IMAGE_VERSION — fresh
-        ("4", False),        # above MIN_IMAGE_VERSION — fresh
+        ("1", True),         # integer but below MIN_IMAGE_VERSION=4
+        ("2", True),         # still stale — pydantic added in v3, deps locked in v4
+        ("3", True),         # still stale — hash-pinned deps were added in v4
+        ("4", False),        # exactly MIN_IMAGE_VERSION — fresh
+        ("5", False),        # above MIN_IMAGE_VERSION — fresh
         ("garbage", True),   # non-numeric — int() raises, treated as stale
     ],
 )
