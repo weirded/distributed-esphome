@@ -9,6 +9,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------
+  # 1. Tests — pytest with xdist for parallel execution. ~1 min.
+  # ---------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -18,19 +21,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
           pip install \
-            pytest pytest-asyncio pytest-cov \
+            pytest pytest-asyncio pytest-cov pytest-xdist \
             aiohttp aioesphomeapi zeroconf \
-            requests psutil \
-            esphome \
-            mypy types-requests types-PyYAML \
-            ruff
+            requests psutil pydantic \
+            esphome
 
       - name: Run all tests with coverage
-        run: pytest tests/ -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
+        run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
 
       - name: Upload coverage report
         if: always()
@@ -39,6 +41,23 @@ jobs:
           name: coverage-report
           path: htmlcov/
           retention-days: 14
+
+  # ---------------------------------------------------------------
+  # 2. Lint — ruff + mypy + invariants. Fast (~20s), no heavy deps.
+  # ---------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install lint tools
+        run: pip install ruff mypy types-requests types-PyYAML
 
       - name: Ruff lint
         run: ruff check ha-addon/server/ ha-addon/client/
@@ -52,27 +71,41 @@ jobs:
       - name: mypy — client
         run: mypy ha-addon/client/ --ignore-missing-imports
 
-      # E.5: pip-audit against the hash-pinned lockfiles. Fails the job on any
-      # known high/critical advisory in the resolved dep tree.
-      #
+  # ---------------------------------------------------------------
+  # 3. Audit — pip-audit on lockfiles. No app deps needed.
+  # ---------------------------------------------------------------
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
       # Run server + client lockfiles in SEPARATE invocations — they're
       # installed into independent Docker images, so there's no requirement
-      # that their transitive dep versions agree. Combining them into a
-      # single `--requirement` call makes pip-audit try to install both
-      # into one venv, which fails when (e.g.) server pins requests==2.32.5
-      # and client pins requests==2.33.1.
-      #
-      # If a known advisory has no fix available yet, add `--ignore-vuln <id>`
-      # here with an inline comment + a follow-up entry in WORKITEMS.
+      # that their transitive dep versions agree.
       - name: pip-audit (server lockfile)
         run: |
           pip install pip-audit
-          pip-audit --requirement ha-addon/server/requirements.lock
+          pip-audit --requirement ha-addon/server/requirements.lock \
+            --ignore-vuln CVE-2026-34073 \
+            --ignore-vuln CVE-2026-39892 \
+            --ignore-vuln CVE-2026-25645
+          # ^^^ cryptography 46.0.5 (CVE-2026-34073, CVE-2026-39892) and
+          # requests 2.32.5 (CVE-2026-25645) are pinned by ESPHome's
+          # transitive dependency bounds — can't upgrade until ESPHome
+          # releases with relaxed constraints. Tracked in WORKITEMS-1.4.md.
 
       - name: pip-audit (client lockfile)
-        run: |
-          pip-audit --requirement ha-addon/client/requirements.lock
+        run: pip-audit --requirement ha-addon/client/requirements.lock
 
+  # ---------------------------------------------------------------
+  # 4. Frontend — npm ci, audit, build, Playwright.
+  # ---------------------------------------------------------------
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -89,10 +122,6 @@ jobs:
         working-directory: ha-addon/ui
         run: npm ci
 
-      # E.5: npm audit on the locked tree. ``--audit-level=high`` blocks on
-      # high/critical advisories only — moderate/low ones are reported but
-      # don't fail the job, since the npm tree carries a lot of low-severity
-      # dev-only noise.
       - name: npm audit (frontend)
         working-directory: ha-addon/ui
         run: npm audit --audit-level=high --omit=dev
@@ -100,6 +129,19 @@ jobs:
       - name: Build frontend
         working-directory: ha-addon/ui
         run: npm run build
+
+      # Cache Playwright browsers so we don't re-download ~130 MB on
+      # every run. Key includes the Playwright version from package-lock.
+      - name: Get Playwright version
+        id: pw-version
+        working-directory: ha-addon/ui
+        run: echo "version=$(npx playwright --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers
         working-directory: ha-addon/ui
