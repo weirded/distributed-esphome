@@ -9,15 +9,12 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it responsibly:
+If you discover a security vulnerability, please [open a GitHub issue](https://github.com/weirded/distributed-esphome/issues/new) with:
 
-1. **Do NOT open a public GitHub issue.**
-2. Email **security@weirded.dev** with:
-   - A description of the vulnerability
-   - Steps to reproduce
-   - The affected version(s)
-   - Any suggested fix (optional but appreciated)
-3. You'll receive an acknowledgment within **48 hours** and a substantive response within **5 business days**.
+- A description of the vulnerability
+- Steps to reproduce
+- The affected version(s)
+- Any suggested fix (optional but appreciated)
 
 ## Threat Model
 
