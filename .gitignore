@@ -43,6 +43,9 @@ htmlcov/
 # Vite
 .vite/
 
+# Worktree helper (local only)
+.worktreeinclude
+
 # Node
 node_modules/
 

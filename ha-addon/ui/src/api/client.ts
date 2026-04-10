@@ -84,12 +84,24 @@ export async function getQueue(): Promise<Job[]> {
   return r.json();
 }
 
+/**
+ * Trigger a compile run.
+ *
+ * @param targets       'all', 'outdated', or an explicit list of YAML filenames
+ * @param pinnedClientId optional — pin every job to one specific worker
+ * @param esphomeVersion optional — override the global default ESPHome version
+ *                        for this run only (#16). The server does NOT mutate
+ *                        the global default; it just stamps the version onto
+ *                        the enqueued jobs.
+ */
 export async function compile(
   targets: string[] | 'all' | 'outdated',
   pinnedClientId?: string,
+  esphomeVersion?: string,
 ): Promise<{ enqueued: number }> {
   const body: Record<string, unknown> = { targets };
   if (pinnedClientId) body.pinned_client_id = pinnedClientId;
+  if (esphomeVersion) body.esphome_version = esphomeVersion;
   const r = await apiFetch('./ui/api/compile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -225,15 +237,22 @@ export async function getApiKey(filename: string): Promise<string> {
   return data.key!;
 }
 
-export async function validateConfig(target: string): Promise<{ job_id?: string; error?: string }> {
+/**
+ * Validate a target's config via ``esphome config`` (direct subprocess on
+ * the server). Returns immediately with the output — no queue, no polling.
+ *
+ * Bug #25: previously this enqueued a validate-only job on the queue and
+ * any worker could pick it up; now it runs directly on the server.
+ */
+export async function validateConfig(target: string): Promise<{ success: boolean; output: string }> {
   const r = await apiFetch('./ui/api/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ target }),
   });
-  const data = await r.json() as { job_id?: string; error?: string };
-  if (!r.ok) throw new Error(data.error || String(r.status));
-  return data;
+  const data = await r.json() as { success?: boolean; output?: string; error?: string };
+  if (!r.ok) throw new Error(data.error || data.output || String(r.status));
+  return { success: !!data.success, output: data.output || '' };
 }
 
 export async function getSecretKeys(): Promise<string[]> {

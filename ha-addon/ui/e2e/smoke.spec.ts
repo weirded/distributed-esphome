@@ -81,9 +81,12 @@ test('tab counts show correct numbers', async ({ page }) => {
   // Wait for data to load
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
-  // Queue should show "1 active" (one working job)
+  // Queue should show "2 active" — fixtures contain one WORKING job
+  // (job-003) and one PENDING job (job-004). Bumped from "1 active" in C.6
+  // when the missing job states (pending, timed_out) were added to the
+  // fixtures so the queue tab is exercised on the full state machine.
   const queueTab = page.getByRole('button', { name: /Queue/ });
-  await expect(queueTab).toContainText('1 active');
+  await expect(queueTab).toContainText('2 active');
 
   // Workers should show "1/2" (1 online out of 2)
   const workersTab = page.getByRole('button', { name: /Workers/ });

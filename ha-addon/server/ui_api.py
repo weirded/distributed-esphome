@@ -272,8 +272,15 @@ async def get_targets(request: web.Request) -> web.Response:
             "server_version": server_version,
             "has_api_key": has_api_key,
             "has_web_server": meta["has_web_server"],
+            "has_restart_button": meta.get("has_restart_button", False),
             "ha_configured": ha_configured,
             "ha_connected": ha_connected,
+            # #10 — network facts surfaced by the toggleable Net/IP Mode/IPv6/AP columns
+            "network_type": meta.get("network_type"),
+            "network_static_ip": meta.get("network_static_ip", False),
+            "network_ipv6": meta.get("network_ipv6", False),
+            "network_ap_fallback": meta.get("network_ap_fallback", False),
+            "network_matter": meta.get("network_matter", False),
         }
         result.append(entry)
 
@@ -354,7 +361,10 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
         await client.connect(login=True)
         await ws.send_str("Connected. Streaming logs...\n\n")
 
-        loop = _asyncio.get_event_loop()
+        # C.8: capture the running loop while we're inside the async context.
+        # The log_callback fires from a different thread (aioesphomeapi worker
+        # thread), so we cannot call asyncio.get_running_loop() from inside it.
+        loop = _asyncio.get_running_loop()
 
         def log_callback(msg: Any) -> None:
             if ws.closed:
@@ -364,7 +374,11 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
             if not text.endswith("\n"):
                 text += "\n"
             ts = _dt.now().strftime("[%H:%M:%S] ")
-            _asyncio.ensure_future(ws.send_str(ts + text), loop=loop)
+            # ``run_coroutine_threadsafe`` is the cross-thread analogue of
+            # create_task — required because log_callback runs in a worker
+            # thread, not on the event loop thread. ``ensure_future(..., loop=)``
+            # was the legacy way and is removed in 3.12.
+            _asyncio.run_coroutine_threadsafe(ws.send_str(ts + text), loop)
 
         # subscribe_logs is synchronous and returns an unsubscribe callable.
         unsub = client.subscribe_logs(log_callback, log_level=LogLevel.LOG_LEVEL_VERY_VERBOSE, dump_config=True)
@@ -459,9 +473,18 @@ async def get_clients(request: web.Request) -> web.Response:
 
 @routes.get("/ui/api/devices")
 async def get_devices(request: web.Request) -> web.Response:
-    """Return known ESPHome devices with version info."""
+    """Return known ESPHome devices with version info.
+
+    Enriches every device — managed *and* unmanaged — with HA configured /
+    connected state by cross-referencing the device MAC and name against the
+    HA entity registry snapshot. This lets the UI distinguish "random mDNS
+    broadcast we happened to pick up" from "real ESPHome device HA also
+    knows about, but we don't have its YAML yet" on the unmanaged rows.
+    """
     device_poller = request.app.get("device_poller")
     server_version = get_esphome_version()
+    ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
+    ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
 
     if not device_poller:
         return web.json_response([])
@@ -475,6 +498,20 @@ async def get_devices(request: web.Request) -> web.Response:
             if dev.running_version
             else None
         )
+
+        # Cross-reference against HA. We synthesise a minimal ``meta`` so we
+        # can reuse the same matcher the targets endpoint uses — no
+        # friendly_name, just the raw device name.
+        meta = {"device_name_raw": dev.name}
+        ha_configured, ha_connected = _ha_status_for_target(
+            ha_entity_status,
+            target=dev.name,
+            meta=meta,
+            device_mac=dev.mac_address,
+            ha_mac_set=ha_mac_set,
+        )
+        d["ha_configured"] = ha_configured
+        d["ha_connected"] = ha_connected
         result.append(d)
 
     return web.json_response(result)
@@ -521,11 +558,22 @@ async def set_esphome_version_handler(request: web.Request) -> web.Response:
 
 @routes.post("/ui/api/validate")
 async def validate_config(request: web.Request) -> web.Response:
-    """Start a validation job for a single target (runs esphome config, not compile).
+    """Validate a target's config by running ``esphome config`` directly
+    on the server.
 
     Body: { "target": "mydevice.yaml" }
-    Returns: { "job_id": "..." }
+    Returns: { "success": true/false, "output": "..." }
+
+    Bug #25: validation now runs as a direct subprocess on the add-on
+    server instead of going through the job queue. Rationale:
+      - ``esphome config`` only reads YAML files that are already on the
+        server's filesystem — no bundle transfer, no worker needed.
+      - It's fast (2–5 s) and the result is returned immediately in the
+        HTTP response — no queue polling, no log modal, no streaming.
+      - Doesn't consume remote worker capacity.
     """
+    import asyncio as _asyncio  # noqa: PLC0415
+
     try:
         body = await request.json()
     except Exception:
@@ -536,27 +584,55 @@ async def validate_config(request: web.Request) -> web.Response:
         return web.json_response({"error": "target required"}, status=400)
 
     cfg = _cfg(request)
-    queue = request.app["queue"]
-    server_version = get_esphome_version()
+    config_path = safe_resolve(Path(cfg.config_dir), target)
+    if config_path is None or not config_path.exists():
+        return json_error("Target file not found", 404)
 
-    job = await queue.enqueue(
-        target=target,
-        esphome_version=server_version,
-        run_id=str(uuid.uuid4()),
-        timeout_seconds=cfg.job_timeout,
-        validate_only=True,
-    )
-    if job is None:
-        return web.json_response({"error": "Job already queued"}, status=409)
-    logger.info("Validation job %s enqueued for target %s", job.id, target)
-    return web.json_response({"job_id": job.id})
+    logger.info("Validating %s via esphome config (direct subprocess)", target)
+
+    try:
+        proc = await _asyncio.create_subprocess_exec(
+            "esphome", "config", str(config_path),
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.STDOUT,
+            cwd=cfg.config_dir,
+        )
+        stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=60)
+        output = stdout.decode("utf-8", errors="replace") if stdout else ""
+        success = proc.returncode == 0
+    except _asyncio.TimeoutError:
+        return web.json_response(
+            {"success": False, "output": "Validation timed out after 60 seconds"},
+            status=200,
+        )
+    except FileNotFoundError:
+        return web.json_response(
+            {"success": False, "output": "esphome binary not found on the server"},
+            status=500,
+        )
+    except Exception as exc:
+        logger.exception("Validation subprocess failed for %s", target)
+        return web.json_response(
+            {"success": False, "output": f"Internal error: {exc}"},
+            status=500,
+        )
+
+    if success:
+        logger.info("Validation passed for %s", target)
+    else:
+        logger.warning("Validation failed for %s (exit %d)", target, proc.returncode or -1)
+    return web.json_response({"success": success, "output": output})
 
 
 @routes.post("/ui/api/compile")
 async def start_compile(request: web.Request) -> web.Response:
     """Start a compile run.
 
-    Body: { "targets": "all" | "outdated" | ["file.yaml", ...] }
+    Body: {
+        "targets": "all" | "outdated" | ["file.yaml", ...],
+        "pinned_client_id": str | null,    # optional, pin to a specific worker
+        "esphome_version": str | null,     # optional, override the global default per-job (#16)
+    }
     Returns: { "run_id": "...", "enqueued": N }
     """
     try:
@@ -566,11 +642,16 @@ async def start_compile(request: web.Request) -> web.Response:
 
     targets_param = body.get("targets", "all")
     pinned_client_id = body.get("pinned_client_id")  # optional: pin job to specific worker
+    # #16: optional per-run ESPHome version override. Falls back to the global
+    # default from set_esphome_version when not provided. We do NOT mutate the
+    # global default — this is a per-job override only.
+    version_override = body.get("esphome_version")
     cfg = _cfg(request)
     queue = request.app["queue"]
     device_poller = request.app.get("device_poller")
 
     server_version = get_esphome_version()
+    job_version = version_override or server_version
     all_targets = scan_configs(cfg.config_dir)
 
     if targets_param == "all":
@@ -614,7 +695,7 @@ async def start_compile(request: web.Request) -> web.Response:
     for target in selected:
         job = await queue.enqueue(
             target=target,
-            esphome_version=server_version,
+            esphome_version=job_version,
             run_id=run_id,
             timeout_seconds=cfg.job_timeout,
             ota_address=ota_addresses.get(target),
@@ -623,7 +704,12 @@ async def start_compile(request: web.Request) -> web.Response:
         if job is not None:
             enqueued += 1
 
-    logger.info("Compile run %s: enqueued %d jobs", run_id, enqueued)
+    logger.info(
+        "Compile run %s: enqueued %d jobs (version=%s%s%s)",
+        run_id, enqueued, job_version,
+        " (override)" if version_override else "",
+        f" pinned={pinned_client_id}" if pinned_client_id else "",
+    )
     return web.json_response({"run_id": run_id, "enqueued": enqueued})
 
 
@@ -892,16 +978,32 @@ async def get_api_key(request: web.Request) -> web.Response:
 async def restart_device(request: web.Request) -> web.Response:
     """Restart an ESPHome device via the native API (preferred) or HA button entity (fallback).
 
-    Native API: connect via aioesphomeapi, list entities, find restart button, press it.
-    HA fallback: POST /api/services/button/press with button.<name>_restart entity_id.
+    Bug #12: previously the HA fallback called ``button.press`` with a guessed
+    entity_id and reported success on HTTP 200 — but HA's button.press service
+    returns 200 even for non-existent entities, so a wrong guess silently
+    no-op'd. Now:
+
+    1. Native API path is the primary route. Failures are logged at WARNING
+       (was DEBUG, so operators couldn't see why it fell through).
+    2. HA fallback verifies the entity_id actually exists (GET /states/<id>
+       returns 404 for missing entities) before calling button.press.
+    3. Multiple entity_id candidates are tried, derived from filename,
+       device_name_raw, friendly_name, and the cached HA entity registry.
+    4. If no candidate works, the response is a real error with the list of
+       candidates that were tried, not a fake "ok".
     """
+    import asyncio as _asyncio  # noqa: PLC0415
     import os  # noqa: PLC0415
     import aioesphomeapi as _api  # noqa: PLC0415
 
     filename = request.match_info["filename"]
     device_poller = request.app.get("device_poller")
 
-    # Try native API restart first — works even without HA integration
+    # ------------------------------------------------------------------
+    # 1. Native API path — works without HA integration. Connects directly
+    #    to the device, lists entities, finds the restart button, presses it.
+    # ------------------------------------------------------------------
+    native_error: "str | None" = None
     if device_poller:
         dev = None
         for d in device_poller.get_devices():
@@ -917,48 +1019,131 @@ async def restart_device(request: web.Request) -> web.Response:
                 try:
                     entities = await client.list_entities_services()
                     # entities is a tuple: (entities_list, services_list)
+                    restart_entity = None
                     for entity in entities[0]:
-                        if hasattr(entity, "object_id") and "restart" in getattr(entity, "object_id", "").lower():
-                            if hasattr(entity, "key"):
-                                client.button_command(entity.key)
-                                logger.info("Restarted %s via native API (key=%d)", filename, entity.key)
-                                return web.json_response({"ok": True, "method": "native_api"})
+                        obj_id = getattr(entity, "object_id", "") or ""
+                        if "restart" in obj_id.lower() and hasattr(entity, "key"):
+                            restart_entity = entity
+                            break
+                    if restart_entity is not None:
+                        client.button_command(restart_entity.key)
+                        # Give the protocol a beat to flush before disconnect.
+                        # button_command writes to the socket synchronously but
+                        # the bytes need to leave the buffer; without this brief
+                        # wait the disconnect can race the write.
+                        await _asyncio.sleep(0.1)
+                        logger.info(
+                            "Restarted %s via native API (object_id=%s, key=%d)",
+                            filename, getattr(restart_entity, "object_id", "?"), restart_entity.key,
+                        )
+                        return web.json_response({"ok": True, "method": "native_api"})
+                    native_error = "device exposes no restart button entity"
+                    logger.warning(
+                        "Native API restart for %s: %s — falling back to HA",
+                        filename, native_error,
+                    )
                 finally:
                     await client.disconnect()
             except Exception as exc:
-                logger.debug("Native API restart failed for %s: %s — trying HA fallback", filename, exc)
+                native_error = str(exc)
+                logger.warning(
+                    "Native API restart failed for %s: %s — falling back to HA",
+                    filename, native_error,
+                )
+        elif dev is None:
+            native_error = "device not found in poller"
+        else:
+            native_error = "device has no known IP address"
 
-    # Fallback: HA REST API button.press
+    # ------------------------------------------------------------------
+    # 2. HA REST API fallback. Build a list of entity_id candidates and
+    #    verify each one exists in HA before pressing.
+    # ------------------------------------------------------------------
     meta = get_device_metadata(_cfg(request).config_dir, filename)
     friendly = meta.get("friendly_name")
     raw_name: str = meta.get("device_name_raw") or filename.replace(".yaml", "")
-    norm_name = _normalize_for_ha(friendly) if friendly else _normalize_for_ha(raw_name)
-    entity_id = f"button.{norm_name}_restart"
+    file_stem = filename.replace(".yaml", "")
+
+    candidate_names: list[str] = []
+    for n in (friendly, raw_name, file_stem):
+        if n:
+            norm = _normalize_for_ha(n)
+            if norm and norm not in candidate_names:
+                candidate_names.append(norm)
+    candidate_entity_ids = [f"button.{n}_restart" for n in candidate_names]
 
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
-        return web.json_response({"error": "Could not restart device — no native API access and no SUPERVISOR_TOKEN"}, status=500)
+        return web.json_response(
+            {
+                "error": "Could not restart device",
+                "native_api_error": native_error,
+                "ha_fallback_error": "no SUPERVISOR_TOKEN",
+                "candidates_tried": [],
+            },
+            status=500,
+        )
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "http://supervisor/core/api/services/button/press",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"entity_id": entity_id},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    logger.info("Restarted device %s via HA (%s)", filename, entity_id)
-                    return web.json_response({"ok": True, "method": "ha_api", "entity_id": entity_id})
-                body = await resp.text()
-                logger.warning("Restart failed for %s: HTTP %d — %s", entity_id, resp.status, body)
-                return web.json_response(
-                    {"error": f"HA returned HTTP {resp.status}", "entity_id": entity_id},
-                    status=502,
-                )
+            headers = {"Authorization": f"Bearer {token}"}
+            tried: list[str] = []
+            for entity_id in candidate_entity_ids:
+                tried.append(entity_id)
+                # Verify the entity exists first — HA's button.press returns
+                # 200 even for missing entities, which is why bug #12 went
+                # unnoticed.
+                async with session.get(
+                    f"http://supervisor/core/api/states/{entity_id}",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as state_resp:
+                    if state_resp.status != 200:
+                        logger.debug(
+                            "Restart candidate %s does not exist in HA (HTTP %d)",
+                            entity_id, state_resp.status,
+                        )
+                        continue
+                # Entity exists — press the button.
+                async with session.post(
+                    "http://supervisor/core/api/services/button/press",
+                    headers=headers,
+                    json={"entity_id": entity_id},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info("Restarted device %s via HA (%s)", filename, entity_id)
+                        return web.json_response(
+                            {"ok": True, "method": "ha_api", "entity_id": entity_id},
+                        )
+                    body = await resp.text()
+                    logger.warning(
+                        "HA button.press failed for %s: HTTP %d — %s",
+                        entity_id, resp.status, body,
+                    )
+            # No candidate worked.
+            logger.warning(
+                "Restart failed for %s: native_api=%s, no HA candidate matched (tried %s)",
+                filename, native_error or "skipped", tried,
+            )
+            return web.json_response(
+                {
+                    "error": "Could not restart device — no native API restart button and no matching HA entity",
+                    "native_api_error": native_error,
+                    "candidates_tried": tried,
+                },
+                status=404,
+            )
     except Exception as exc:
-        logger.warning("Restart failed for %s: %s", entity_id, exc)
-        return web.json_response({"error": str(exc)}, status=500)
+        logger.warning("Restart failed for %s: %s", filename, exc)
+        return web.json_response(
+            {
+                "error": str(exc),
+                "native_api_error": native_error,
+                "candidates_tried": candidate_entity_ids,
+            },
+            status=500,
+        )
 
 
 @routes.post("/ui/api/retry")

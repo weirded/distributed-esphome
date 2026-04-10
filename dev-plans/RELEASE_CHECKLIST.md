@@ -1,105 +1,74 @@
 # Release Checklist
 
-Use this checklist when preparing a stable release from `develop` → `main`.
-Copy the checklist into a GitHub issue or scratch file and check items off as you go.
+Use when shipping `develop` → `main`. Copy into a GitHub issue and check items off.
+
+The goal here is **what isn't automated**. Anything covered by CI, the pre-push hook, or `./push-to-hass-4.sh` is referenced with a one-liner — don't re-run it by hand.
 
 ---
 
 ## Pre-release (on `develop`)
 
-### Claude can do
+### Claude does
 
-- [ ] Run full test suite, fix any failures: `pytest tests/`
-- [ ] Run mypy on server and client:
-  ```
-  mypy ha-addon/server/ --ignore-missing-imports
-  mypy ha-addon/client/ --ignore-missing-imports
-  ```
-- [ ] Build the frontend, fix any errors: `cd ha-addon/ui && npm run build`
-- [ ] Bump version: `bash scripts/bump-version.sh X.Y.Z`
-- [ ] Write changelog entry in `ha-addon/CHANGELOG.md`:
-  - Add `## X.Y.Z` section
-  - Source material: `dev-plans/WORKITEMS-X.Y.md` — has both completed work items and the bug fixes for the release
-  - Group by category (features, improvements, bug fixes)
-  - Consolidate dev-iteration noise into clean user-facing descriptions
-- [ ] Update `README.md` — ensure feature list, config tables, and architecture match current state
-- [ ] Update `ha-addon/DOCS.md` — ensure HA add-on panel docs match current features and options
-- [ ] Audit both docs for stale content — remove outdated diagrams, references to removed features, and anything that duplicates what the code already says
-- [ ] Update `ha-addon/config.yaml` — verify `description`, `map`, `ports`, `options`, `schema` reflect any new config
-- [ ] Review `dev-plans/WORKITEMS-X.Y.md` — mark completed items, move any deferred items to the next release file
-- [ ] Grep for TODO/FIXME/HACK in changed files — resolve or document as known issues
+- [ ] **Refresh pinned deps**: `bash scripts/refresh-deps.sh`. Review the diff and commit as `chore: refresh pinned deps for X.Y.Z`.
+- [ ] **Dependabot**: confirm no open high/critical alerts. `gh api repos/:owner/:repo/dependabot/alerts --jq '.[] | select(.state=="open" and (.security_advisory.severity=="high" or .security_advisory.severity=="critical"))'` — must be empty. If any are open, upgrade the dep or explicitly accept the risk in WORKITEMS. (`pip-audit` + `npm audit` + ruff + mypy + pytest + invariants + frontend build already gate CI.)
+- [ ] **Ensure CI is green on `develop`**: `gh run list --branch develop --limit 3`.
+- [ ] **Bump version**: `bash scripts/bump-version.sh X.Y.Z`.
+- [ ] **Write changelog entry** in `ha-addon/CHANGELOG.md`. Add a `## X.Y.Z` section. Source material is `dev-plans/WORKITEMS-X.Y.md` (has both completed work items and bug fixes). Group by category (features / improvements / bug fixes) and consolidate dev-iteration noise into clean user-facing descriptions.
+- [ ] **Sync user-visible docs** if anything changed:
+  - `README.md` — feature list, config tables, architecture.
+  - `ha-addon/DOCS.md` — HA add-on panel docs.
+  - `ha-addon/config.yaml` — `description`, `map`, `ports`, `options`, `schema`.
+  Remove stale content (outdated diagrams, references to removed features, duplication of what the code already says).
+- [ ] **Close out `dev-plans/WORKITEMS-X.Y.md`**: mark all completed, move any deferred items to the next release file. Then **move** the file to `dev-plans/archive/` (`git mv dev-plans/WORKITEMS-X.Y.md dev-plans/archive/`).
+- [ ] **Grep TODO/FIXME/HACK** in changed files — resolve or document as known issues.
 
-- [ ] Playwright smoke test against hass-4 (after deploy):
-  - [ ] All three tabs load with data
-  - [ ] Device search/filter works
-  - [ ] Column picker opens, toggles columns
-  - [ ] Queue tab shows jobs, badges render
-  - [ ] Workers tab shows workers with status dots
-  - [ ] Editor modal opens, Monaco renders
-  - [ ] Log modal opens, xterm renders
-  - [ ] Dark/light theme toggle switches correctly
-  - [ ] No console errors on any tab
+### You do
 
-### You need to do
-
-- [ ] Deploy to hass-4 for smoke test: `./push-to-hass-4.sh`
-- [ ] Read the changelog draft — does it accurately represent what users care about?
-- [ ] Manual smoke test (things Playwright can't verify):
-  - [ ] Compile a device end-to-end, watch log stream, OTA succeeds
-  - [ ] Live device logs connect to a real device
-  - [ ] Editor autocomplete triggers on real config
-- [ ] Check for any unreleased config changes that need migration notes
-- [ ] Decide: are all `develop` commits release-worthy, or cherry-pick?
+- [ ] **Deploy + smoke test**: `./push-to-hass-4.sh`. Runs the full `e2e-hass-4` Playwright suite (device load, schedule upgrade, compile + OTA with live log streaming, editor edit + validate, live device logs, parallel-compile pinned to local-worker).
+- [ ] **Read the changelog draft** — does it represent what users care about?
+- [ ] **Sanity-check editor autocomplete on a real config** — the only thing Playwright can't verify end-to-end.
+- [ ] Note any config changes that need migration notes for users upgrading.
+- [ ] Decide: merge all `develop` commits, or cherry-pick?
 
 ---
 
 ## Release (merge to `main`)
 
-### Claude can do
+### Claude does
 
-- [ ] Create release branch if needed: `git checkout -b release/X.Y.Z develop`
-- [ ] Final commit with version + changelog + docs on `develop` (or release branch)
-- [ ] Verify pre-push hook passes: tests, mypy, changelog entry present
-- [ ] Merge to main: `git checkout main && git merge develop` (or merge release branch)
-- [ ] Push to main: `git push origin main`
-  - Pre-push hook runs automatically (tests + mypy + changelog check)
-  - GHCR images build automatically on push to main
-- [ ] Tag the release: `git tag vX.Y.Z && git push origin vX.Y.Z`
-- [ ] Verify GitHub Actions pass: `gh run list --branch main --limit 3`
-- [ ] Verify GHCR images published: `gh api /orgs/{owner}/packages/container/{name}/versions --jq '.[0]'`
+- [ ] Create release branch if needed: `git checkout -b release/X.Y.Z develop`.
+- [ ] Final commit with version + changelog + docs on `develop` (or release branch).
+- [ ] Merge to main: `git checkout main && git merge develop` (or merge the release branch).
+- [ ] Push: `git push origin main`. Pre-push hook runs tests + mypy + changelog check. GHCR publish workflows fire automatically.
+- [ ] Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+- [ ] Verify: `gh run list --branch main --limit 3` and `gh api /orgs/{owner}/packages/container/{name}/versions --jq '.[0]'`.
 
 ---
 
 ## Post-release
 
-### Claude can do
+### Claude does
 
-- [ ] Start next dev cycle on `develop`:
-  ```
-  git checkout develop
-  bash scripts/bump-dev.sh
-  ```
-- [ ] Create the next release file: `dev-plans/WORKITEMS-X.Y+1.md` (copy structure from previous file, leave items unchecked)
+- [ ] Start next dev cycle: `git checkout develop && bash scripts/bump-dev.sh`.
+- [ ] Create `dev-plans/WORKITEMS-X.Y+1.md` — copy structure from the previous file, leave items unchecked.
 
-### You need to do
+### You do
 
-- [ ] Update HA add-on repo (if using a separate repo for distribution)
-- [ ] Verify the add-on updates cleanly on hass-4 from the published image
-- [ ] Post release notes if desired (GitHub release, Reddit, Discord)
+- [ ] Update the HA add-on repo (if using a separate repo for distribution).
+- [ ] Verify the add-on updates cleanly on hass-4 from the published image.
+- [ ] Post release notes if desired (GitHub release, Reddit, Discord).
 
 ---
 
-## Version files kept in sync by `scripts/bump-version.sh`
+## Reference
+
+**`scripts/bump-version.sh X.Y.Z`** keeps these in sync:
 
 | File | Field |
 |------|-------|
-| `ha-addon/VERSION` | Entire file content |
+| `ha-addon/VERSION` | entire content |
 | `ha-addon/config.yaml` | `version:` field |
 | `ha-addon/client/client.py` | `CLIENT_VERSION` constant |
 
-## Pre-push hook (`.githooks/pre-push`)
-
-Runs automatically on push:
-- `pytest tests/` (excluding e2e)
-- `mypy` on server + client
-- On `main` branch only: verifies `CHANGELOG.md` has a `## X.Y.Z` entry matching VERSION
+**`.githooks/pre-push`** runs `pytest` + `mypy` on every push, plus a `CHANGELOG.md` entry check when pushing to `main`. Install with `bash scripts/install-hooks.sh`.

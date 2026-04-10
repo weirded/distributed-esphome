@@ -56,7 +56,7 @@ export function DeviceLogModal({ target, onClose }: Props) {
       if (!termRef.current) return;
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const core = (term as any)._core;
+        const core = (term as any)._core; // ALLOW_ANY: xterm internal
         const cellW = core?._renderService?.dimensions?.css?.cell?.width;
         const cellH = core?._renderService?.dimensions?.css?.cell?.height;
         if (cellW > 0 && cellH > 0 && containerRef.current) {

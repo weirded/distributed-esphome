@@ -48,6 +48,92 @@ async def version_header_middleware(request: web.Request, handler):
     return response
 
 
+# E.9: defence-in-depth security headers on every UI-tier response. Applied
+# to ``/``, ``/index.html``, ``/assets/*``, and every ``/ui/api/*`` endpoint
+# (the browser-facing surface). NOT applied to ``/api/v1/*`` since those are
+# consumed programmatically by build workers and the headers add no value.
+#
+# CSP design notes:
+# - script-src needs 'unsafe-inline' because Monaco's @monaco-editor/react
+#   loader injects inline script elements for worker bootstrap. Tailwind v4
+#   also generates inline styles at runtime.
+# - style-src needs 'unsafe-inline' for the same Tailwind + Monaco reason.
+# - connect-src must allow wss: for the live-log WebSocket and
+#   https://schema.esphome.io for the editor schema fetcher (api/esphomeSchema.ts).
+# - worker-src 'self' blob: covers Monaco's editor worker.
+# - frame-ancestors 'self' enforces clickjacking protection without breaking
+#   HA Ingress (which loads us in an iframe served from the same origin).
+# NOTE: ``cdn.jsdelivr.net`` is allowed in script-src + connect-src because
+# the @monaco-editor/react wrapper loads Monaco's runtime from jsDelivr by
+# default. Bundling Monaco locally (via vite-plugin-monaco-editor) would let
+# us drop this origin entirely and ship a fully self-hosted UI; tracked as a
+# follow-up after #15 was found mid-1.3.1 (the editor was breaking because
+# the CSP from E.9 blocked the CDN). For now we allow it explicitly so the
+# editor works in all install topologies.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    "connect-src 'self' ws: wss: https://schema.esphome.io https://cdn.jsdelivr.net; "
+    "worker-src 'self' blob:; "
+    "frame-ancestors 'self'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+    "X-Frame-Options": "SAMEORIGIN",  # legacy fallback for browsers that ignore CSP frame-ancestors
+}
+
+
+@web.middleware
+async def security_headers_middleware(request: web.Request, handler):
+    """Attach defence-in-depth security headers to UI-tier responses (E.9)."""
+    response = await handler(request)
+    path = request.path
+    if path.startswith("/api/v1/"):
+        # Worker tier — no benefit, skip.
+        return response
+    # Everything else (UI HTML, static assets, /ui/api/*, /, /index.html)
+    # gets the headers. WebSocket upgrades (101 Switching Protocols) inherit
+    # them too, which is harmless.
+    for k, v in _SECURITY_HEADERS.items():
+        # Don't clobber a header an inner handler explicitly set.
+        if k not in response.headers:
+            response.headers[k] = v
+    return response
+
+
+def _normalize_peer_ip(raw: str) -> str:
+    """Canonicalize a peer IP string for comparison against HA_SUPERVISOR_IP.
+
+    Strips IPv4-mapped IPv6 prefixes (``::ffff:172.30.32.2`` → ``172.30.32.2``)
+    and zone identifiers (``fe80::1%eth0`` → ``fe80::1``), so an IPv4 string
+    in HA_SUPERVISOR_IP still matches the same supervisor coming in over a
+    dual-stack socket. Falls back to the raw string if parsing fails — that
+    way an unparseable address simply won't match the supervisor (which is
+    safer than crashing the request).
+    """
+    if not raw:
+        return ""
+    # Strip IPv6 zone id (e.g. ``fe80::1%eth0``)
+    raw = raw.split("%", 1)[0]
+    try:
+        import ipaddress  # noqa: PLC0415
+        addr = ipaddress.ip_address(raw)
+        # IPv4-mapped IPv6 → unwrap to plain IPv4 string
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+            return str(addr.ipv4_mapped)
+        return str(addr)
+    except (ValueError, ImportError):
+        return raw
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     path = request.path
@@ -58,13 +144,24 @@ async def auth_middleware(request: web.Request, handler):
 
     # /api/v1/* — require Bearer token UNLESS from HA supervisor address
     if path.startswith("/api/v1/"):
-        peer = request.transport and request.transport.get_extra_info("peername")
+        # ``transport`` may be None during tests or for some edge-case
+        # transports; ``peername`` may also be None even on a real transport
+        # (e.g. unix-socket connections, closed streams). Handle both without
+        # crashing — fall through to token auth in either case. C.2.
         peer_ip = ""
+        try:
+            peer = request.transport.get_extra_info("peername") if request.transport else None
+        except Exception:
+            peer = None
         if peer:
-            peer_ip = peer[0] if isinstance(peer, tuple) else str(peer)
+            raw_ip = peer[0] if isinstance(peer, tuple) else str(peer)
+            peer_ip = _normalize_peer_ip(raw_ip)
 
         from constants import HA_SUPERVISOR_IP, HEADER_AUTHORIZATION  # noqa: PLC0415
-        if peer_ip == HA_SUPERVISOR_IP:
+        # Normalize the configured Supervisor IP too so an IPv6-mapped form
+        # like ``::ffff:172.30.32.2`` from a dual-stack Docker network still
+        # matches the canonical IPv4 string. Compare canonicalized forms.
+        if peer_ip and peer_ip == _normalize_peer_ip(HA_SUPERVISOR_IP):
             return await handler(request)
 
         cfg: AppConfig = request.app["config"]
@@ -73,6 +170,20 @@ async def auth_middleware(request: web.Request, handler):
             auth_header = request.headers.get(HEADER_AUTHORIZATION, "")
             if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], cfg.token):
                 return await handler(request)
+
+            # Diagnose the refusal. Each branch logs a distinct structured
+            # reason so operators can tell "wrong token" from "missing header"
+            # from "non-supervisor peer IP" without enabling debug logging.
+            if not auth_header:
+                reason = "missing_authorization_header"
+            elif not auth_header.startswith("Bearer "):
+                reason = "authorization_not_bearer_scheme"
+            else:
+                reason = "bearer_token_mismatch"
+            logger.warning(
+                "401 on %s: reason=%s peer_ip=%s (expected supervisor=%s)",
+                path, reason, peer_ip or "<unknown>", HA_SUPERVISOR_IP,
+            )
         else:
             # No token configured — allow all (development mode)
             logger.warning("No auth token configured; allowing unauthenticated request to %s", path)
@@ -130,6 +241,30 @@ async def ha_entity_poller(app: web.Application) -> None:
     timeout = aiohttp.ClientTimeout(total=10)
     first_poll = True
 
+    # Repeated identical failures are demoted to DEBUG after the second
+    # occurrence of the same fingerprint, so a persistent outage (HA down,
+    # network blip) doesn't drown the log and mask unrelated problems. A
+    # single iteration can emit multiple warnings with different fingerprints
+    # (e.g. both "template_exception" and "poll_exception") and each is
+    # counted independently. Any successful poll clears all counts.
+    warning_counts: dict[str, int] = {}
+
+    def _log_poll_warning(fingerprint: str, message: str, *args: object, exc_info: bool = False) -> None:
+        count = warning_counts.get(fingerprint, 0) + 1
+        warning_counts[fingerprint] = count
+        if count <= 2:
+            logger.warning(message, *args, exc_info=exc_info)
+            if count == 2:
+                logger.warning(
+                    "Above warning is repeating; further identical failures "
+                    "will be logged at DEBUG level until the next success."
+                )
+        else:
+            logger.debug(message, *args, exc_info=exc_info)
+
+    def _reset_poll_warnings() -> None:
+        warning_counts.clear()
+
     while True:
         # Poll immediately on first iteration, then every 30s
         if not first_poll:
@@ -154,12 +289,21 @@ async def ha_entity_poller(app: web.Application) -> None:
                                 parsed = _json.loads(raw)
                                 esphome_entity_ids = parsed if isinstance(parsed, list) else []
                             except (_json.JSONDecodeError, TypeError):
-                                logger.warning("HA template API returned unparseable response: %.200s", raw)
+                                _log_poll_warning(
+                                    "template_unparseable",
+                                    "HA template API returned unparseable response: %.200s", raw,
+                                )
                         else:
                             body = await resp.text()
-                            logger.warning("HA template API returned HTTP %d: %.200s", resp.status, body)
+                            _log_poll_warning(
+                                f"template_http_{resp.status}",
+                                "HA template API returned HTTP %d: %.200s", resp.status, body,
+                            )
                 except Exception:
-                    logger.warning("Template API call failed", exc_info=True)
+                    _log_poll_warning(
+                        "template_exception",
+                        "Template API call failed", exc_info=True,
+                    )
 
                 # 1b. Get MAC addresses for ESPHome devices via template API.
                 # ESPHome devices store MACs in device connections (not identifiers):
@@ -209,7 +353,8 @@ async def ha_entity_poller(app: web.Application) -> None:
                     timeout=timeout,
                 ) as resp:
                     if resp.status != 200:
-                        logger.warning(
+                        _log_poll_warning(
+                            f"states_http_{resp.status}",
                             "HA states returned HTTP %d — check homeassistant_api: true in config.yaml",
                             resp.status,
                         )
@@ -265,6 +410,10 @@ async def ha_entity_poller(app: web.Application) -> None:
             app["ha_entity_status"].update(ha_status)
             app["ha_mac_set"] = ha_mac_set
 
+            # A full successful poll resets the suppression state so the next
+            # transient failure gets its warning re-promoted.
+            _reset_poll_warnings()
+
             if first_poll:
                 first_poll = False
                 configured_count = len(ha_status)
@@ -283,7 +432,15 @@ async def ha_entity_poller(app: web.Application) -> None:
                 )
 
         except Exception:
-            logger.warning("Error polling HA entity status", exc_info=True)
+            _log_poll_warning(
+                "poll_exception",
+                "Error polling HA entity status", exc_info=True,
+            )
+        finally:
+            # Always clear first_poll so subsequent retries sleep 30s,
+            # even when the first attempt fails with an exception or a
+            # non-200 status (which uses `continue` to restart the loop).
+            first_poll = False
 
 
 async def config_scanner(app: web.Application) -> None:
@@ -326,25 +483,97 @@ async def _fetch_ha_esphome_version(session: aiohttp.ClientSession) -> Optional[
     if not token:
         return None
 
-    for slug in ("5c53de3b_esphome", "core_esphome", "local_esphome"):
+    # Two-tier discovery:
+    #
+    # 1. Preferred: list all installed add-ons via ``GET /addons`` and pick
+    #    the ESPHome one. This works for any slug, including the hashed forms
+    #    that confused the original hardcoded list. BUT it requires
+    #    ``hassio_role: manager`` — plain ``hassio_api: true`` only grants
+    #    access to ``/addons/<slug>/info``, and the listing returns 403.
+    #    We do NOT escalate the role just for version detection; instead we
+    #    silently fall back to step 2 on any non-200.
+    #
+    # 2. Fallback: probe a known list of slug patterns against
+    #    ``/addons/<slug>/info``. This is the pre-1.3.1 mechanism plus the
+    #    community-repo hash ``a0d7b954_esphome`` (added per bug #4 triage).
+    #    It still misses fully-custom hashed slugs but covers ~all real
+    #    installs without requiring an elevated role.
+    auth = {"Authorization": f"Bearer {token}"}
+
+    # --- Tier 1: listing
+    listing_failed = False
+    try:
+        async with session.get(
+            "http://supervisor/addons",
+            headers=auth,
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                addons: list[dict] = data.get("data", {}).get("addons", []) or []
+
+                def _is_esphome_addon(a: dict) -> bool:
+                    slug = str(a.get("slug", "")).lower()
+                    name = str(a.get("name", "")).lower()
+                    if slug in ("core_esphome", "local_esphome") or slug.endswith("_esphome"):
+                        return True
+                    return name == "esphome" or name.startswith("esphome ")
+
+                matches = [a for a in addons if _is_esphome_addon(a)]
+                for addon in matches:
+                    version = addon.get("version")
+                    slug = addon.get("slug", "")
+                    if version:
+                        logger.debug(
+                            "Detected HA ESPHome add-on version %s (slug: %s, via /addons listing)",
+                            version, slug,
+                        )
+                        return str(version)
+                # Listing succeeded but no match — try the fallback anyway in
+                # case the name heuristic missed it.
+                listing_failed = not matches
+            else:
+                # 403 is the common case (we don't have hassio_role: manager).
+                # Drop to the per-slug fallback silently.
+                listing_failed = True
+    except Exception as exc:
+        logger.debug("Supervisor /addons listing failed (%s); using slug fallback", exc)
+        listing_failed = True
+
+    if not listing_failed:
+        # Listing worked but the matched add-ons had no ``version`` field —
+        # fall through to the per-slug probe to fill it in.
+        pass
+
+    # --- Tier 2: per-slug probe over known patterns.
+    candidate_slugs = (
+        "core_esphome",
+        "local_esphome",
+        "a0d7b954_esphome",  # community repo (default for most users)
+        "5c53de3b_esphome",  # alternate community repo hash
+    )
+    for slug in candidate_slugs:
         try:
             async with session.get(
                 f"http://supervisor/addons/{slug}/info",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=auth,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    version = data.get("data", {}).get("version")
+                    info = await resp.json()
+                    version = info.get("data", {}).get("version")
                     if version:
-                        logger.debug("Detected HA ESPHome add-on version %s (slug: %s)", version, slug)
+                        logger.debug(
+                            "Detected HA ESPHome add-on version %s (slug: %s, via /info probe)",
+                            version, slug,
+                        )
                         return str(version)
-                else:
-                    logger.warning("Supervisor query for %s returned HTTP %d (need hassio_api: true in config.yaml?)", slug, resp.status)
+                # 404 is the expected "not this slug" outcome — keep probing
+                # silently. Anything else is unexpected but also not worth
+                # spamming the log every 30s.
         except Exception as exc:
-            logger.warning("Supervisor query failed for slug %s: %s", slug, exc)
+            logger.debug("Supervisor /addons/%s/info query failed: %s", slug, exc)
 
-    logger.warning("Could not detect ESPHome add-on version from Supervisor API")
     return None
 
 
@@ -370,11 +599,22 @@ async def _fetch_pypi_versions(session: aiohttp.ClientSession, limit: int = 50) 
 
 
 async def pypi_version_refresher(app: web.Application) -> None:
-    """Background task: refresh PyPI versions hourly and re-check HA ESPHome add-on every 5 min."""
+    """Background task: refresh PyPI versions hourly and re-check HA ESPHome add-on every 30s.
+
+    Runs immediately on first iteration so that the HA Supervisor version and
+    the PyPI version list are populated shortly after startup, without blocking
+    the server startup path.
+    """
     check_interval = 30   # check HA add-on version every 30 seconds
     pypi_countdown = 0    # fetch PyPI immediately on first loop
+    first_run = True
     while True:
-        await asyncio.sleep(check_interval)
+        # Run immediately on first iteration, then every 30s.
+        # first_run is set to False before the try block so that a failure on
+        # the first attempt still causes subsequent attempts to sleep.
+        if not first_run:
+            await asyncio.sleep(check_interval)
+        first_run = False
         try:
             async with aiohttp.ClientSession() as session:
                 # Re-check HA ESPHome add-on version
@@ -447,7 +687,7 @@ def create_app() -> web.Application:
 
     device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
 
-    app = web.Application(middlewares=[version_header_middleware, auth_middleware])
+    app = web.Application(middlewares=[security_headers_middleware, version_header_middleware, auth_middleware])
     app["config"] = cfg
     app["queue"] = queue
     app["registry"] = registry
@@ -484,25 +724,22 @@ def create_app() -> web.Application:
         logger.info("Config dir: %s", cfg.config_dir)
         logger.info("Token configured: %s", bool(cfg.token))
 
-        # Detect ESPHome version: HA add-on → installed package → "unknown"
+        # Use the locally installed ESPHome package version as the initial
+        # active version.  The pypi_version_refresher background task will
+        # contact the HA Supervisor API shortly after startup and update the
+        # version if it detects a different version in the ESPHome add-on.
+        # Doing this at startup (instead of blocking on the Supervisor API
+        # here) avoids a 10–15 s startup delay when the Supervisor is slow
+        # or the hassio_api permission is not yet granted, which previously
+        # caused the web server to refuse connections during that window.
         from scanner import (  # noqa: PLC0415
             scan_configs, build_name_to_target_map,
             set_esphome_version, _get_installed_esphome_version,
         )
 
-        async with aiohttp.ClientSession() as session:
-            detected = await _fetch_ha_esphome_version(session)
-            available = await _fetch_pypi_versions(session)
-
-        app["esphome_detected_version"] = detected
-        if available:
-            app["esphome_available_versions"] = available
-            app["esphome_versions_fetched_at"] = time.monotonic()
-
-        # Select initial version: HA detected → installed package → "unknown"
-        selected = detected or _get_installed_esphome_version()
+        selected = _get_installed_esphome_version()
         set_esphome_version(selected)
-        logger.info("Active ESPHome version: %s (detected: %s)", selected, detected)
+        logger.info("Active ESPHome version: %s (background task will refine from HA Supervisor)", selected)
 
         # Update device poller with known targets
         targets = scan_configs(cfg.config_dir)

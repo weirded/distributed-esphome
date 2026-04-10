@@ -231,3 +231,166 @@ async def test_unknown_path_passes_through_middleware():
         assert data["other"] is True
     finally:
         await client.close()
+
+
+# ---------------------------------------------------------------------------
+# B.2 — Edge cases: logging reasons, peername=None, spoofed peer IP, header variants
+# ---------------------------------------------------------------------------
+
+async def test_api_v1_401_logs_structured_reason_for_missing_header(caplog):
+    """Bug #3: a 401 from missing auth header must emit a structured WARNING
+    naming the reason and the peer IP. Operators rely on this to distinguish
+    token vs peer-IP vs missing-header rejections without enabling DEBUG."""
+    import logging
+
+    client = await _make_client("secret-token")
+    try:
+        with caplog.at_level(logging.WARNING, logger="main"):
+            resp = await client.get("/api/v1/status")
+            assert resp.status == 401
+    finally:
+        await client.close()
+
+    main_warnings = [r for r in caplog.records if r.name == "main" and r.levelno == logging.WARNING]
+    matching = [r for r in main_warnings if "401" in r.getMessage() and "missing_authorization_header" in r.getMessage()]
+    assert matching, (
+        "expected a structured 401 warning with reason=missing_authorization_header; "
+        f"got: {[r.getMessage() for r in main_warnings]}"
+    )
+
+
+async def test_api_v1_401_logs_bearer_token_mismatch_reason(caplog):
+    import logging
+
+    client = await _make_client("secret-token")
+    try:
+        with caplog.at_level(logging.WARNING, logger="main"):
+            resp = await client.get(
+                "/api/v1/status",
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+            assert resp.status == 401
+    finally:
+        await client.close()
+
+    main_warnings = [r for r in caplog.records if r.name == "main" and r.levelno == logging.WARNING]
+    assert any("bearer_token_mismatch" in r.getMessage() for r in main_warnings), (
+        f"expected bearer_token_mismatch warning; got: {[r.getMessage() for r in main_warnings]}"
+    )
+
+
+async def test_api_v1_401_logs_not_bearer_scheme_reason(caplog):
+    import logging
+
+    client = await _make_client("secret-token")
+    try:
+        with caplog.at_level(logging.WARNING, logger="main"):
+            resp = await client.get(
+                "/api/v1/status",
+                headers={"Authorization": "Basic dXNlcjpwYXNz"},
+            )
+            assert resp.status == 401
+    finally:
+        await client.close()
+
+    main_warnings = [r for r in caplog.records if r.name == "main" and r.levelno == logging.WARNING]
+    assert any("authorization_not_bearer_scheme" in r.getMessage() for r in main_warnings), (
+        f"expected authorization_not_bearer_scheme warning; got: {[r.getMessage() for r in main_warnings]}"
+    )
+
+
+async def test_api_v1_plausible_supervisor_spoof_is_rejected():
+    """Peer IP adjacent to the real Supervisor IP must NOT be trusted.
+
+    172.30.32.3 looks plausible but is not the Supervisor address; the
+    middleware must fall through to token auth.
+    """
+    from unittest.mock import MagicMock, patch
+
+    app = _make_app(token="secret-token")
+
+    # Build a fake request whose transport reports the spoofed IP.
+    request = MagicMock(spec=web.Request)
+    request.path = "/api/v1/status"
+    request.transport = MagicMock()
+    request.transport.get_extra_info.return_value = ("172.30.32.3", 54321)
+    request.headers = {}  # no Authorization
+    request.app = app
+
+    called = {"handler": False}
+
+    async def handler(_req):
+        called["handler"] = True
+        return web.json_response({"ok": True})
+
+    resp = await auth_middleware(request, handler)
+    assert resp.status == 401
+    assert called["handler"] is False
+
+
+async def test_api_v1_real_supervisor_ip_bypasses_auth():
+    """The hardcoded Supervisor IP (172.30.32.2) must still bypass auth —
+    regression guard against an accidental rename of HA_SUPERVISOR_IP."""
+    from unittest.mock import MagicMock
+
+    from constants import HA_SUPERVISOR_IP
+
+    app = _make_app(token="secret-token")
+    request = MagicMock(spec=web.Request)
+    request.path = "/api/v1/status"
+    request.transport = MagicMock()
+    request.transport.get_extra_info.return_value = (HA_SUPERVISOR_IP, 42000)
+    request.headers = {}
+    request.app = app
+
+    called = {"handler": False}
+
+    async def handler(_req):
+        called["handler"] = True
+        return web.json_response({"ok": True})
+
+    resp = await auth_middleware(request, handler)
+    assert called["handler"] is True
+    assert resp.status == 200
+
+
+async def test_api_v1_peername_none_falls_through_to_token_auth():
+    """``transport.get_extra_info("peername")`` returning None must not crash
+    and must fall through to the token-auth branch.
+
+    Regression guard for the C.2 edge case: if `peername` is missing, the
+    middleware must still process the Bearer token rather than 500-ing.
+    """
+    from unittest.mock import MagicMock
+
+    app = _make_app(token="secret-token")
+    request = MagicMock(spec=web.Request)
+    request.path = "/api/v1/status"
+    request.transport = MagicMock()
+    request.transport.get_extra_info.return_value = None  # no peer info
+    request.headers = {"Authorization": "Bearer secret-token"}
+    request.app = app
+
+    async def handler(_req):
+        return web.json_response({"ok": True})
+
+    resp = await auth_middleware(request, handler)
+    assert resp.status == 200
+
+
+async def test_api_v1_peername_none_still_rejects_bad_token():
+    from unittest.mock import MagicMock
+
+    app = _make_app(token="secret-token")
+    request = MagicMock(spec=web.Request)
+    request.path = "/api/v1/status"
+    request.transport = MagicMock()
+    request.transport.get_extra_info.return_value = None
+    request.headers = {"Authorization": "Bearer WRONG"}
+    request.app = app
+
+    async def handler(_req):
+        return web.json_response({"ok": True})
+
+    resp = await auth_middleware(request, handler)
+    assert resp.status == 401

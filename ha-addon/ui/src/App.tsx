@@ -27,6 +27,7 @@ import {
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
 import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
+import { UpgradeModal } from './components/UpgradeModal';
 import { EditorModal } from './components/EditorModal';
 import { EsphomeVersionDropdown } from './components/EsphomeVersionDropdown';
 import { LogModal } from './components/LogModal';
@@ -91,25 +92,44 @@ export default function App() {
     getEsphomeVersions,
     { refreshInterval: 15 * 60_000, onError: () => {}, compare: deepCompare },
   );
+  // Poll at 1 Hz for live-feeling updates. Workers + queue are pure in-memory
+  // reads. Targets/devices does a readdir + per-target stat() for mtime cache
+  // checks (metadata resolution is cached and only re-fires when a file
+  // changes), which is cheap on Linux but not free — if this becomes a
+  // concern on large config dirs, add a server-side snapshot cache.
   const { data: workers = [], mutate: mutateWorkers } = useSWR(
     'workers',
     getWorkers,
-    { refreshInterval: 5_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
   );
   const { data: devicesAndTargets, mutate: mutateDevices } = useSWR(
     'devices',
     async () => { const [t, d] = await Promise.all([getTargets(), getDevices()]); return { targets: t, devices: d }; },
-    { refreshInterval: 15_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
   );
   const targets = devicesAndTargets?.targets ?? [];
   const devices = devicesAndTargets?.devices ?? [];
   const { data: queue = [], mutate: mutateQueue } = useSWR(
     'queue',
     getQueue,
-    { refreshInterval: 3_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
   );
   // Exclude validation-only jobs from display (they run server-side and auto-prune)
   const displayQueue = useMemo(() => queue.filter(j => !j.validate_only), [queue]);
+  // Map of target filename → active (PENDING or WORKING) job, used by the
+  // Devices tab to render an "Upgrading…" status on rows whose compile is
+  // currently in flight (#32). The most recent active job wins if a target
+  // somehow has more than one — the queue dedupes by target so this should
+  // be at most one in practice.
+  const activeJobsByTarget = useMemo(() => {
+    const map = new Map<string, typeof displayQueue[number]>();
+    for (const j of displayQueue) {
+      if (j.state === 'pending' || j.state === 'working') {
+        map.set(j.target, j);
+      }
+    }
+    return map;
+  }, [displayQueue]);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme);
   const [streamerMode, setStreamerMode] = useState(() => localStorage.getItem('streamerMode') === 'true');
@@ -123,6 +143,9 @@ export default function App() {
   const [deviceLogTarget, setDeviceLogTarget] = useState<string | null>(null);
   const [editorTarget, setEditorTarget] = useState<string | null>(null);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
+  const [connectModalPreset, setConnectModalPreset] = useState<import('./types').WorkerPreset | null>(null);
+  // #16: per-target Upgrade modal. Stores the target filename + display name.
+  const [upgradeModalTarget, setUpgradeModalTarget] = useState<{ target: string; displayName: string } | null>(null);
   const [renameModalTarget, setRenameModalTarget] = useState<string | null>(null);
 
   // Apply theme to <html> element on mount and on change
@@ -169,33 +192,52 @@ export default function App() {
       const data = await compile(targets_);
       addToast(`Queued ${data.enqueued} device(s)`, 'success');
       switchTab('queue');
+      // Mutate BOTH queue and devices: queue so the new job appears on the
+      // queue tab immediately, devices so the orange "Upgrading" dot
+      // appears on the source row immediately (#11). Without the devices
+      // mutate the dot lags by up to one poll interval.
       mutateQueue();
+      mutateDevices();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
   }
 
-  async function handleCompileOnWorker(target: string, clientId: string) {
+  // #16: open the Upgrade modal for a single target. The modal collects
+  // worker + ESPHome version preferences and calls handleUpgradeConfirm.
+  function handleOpenUpgradeModal(target: string) {
+    const t = targets.find(x => x.target === target);
+    const displayName = t?.friendly_name || stripYaml(target);
+    setUpgradeModalTarget({ target, displayName });
+  }
+
+  async function handleUpgradeConfirm(params: { pinnedClientId: string | null; esphomeVersion: string | null }) {
+    const ctx = upgradeModalTarget;
+    if (!ctx) return;
+    setUpgradeModalTarget(null);
     try {
-      await compile([target], clientId);
-      const workerName = workers.find(w => w.client_id === clientId)?.hostname || clientId;
-      addToast(`Queued ${stripYaml(target)} on ${workerName}`, 'success');
+      await compile([ctx.target], params.pinnedClientId ?? undefined, params.esphomeVersion ?? undefined);
+      const versionSuffix = params.esphomeVersion ? ` (ESPHome ${params.esphomeVersion})` : '';
+      const workerSuffix = params.pinnedClientId
+        ? ` on ${workers.find(w => w.client_id === params.pinnedClientId)?.hostname ?? params.pinnedClientId}`
+        : '';
+      addToast(`Queued ${ctx.displayName}${workerSuffix}${versionSuffix}`, 'success');
       switchTab('queue');
       mutateQueue();
+      mutateDevices();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
   }
 
-  async function handleValidate(target: string) {
+  // #25/#26: validation result returned directly to the caller (the editor)
+  // so it can show the output inline.
+  async function handleValidate(target: string): Promise<{ success: boolean; output: string } | null> {
     try {
-      const result = await validateConfig(target);
-      const jobId = result.job_id;
-      mutateQueue();
-      // Open the streaming log modal immediately — user sees output in real time
-      if (jobId) setLogJobId(jobId);
+      return await validateConfig(target);
     } catch (err) {
       addToast('Validate failed: ' + (err as Error).message, 'error');
+      return null;
     }
   }
 
@@ -283,6 +325,9 @@ export default function App() {
       await cleanWorkerCache(id);
       const workerName = workers.find(w => w.client_id === id)?.hostname || id;
       addToast(`Clean build cache requested for ${workerName}`, 'success');
+      // #11: mutate so the worker's pending_clean flag shows in the UI
+      // immediately rather than after the next 1Hz tick.
+      mutateWorkers();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -294,6 +339,7 @@ export default function App() {
     try {
       await Promise.all(onlineWorkers.map(w => cleanWorkerCache(w.client_id)));
       addToast(`Clean build cache requested for ${onlineWorkers.length} worker${onlineWorkers.length > 1 ? 's' : ''}`, 'success');
+      mutateWorkers();
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
@@ -428,8 +474,9 @@ export default function App() {
             devices={devices}
             workers={workers}
             streamerMode={streamerMode}
+            activeJobsByTarget={activeJobsByTarget}
             onCompile={handleCompile}
-            onCompileOnWorker={handleCompileOnWorker}
+            onUpgradeOne={handleOpenUpgradeModal}
             onEdit={setEditorTarget}
             onLogs={setDeviceLogTarget}
             onToast={addToast}
@@ -462,7 +509,7 @@ export default function App() {
             onSetParallelJobs={handleSetParallelJobs}
             onCleanCache={handleCleanWorkerCache}
             onCleanAllCaches={handleCleanAllCaches}
-            onConnectWorker={() => setConnectModalOpen(true)}
+            onConnectWorker={(preset) => { setConnectModalPreset(preset ?? null); setConnectModalOpen(true); }}
           />
         )}
       </main>
@@ -492,7 +539,12 @@ export default function App() {
           onClose={() => { setEditorTarget(null); mutateDevices(); }}
           onToast={addToast}
           onValidate={handleValidate}
-          onCompile={(target) => { handleCompile([target]); switchTab('queue'); }}
+          // #18: Save & Upgrade now goes through the same UpgradeModal as
+          // the per-row Upgrade button, so the user can pick a worker and
+          // ESPHome version before triggering the build. The editor still
+          // saves first (in handleSaveAndUpgrade) — this just changes what
+          // happens AFTER the save.
+          onCompile={(target) => handleOpenUpgradeModal(target)}
           onRename={(target) => { setEditorTarget(null); setRenameModalTarget(target); }}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
           esphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? undefined}
@@ -503,7 +555,20 @@ export default function App() {
         <ConnectWorkerModal
           serverInfo={serverInfo}
           esphomeVersion={seedVersion}
-          onClose={() => setConnectModalOpen(false)}
+          preset={connectModalPreset}
+          onClose={() => { setConnectModalOpen(false); setConnectModalPreset(null); }}
+        />
+      )}
+
+      {upgradeModalTarget && (
+        <UpgradeModal
+          target={upgradeModalTarget.target}
+          displayName={upgradeModalTarget.displayName}
+          workers={workers}
+          esphomeVersions={esphomeVersions.available}
+          defaultEsphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? null}
+          onConfirm={handleUpgradeConfirm}
+          onClose={() => setUpgradeModalTarget(null)}
         />
       )}
 

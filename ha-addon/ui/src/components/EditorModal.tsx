@@ -31,33 +31,9 @@ const COMMON_SUB_KEYS = [
   'sda', 'scl', 'frequency', 'rx_pin', 'tx_pin', 'baud_rate',
 ];
 
-// ---- Per-component schema fetching from schema.esphome.io ----
-
-// Module-level cache: key is "<version>/<component>", value is raw JSON response.
-const _schemaCache: Record<string, unknown> = {};
-
-async function fetchComponentSchema(component: string, esphomeVersion: string): Promise<unknown> {
-  const key = `${esphomeVersion}/${component}`;
-  if (_schemaCache[key] !== undefined) return _schemaCache[key];
-
-  // Try version-specific first, fall back to 'dev' which always exists.
-  for (const ver of [esphomeVersion, 'dev']) {
-    try {
-      const r = await fetch(`https://schema.esphome.io/${ver}/${component}.json`);
-      if (r.ok) {
-        const data: unknown = await r.json();
-        _schemaCache[key] = data;
-        return data;
-      }
-    } catch {
-      // Network error — try next version or give up.
-    }
-  }
-
-  // Cache negative result so we don't retry on every keystroke.
-  _schemaCache[key] = null;
-  return null;
-}
+// Per-component schema fetching lives in api/esphomeSchema.ts (C.5 — all
+// HTTP calls must live in the api/ layer, never in components).
+import { fetchComponentSchema } from '../api/esphomeSchema';
 
 interface ConfigVar {
   name: string;
@@ -118,7 +94,7 @@ interface Props {
   target: string | null;
   onClose: () => void;
   onToast: (msg: string, type?: ToastType) => void;
-  onValidate?: (target: string) => void;
+  onValidate?: (target: string) => Promise<{ success: boolean; output: string } | null>;
   onCompile?: (target: string) => void;
   onRename?: (target: string) => void;
   monacoTheme?: string;
@@ -262,6 +238,9 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
   const savedContentRef = useRef('');
   const [dirtyLineCount, setDirtyLineCount] = useState(0);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  // #26: validation output shown inline below the editor.
+  const [validateResult, setValidateResult] = useState<{ success: boolean; output: string } | null>(null);
+  const [validating, setValidating] = useState(false);
 
   // Keep the module-level version variable in sync so the completion provider
   // (registered once, outside the component lifecycle) always sees the current value.
@@ -320,7 +299,7 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
     try {
       let changes: { modifiedStartLineNumber: number; modifiedEndLineNumber: number }[] = [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const editorWorker = (monaco.editor as any).getEditorWorkerService?.();
+      const editorWorker = (monaco.editor as any) /* ALLOW_ANY: monaco internal */.getEditorWorkerService?.();
       if (editorWorker?.computeDiff) {
         const diff = await editorWorker.computeDiff(savedModel.uri, model.uri, false, 100000);
         changes = (diff?.changes ?? []).map((c: { modified: { startLineNumber: number; endLineNumberExclusive: number } }) => ({
@@ -530,6 +509,7 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
             <Button
               variant="secondary"
               size="sm"
+              disabled={validating}
               onClick={async () => {
                 if (!editorRef.current || !target) return;
                 const value = editorRef.current.getValue();
@@ -541,11 +521,15 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
                   onToast('Save failed: ' + (err as Error).message, 'error');
                   return;
                 }
-                onValidate(target);
+                setValidating(true);
+                setValidateResult(null);
+                const result = await onValidate(target);
+                setValidating(false);
+                if (result) setValidateResult(result);
               }}
               title="Save and validate config via esphome config (2-5s)"
             >
-              Validate
+              {validating ? 'Validating…' : 'Validate'}
             </Button>
           )}
         </div>
@@ -574,7 +558,32 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
             onMount={handleEditorDidMount}
           />
         </div>
-        {dirtyLineCount > 0 && (
+        {/* #26: validation output panel — shows the raw esphome config output */}
+        {validateResult && (
+          <div
+            className="border-t px-3 py-2 font-mono text-xs overflow-auto"
+            style={{
+              maxHeight: 180,
+              background: validateResult.success ? 'var(--surface)' : 'rgba(239,68,68,0.08)',
+              borderColor: validateResult.success ? 'var(--border)' : 'var(--destructive)',
+              color: validateResult.success ? 'var(--success)' : 'var(--destructive)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-semibold text-[11px] uppercase tracking-wide">
+                {validateResult.success ? '✓ Validation passed' : '✗ Validation failed'}
+              </span>
+              <button
+                className="text-[var(--text-muted)] text-[10px] cursor-pointer hover:text-[var(--text)]"
+                onClick={() => setValidateResult(null)}
+              >
+                dismiss
+              </button>
+            </div>
+            <pre className="whitespace-pre-wrap break-words m-0" style={{ color: 'var(--text)' }}>{validateResult.output}</pre>
+          </div>
+        )}
+        {dirtyLineCount > 0 && !validateResult && (
           <div className="editor-footer">
             {dirtyLineCount} line{dirtyLineCount !== 1 ? 's' : ''} changed
           </div>

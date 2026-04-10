@@ -158,7 +158,6 @@ td {
   vertical-align: middle;
 }
 
-tr:last-child td { border-bottom: none; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface2); }
 
@@ -180,6 +179,7 @@ tr.clickable:hover td { background: var(--surface2); }
 .dot-online    { background: var(--success); }
 .dot-offline   { background: #4b5563; }
 .dot-checking  { background: #4b5563; animation: pulse 1.4s ease-in-out infinite; }
+.dot-upgrading { background: #f59e0b; animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 
 .needs-update-yes { color: var(--warn); font-weight: 600; }

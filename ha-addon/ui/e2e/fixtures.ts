@@ -1,22 +1,36 @@
 import { type Page } from '@playwright/test';
 
+// C.6: import the canonical TS types from the app and assert each fixture
+// against them. A field rename in src/types/index.ts now triggers a TS error
+// in the e2e tests, so the contract between mocks and runtime types stays
+// in lockstep. Without these annotations the mocks were duck-typed and a
+// rename would silently desynchronize them from the real client.
+import type {
+  ServerInfo,
+  EsphomeVersions,
+  Target,
+  Device,
+  Worker,
+  Job,
+} from '../src/types';
+
 // --- Mock API data ---
 
-export const serverInfo = {
+export const serverInfo: ServerInfo = {
   token: 'test-token',
   port: 8765,
   addon_version: '1.3.0-dev.4',
   server_client_version: '1.3.0-dev.4',
-  min_image_version: '2',
+  min_image_version: '3',
 };
 
-export const esphomeVersions = {
+export const esphomeVersions: EsphomeVersions = {
   selected: '2026.3.2',
   detected: '2026.3.2',
   available: ['2026.3.2', '2026.2.0', '2026.1.0'],
 };
 
-export const targets = [
+export const targets: Target[] = [
   {
     target: 'living-room.yaml',
     device_name: 'living-room',
@@ -54,13 +68,13 @@ export const targets = [
   },
 ];
 
-export const devices = [
+export const devices: Device[] = [
   { name: 'living-room', ip_address: '192.168.1.10', online: true, compile_target: 'living-room.yaml' },
   { name: 'bedroom-light', ip_address: '192.168.1.11', online: true, compile_target: 'bedroom-light.yaml' },
   { name: 'garage-door', ip_address: '192.168.1.12', online: false, compile_target: 'garage-door.yaml' },
 ];
 
-export const workers = [
+export const workers: Worker[] = [
   {
     client_id: 'worker-1',
     hostname: 'build-server-1',
@@ -92,7 +106,10 @@ export const workers = [
   },
 ];
 
-export const queue = [
+// All job states are exercised so a regression in any badge / row class
+// path is caught by the existing Playwright tests. Order: success, failed,
+// working, pending, timed_out — covers the full state machine.
+export const queue: Job[] = [
   {
     id: 'job-001',
     target: 'bedroom-light.yaml',
@@ -120,6 +137,21 @@ export const queue = [
     assigned_hostname: 'build-server-1',
     created_at: new Date(Date.now() - 60_000).toISOString(),
     status_text: 'Compiling...',
+  },
+  {
+    id: 'job-004',
+    target: 'kitchen.yaml',
+    state: 'pending',
+    created_at: new Date(Date.now() - 10_000).toISOString(),
+  },
+  {
+    id: 'job-005',
+    target: 'office.yaml',
+    state: 'timed_out',
+    assigned_client_id: 'worker-1',
+    assigned_hostname: 'build-server-1',
+    created_at: new Date(Date.now() - 900_000).toISOString(),
+    duration_seconds: 600,
   },
 ];
 

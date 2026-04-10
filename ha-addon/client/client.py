@@ -18,8 +18,21 @@ from pathlib import Path
 from typing import Any, Optional
 
 import requests
+from pydantic import ValidationError
 
 
+from protocol import (
+    DeregisterRequest,
+    HeartbeatRequest,
+    HeartbeatResponse,
+    JobAssignment,
+    JobLogAppend,
+    JobResultSubmission,
+    JobStatusUpdate,
+    RegisterRequest,
+    RegisterResponse,
+    SystemInfo,
+)
 from version_manager import VersionManager
 from sysinfo import collect_system_info
 
@@ -29,7 +42,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.3.0"
+CLIENT_VERSION = "1.3.1"
 
 
 def _read_image_version() -> Optional[str]:
@@ -125,8 +138,12 @@ _active_jobs_lock: threading.Lock = threading.Lock()
 # ---------------------------------------------------------------------------
 # Connectivity / auth state — deduplicate repeated log messages
 # ---------------------------------------------------------------------------
-# Both the heartbeat thread and the main poll loop share these flags.
-# Python's GIL makes simple bool reads/writes atomic enough for this purpose.
+# Touched by both the heartbeat thread and the worker poll loops. The GIL
+# makes individual bool reads atomic, but the test-then-set pattern in the
+# helpers below is a race: two threads can both pass the ``if`` check before
+# either flips the flag, causing duplicate "went offline" log lines. C.1 wraps
+# the test-then-set in a single shared lock.
+_state_lock: threading.Lock = threading.Lock()
 _server_reachable: bool = True   # False once we've logged "server offline"
 _auth_ok: bool = True            # False once we've logged "auth failed"
 _reregister_needed: threading.Event = threading.Event()  # set by heartbeat on 404
@@ -140,30 +157,38 @@ def _is_idle() -> bool:
 
 def _on_server_unreachable(exc: Exception) -> None:
     global _server_reachable
-    if _server_reachable:
-        logger.warning("Server went offline: %s", exc)
+    with _state_lock:
+        if not _server_reachable:
+            return
         _server_reachable = False
+    logger.warning("Server went offline: %s", exc)
 
 
 def _on_server_reachable() -> None:
     global _server_reachable
-    if not _server_reachable:
-        logger.info("Server came back online")
+    with _state_lock:
+        if _server_reachable:
+            return
         _server_reachable = True
+    logger.info("Server came back online")
 
 
 def _on_auth_failed() -> None:
     global _auth_ok
-    if _auth_ok:
-        logger.warning("Authentication failed (token mismatch?) — will keep retrying silently")
+    with _state_lock:
+        if not _auth_ok:
+            return
         _auth_ok = False
+    logger.warning("Authentication failed (token mismatch?) — will keep retrying silently")
 
 
 def _on_auth_ok() -> None:
     global _auth_ok
-    if not _auth_ok:
-        logger.info("Authentication restored")
+    with _state_lock:
+        if _auth_ok:
+            return
         _auth_ok = True
+    logger.info("Authentication restored")
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +248,10 @@ def _clear_client_id() -> None:
 def deregister(client_id: str) -> None:
     """Tell the server to remove this worker (best-effort on shutdown)."""
     try:
-        resp = post("/api/v1/workers/deregister", {"client_id": client_id})
+        resp = post(
+            "/api/v1/workers/deregister",
+            DeregisterRequest(client_id=client_id).model_dump(),
+        )
         if resp.ok:
             logger.info("Deregistered worker %s", client_id)
             _clear_client_id()
@@ -242,19 +270,22 @@ def register() -> str:
     while True:
         try:
             sysinfo = collect_system_info(_ESPHOME_VERSIONS_DIR)
-            payload: dict = {
-                "hostname": HOSTNAME,
-                "platform": PLATFORM,
-                "client_version": CLIENT_VERSION,
-                "image_version": IMAGE_VERSION,
-                "max_parallel_jobs": MAX_PARALLEL_JOBS,
-                "system_info": sysinfo,
-            }
-            if existing_id:
-                payload["client_id"] = existing_id
-            resp = post("/api/v1/workers/register", payload)
+            req = RegisterRequest(
+                hostname=HOSTNAME,
+                platform=PLATFORM,
+                client_version=CLIENT_VERSION,
+                image_version=IMAGE_VERSION,
+                client_id=existing_id,
+                max_parallel_jobs=MAX_PARALLEL_JOBS,
+                system_info=SystemInfo.model_validate(sysinfo),
+            )
+            resp = post("/api/v1/workers/register", req.model_dump(exclude_none=True))
             resp.raise_for_status()
-            client_id = resp.json()["client_id"]
+            try:
+                parsed = RegisterResponse.model_validate(resp.json())
+            except ValidationError as exc:
+                raise RuntimeError(f"malformed register response: {exc}") from exc
+            client_id = parsed.client_id
             _save_client_id(client_id)
             logger.info("Registered as worker %s (version %s)", client_id, CLIENT_VERSION)
             logger.info(
@@ -306,10 +337,11 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     global _image_upgrade_logged
     while not stop_event.is_set():
         try:
-            resp = post("/api/v1/workers/heartbeat", {
-                "client_id": client_id,
-                "system_info": collect_system_info(_ESPHOME_VERSIONS_DIR),
-            })
+            hb = HeartbeatRequest(
+                client_id=client_id,
+                system_info=SystemInfo.model_validate(collect_system_info(_ESPHOME_VERSIONS_DIR)),
+            )
+            resp = post("/api/v1/workers/heartbeat", hb.model_dump(exclude_none=True))
             if resp.status_code == 401:
                 _on_auth_failed()
             elif resp.status_code == 404:
@@ -321,11 +353,16 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
             elif resp.ok:
                 _on_server_reachable()
                 _on_auth_ok()
-                data = resp.json()
+                try:
+                    data = HeartbeatResponse.model_validate(resp.json())
+                except ValidationError as exc:
+                    logger.warning("Malformed heartbeat response: %s", exc)
+                    stop_event.wait(HEARTBEAT_INTERVAL)
+                    continue
                 # Server may refuse source-code auto-updates if our Docker image
                 # is too old to safely receive them (missing system deps, etc.)
-                if data.get("image_upgrade_required"):
-                    min_v = data.get("min_image_version", "?")
+                if data.image_upgrade_required:
+                    min_v = data.min_image_version or "?"
                     if not _image_upgrade_logged:
                         logger.warning(
                             "Docker image upgrade required: this worker reports IMAGE_VERSION=%s "
@@ -335,15 +372,15 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                         )
                         _image_upgrade_logged = True
                 else:
-                    sv = data.get("server_client_version")
+                    sv = data.server_client_version
                     if sv and sv != CLIENT_VERSION:
                         logger.info(
                             "Worker update available: local=%s server=%s", CLIENT_VERSION, sv
                         )
                         _update_available.set()
                 # Check for max_parallel_jobs config change from UI
-                new_jobs = data.get("set_max_parallel_jobs")
-                if new_jobs is not None and isinstance(new_jobs, int) and new_jobs != MAX_PARALLEL_JOBS:
+                new_jobs = data.set_max_parallel_jobs
+                if new_jobs is not None and new_jobs != MAX_PARALLEL_JOBS:
                     logger.info(
                         "Server requested max_parallel_jobs change: %d → %d — restarting",
                         MAX_PARALLEL_JOBS, new_jobs,
@@ -352,7 +389,7 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                     os.environ["MAX_PARALLEL_JOBS"] = str(new_jobs)
                     _restart_self()
                 # Check for clean build cache request from UI
-                if data.get("clean_build_cache"):
+                if data.clean_build_cache:
                     logger.info("Server requested build cache clean — clearing esphome-versions")
                     _clean_build_cache()
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
@@ -635,6 +672,16 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         subprocess_env["TZ"] = server_tz
         logger.debug("Using server timezone: %s", server_tz)
 
+    # Network timeouts for uv/pip during ESPHome's penv bootstrap. Defaults are
+    # aggressive (uv HTTP read = 30s, pip socket = 15s) and cause intermittent
+    # "Failed to install Python dependencies into penv" failures on slow or
+    # flaky links — see GitHub #6. setdefault lets operators override via the
+    # worker env if needed. Both PIP_DEFAULT_TIMEOUT and PIP_TIMEOUT map to
+    # pip's --timeout option (verified in pip source).
+    subprocess_env.setdefault("UV_HTTP_TIMEOUT", "180")
+    subprocess_env.setdefault("UV_HTTP_CONNECT_TIMEOUT", "30")
+    subprocess_env.setdefault("PIP_DEFAULT_TIMEOUT", "180")
+
     # Install ESPHome version (BEFORE starting the timeout timer)
     if ESPHOME_BIN:
         esphome_bin = ESPHOME_BIN
@@ -882,7 +929,11 @@ def _run_subprocess(
 def _flush_log_text(job_id: str, text: str) -> None:
     """Send a chunk of log text to the server for live streaming."""
     try:
-        post(f"/api/v1/jobs/{job_id}/log", {"lines": text}, timeout=5)
+        post(
+            f"/api/v1/jobs/{job_id}/log",
+            JobLogAppend(lines=text).model_dump(),
+            timeout=5,
+        )
     except Exception:
         logger.debug("Log text flush failed for job %s", job_id, exc_info=True)
 
@@ -903,7 +954,11 @@ def _log_invocation(job_id: str, cmd: list[str]) -> None:
 def _report_status(job_id: str, status_text: str) -> None:
     """Fire-and-forget status update to server."""
     try:
-        post(f"/api/v1/jobs/{job_id}/status", {"status_text": status_text}, timeout=5)
+        post(
+            f"/api/v1/jobs/{job_id}/status",
+            JobStatusUpdate(status_text=status_text).model_dump(),
+            timeout=5,
+        )
     except Exception:
         logger.debug("Status update failed for job %s (%s)", job_id, status_text, exc_info=True)
 
@@ -915,9 +970,14 @@ def _submit_result(
     ota_result: Optional[str],
 ) -> None:
     """POST job result to server, retrying a few times on network errors."""
-    payload: dict = {"status": status, "log": log}
-    if ota_result is not None:
-        payload["ota_result"] = ota_result
+    # Build + validate the submission via the typed model. ``status`` is a
+    # Literal["success","failed"] on the wire — pydantic will reject anything
+    # else before it is ever sent. The cast + model_validate path makes mypy
+    # happy without silencing the check with a blanket ignore.
+    submission = JobResultSubmission.model_validate(
+        {"status": status, "log": log, "ota_result": ota_result}
+    )
+    payload = submission.model_dump(exclude_none=True)
 
     for attempt in range(3):
         try:
@@ -990,12 +1050,20 @@ def worker_loop(
                 stop_event.wait(POLL_INTERVAL)
             elif resp.status_code == 200:
                 _on_auth_ok()
-                job = resp.json()
+                try:
+                    assignment = JobAssignment.model_validate(resp.json())
+                except ValidationError as exc:
+                    logger.warning(
+                        "Worker %d: malformed job assignment from server: %s",
+                        worker_id, exc,
+                    )
+                    stop_event.wait(POLL_INTERVAL)
+                    continue
                 logger.info(
                     "Worker %d claimed job %s for target %s",
-                    worker_id, job["job_id"], job["target"],
+                    worker_id, assignment.job_id, assignment.target,
                 )
-                run_job(client_id, job, version_manager, worker_id)
+                run_job(client_id, assignment.model_dump(), version_manager, worker_id)
                 # No sleep after work — immediately poll for next job
             else:
                 logger.warning(

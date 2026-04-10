@@ -9,6 +9,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------
+  # 1. Tests — pytest with xdist for parallel execution. ~1 min.
+  # ---------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -18,19 +21,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
           pip install \
-            pytest pytest-asyncio pytest-cov \
+            pytest pytest-asyncio pytest-cov pytest-xdist \
             aiohttp aioesphomeapi zeroconf \
-            requests psutil \
-            esphome \
-            mypy types-requests types-PyYAML \
-            ruff
+            requests psutil pydantic \
+            esphome
 
       - name: Run all tests with coverage
-        run: pytest tests/ -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
+        run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
 
       - name: Upload coverage report
         if: always()
@@ -40,8 +42,28 @@ jobs:
           path: htmlcov/
           retention-days: 14
 
+  # ---------------------------------------------------------------
+  # 2. Lint — ruff + mypy + invariants. Fast (~20s), no heavy deps.
+  # ---------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install lint tools
+        run: pip install ruff mypy types-requests types-PyYAML
+
       - name: Ruff lint
         run: ruff check ha-addon/server/ ha-addon/client/
+
+      - name: CLAUDE.md invariants (grep-based linter)
+        run: bash scripts/check-invariants.sh
 
       - name: mypy — server
         run: mypy ha-addon/server/ --ignore-missing-imports
@@ -49,6 +71,51 @@ jobs:
       - name: mypy — client
         run: mypy ha-addon/client/ --ignore-missing-imports
 
+  # ---------------------------------------------------------------
+  # 3. Audit — pip-audit on lockfiles. No app deps needed.
+  # ---------------------------------------------------------------
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # Run server + client lockfiles in SEPARATE invocations — they're
+      # installed into independent Docker images, so there's no requirement
+      # that their transitive dep versions agree.
+      - name: pip-audit (server lockfile)
+        run: |
+          pip install pip-audit
+          pip-audit --requirement ha-addon/server/requirements.lock \
+            --ignore-vuln CVE-2026-34073 \
+            --ignore-vuln CVE-2026-39892 \
+            --ignore-vuln CVE-2026-25645
+          # ^^^ Pinned by ESPHome's transitive dep bounds — can't upgrade
+          # until ESPHome releases with relaxed constraints.
+          #
+          # Applicability assessment (2026-04-10):
+          #   CVE-2026-34073 (cryptography — DNS name constraint bypass):
+          #     NOT APPLICABLE. Transitive dep only; server↔worker comms
+          #     use HTTP, not HTTPS. Certificate validation never runs.
+          #   CVE-2026-39892 (cryptography — buffer overflow via non-contiguous buffers):
+          #     LOW RISK. Transitive dep; our code never passes custom buffers
+          #     to cryptographic APIs. Only theoretical path is Noise PSK in
+          #     aioesphomeapi, but buffer management is internal to the library.
+          #   CVE-2026-25645 (requests — predictable temp file in extract_zipped_paths):
+          #     NOT APPLICABLE. We never call extract_zipped_paths(); only
+          #     standard requests.get()/post() usage in client.py.
+
+      - name: pip-audit (client lockfile)
+        run: pip-audit --requirement ha-addon/client/requirements.lock
+
+  # ---------------------------------------------------------------
+  # 4. Frontend — npm ci, audit, build, Playwright.
+  # ---------------------------------------------------------------
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -65,9 +132,26 @@ jobs:
         working-directory: ha-addon/ui
         run: npm ci
 
+      - name: npm audit (frontend)
+        working-directory: ha-addon/ui
+        run: npm audit --audit-level=high --omit=dev
+
       - name: Build frontend
         working-directory: ha-addon/ui
         run: npm run build
+
+      # Cache Playwright browsers so we don't re-download ~130 MB on
+      # every run. Key includes the Playwright version from package-lock.
+      - name: Get Playwright version
+        id: pw-version
+        working-directory: ha-addon/ui
+        run: echo "version=$(npx playwright --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers
         working-directory: ha-addon/ui

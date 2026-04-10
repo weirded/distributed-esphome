@@ -1,87 +1,47 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Project Overview
 
-Distributed ESPHome is a system that offloads ESPHome firmware compilation to remote machines. The server runs as a Home Assistant add-on, manages a job queue, and serves a web UI. Build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA.
-
-## Commands
-
-### Run Tests
-```bash
-pytest tests/
-```
-
-### Run a Single Test File or Test
-```bash
-pytest tests/test_queue.py
-pytest tests/test_client.py::TestVersionManager::test_lru_eviction
-```
-
-### Install Dependencies
-```bash
-pip install pytest pytest-asyncio aiohttp aioesphomeapi zeroconf requests psutil esphome
-# Or from requirements files:
-pip install -r ha-addon/server/requirements.txt
-pip install -r ha-addon/client/requirements.txt
-```
-
-### Run the Server Locally
-```bash
-ESPHOME_CONFIG_DIR=/path/to/configs PORT=8765 SERVER_TOKEN=dev-token python ha-addon/server/main.py
-```
-
-### Run the Worker Locally
-```bash
-SERVER_URL=http://localhost:8765 SERVER_TOKEN=dev-token python ha-addon/client/client.py
-```
-
-### Build Docker Images
-```bash
-docker build -t esphome-dist-server ha-addon/
-docker build -t esphome-dist-client ha-addon/client/
-```
-
-### Package the HA Add-on Tarball
-Produces a tarball that untars directly to `distributed-esphome/` (ready to drop in HA's `addons/local/`):
-```bash
-tar -czf distributed-esphome-addon.tar.gz -s '/^ha-addon/distributed-esphome/' ha-addon
-```
+Distributed ESPHome offloads ESPHome firmware compilation to remote machines. The server runs as a Home Assistant add-on, manages a job queue, and serves a web UI. Build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices.
 
 ## Architecture
 
 ### Server (`ha-addon/server/`)
 
-The server is an `aiohttp` async application with two authentication tiers:
-- `/api/v1/*` — Bearer token auth for build workers
-- `/ui/api/*` — HA Ingress trust (no worker auth) for the browser UI
+`aiohttp` async application with two authentication tiers:
 
-**Component responsibilities:**
-- `main.py` — App setup, auth middleware, background timeout checker (every 30s), HA Ingress compatibility (X-Ingress-Path header injection)
-- `job_queue.py` — In-memory job queue persisted to `/data/queue.json`. Job state machine: `PENDING → ASSIGNED → RUNNING → SUCCESS/FAILED`. Jobs time out and retry up to 3 times before permanently failing. On server restart, `ASSIGNED`/`RUNNING` jobs reset to `PENDING`.
-- `scanner.py` — Discovers `.yaml` targets in `/config/esphome/` (excluding `secrets.yaml` from the target list but including it in bundles). `create_bundle()` produces a tar.gz of the full config directory.
-- `registry.py` — In-memory build worker registry (`WorkerRegistry`); workers are considered online if last heartbeat was within 30s.
-- `device_poller.py` — Discovers ESPHome devices via `_esphomelib._tcp` mDNS, polls them every 60s via `aioesphomeapi` for running firmware version and compilation time. Maps devices to YAML targets using a name map built from parsed `esphome.name` fields (handles cases where filename differs from device name).
-- `api.py` — Worker REST API: register, heartbeat, claim job (`GET /api/v1/jobs/next` returns base64 tar.gz bundle), submit result. Both `/api/v1/workers/*` (new) and `/api/v1/clients/*` (legacy) routes are supported.
-- `ui_api.py` — Browser JSON API: targets, devices, workers, queue state, compile trigger, cancel. Both `/ui/api/workers/*` (new) and `/ui/api/clients/*` (legacy) routes are supported.
-- `static/` — Vite-built React app output. Source is in `ha-addon/ui/` (React + TypeScript + Tailwind + shadcn/ui). Build: `cd ha-addon/ui && npm run build`.
+- `/api/v1/*` — Bearer token auth for build workers (also accepts requests from the HA Supervisor IP).
+- `/ui/api/*` — HA Ingress trust (no worker auth) for the browser UI.
+
+Component responsibilities:
+
+- `main.py` — app setup, auth middleware, background loops (timeout checker, HA entity poller, PyPI version refresher), HA Ingress `X-Ingress-Path` injection.
+- `job_queue.py` — in-memory job queue persisted to `/data/queue.json`. State machine: `PENDING → WORKING → SUCCESS | FAILED | TIMED_OUT`. Jobs retry up to 3 times before permanent failure. On server restart, `WORKING` jobs reset to `PENDING`. Loader recovers gracefully from malformed/truncated queue files.
+- `scanner.py` — discovers `.yaml` targets in `/config/esphome/`. `create_bundle()` produces a tar.gz of the full config directory (including `secrets.yaml`, needed for ESPHome's `!secret` resolution).
+- `registry.py` — in-memory build worker registry (no persistence); workers are "online" if last heartbeat was within `worker_offline_threshold` seconds.
+- `device_poller.py` — discovers ESPHome devices via `_esphomelib._tcp` mDNS, polls them via `aioesphomeapi` for running version.
+- `api.py` — worker REST API (register, heartbeat, claim job, submit result, stream log). Parses every request body through the typed pydantic models in `protocol.py`.
+- `ui_api.py` — browser JSON API (targets, devices, workers, queue, compile, cancel).
+- `protocol.py` — **single source of truth** for server↔worker wire messages (pydantic v2). Byte-identical copy lives in `ha-addon/client/protocol.py`; a test enforces they match.
+- `static/` — Vite-built React app output (source in `ha-addon/ui/`).
 
 ### Worker (`ha-addon/client/`)
 
-The worker binary (`client.py`) is a synchronous polling loop with a background heartbeat thread. It registers with the server, polls for jobs, ensures the correct ESPHome version is installed (`VersionManager`), extracts the config bundle, runs `esphome run`, and submits results.
+`client.py` is a synchronous polling loop with a background heartbeat thread. Registers with the server, polls for jobs, ensures the correct ESPHome version is installed (`version_manager.py` — LRU cache of virtualenvs under `/esphome-versions/<version>/`), extracts the config bundle, runs `esphome run`, and submits results. Because the worker performs the OTA upload itself, **it must have network access to the ESP devices**.
 
-`version_manager.py` maintains virtualenvs under `/esphome-versions/<version>/` with an LRU cache (default max 3 versions).
+`IMAGE_VERSION` (baked into the Docker image) and `MIN_IMAGE_VERSION` (in `ha-addon/server/constants.py`) gate the in-place source-code auto-update: the server refuses to push `.py` updates to workers whose Docker image is below `MIN_IMAGE_VERSION`, because a stale image can't be fixed by rewriting files in place.
 
 ### Job Bundle Flow
 
-When a worker claims a job, the server calls `scanner.create_bundle()` which tarballs the entire ESPHome config directory into a base64-encoded payload. The worker extracts this, compiles the specified target YAML, and sends firmware via OTA directly from the worker machine to the ESP device. This means **the worker must have network access to the ESP devices**.
+When a worker claims a job, the server calls `scanner.create_bundle()` which tarballs the ESPHome config directory into a base64 payload. The worker extracts this, compiles the target YAML, and OTA-flashes the firmware directly to the ESP device.
 
 ### Configuration
 
-Server config is loaded from `/data/options.json` (HA add-on) with environment variable fallbacks. Key env vars: `ESPHOME_CONFIG_DIR`, `SERVER_TOKEN`, `JOB_TIMEOUT` (600s), `OTA_TIMEOUT` (120s), `PORT` (8765).
+Server config is loaded from `/data/options.json` with environment variable fallbacks. Worker config is all via environment.
 
-Worker config is all via environment:
+Key worker env vars:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -98,129 +58,138 @@ Worker config is all via environment:
 | `ESPHOME_BIN` | — | Use this binary instead of the version-manager venvs |
 | `HOST_PLATFORM` | — | Override detected OS in UI (e.g. `macOS 15.3 (Apple M1 Pro)`) |
 
+## Commands
+
+Scripts live in `scripts/`:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/bump-dev.sh` | Increment `-dev.N` — **run at the end of every turn.** |
+| `scripts/bump-version.sh X.Y.Z` | Set stable version for a release. |
+| `scripts/check-invariants.sh` | Run the enforced-invariant grep linter (also runs in CI). |
+| `./push-to-hass-4.sh` | Deploy to hass-4 and run the full prod Playwright smoke suite. |
+
+Common dev commands:
+
+- `pytest tests/` — full test suite.
+- `ruff check ha-addon/server/ ha-addon/client/` — Python lint.
+- `mypy ha-addon/server/ --ignore-missing-imports` / `mypy ha-addon/client/ ...` — type check.
+- `cd ha-addon/ui && npm run build` — frontend build (`tsc -b && vite build`).
+- `cd ha-addon/ui && npx playwright test` — 37-test mocked e2e suite.
+
+See `dev-plans/RELEASE_CHECKLIST.md` for the full stable-release process.
+
 ## Test Setup
 
-`tests/conftest.py` adds `ha-addon/server` and `ha-addon/client` to `sys.path`. Tests use `asyncio_mode = auto` (configured in `pytest.ini`). Sample ESPHome YAML fixtures are in `tests/fixtures/esphome_configs/`.
-
-## Deployment
-
-`hass-4` refers to the local Home Assistant instance. Use the `push-to-hass-4.sh` script to deploy the add-on:
-```bash
-./push-to-hass-4.sh
-```
-
-## Branching & Release Process
-
-**Branches:**
-- `develop` — default working branch. All development happens here.
-- `main` — stable releases only. Users install from this branch.
-
-**Day-to-day development (on `develop`):**
-- **Bump the dev version at the end of every turn:** `bash scripts/bump-dev.sh` (auto-increments `-dev.N`). This is mandatory — never skip it.
-- Push to GitHub freely — CI runs tests, no GHCR images published
-- Deploy to hass-4 for testing: `./push-to-hass-4.sh`
-
-**Stable releases (merge to `main`):**
-Follow `dev-plans/RELEASE_CHECKLIST.md` for the full step-by-step process. Key steps:
-- Use `bash scripts/bump-version.sh X.Y.Z` for the stable version
-- Finalize `ha-addon/CHANGELOG.md` — consolidate dev changes into a clean release entry
-  (use `dev-plans/WORKITEMS-X.Y.md` as source material — it has both the work items and the bug fixes for the release; group by category)
-- Update `README.md` and `ha-addon/DOCS.md` — ensure they accurately describe the current feature set, configuration options, and setup instructions
-- The pre-push hook enforces a changelog entry when pushing to `main`
-- Tag the release: `git tag vX.Y.Z && git push origin vX.Y.Z`
-- GHCR images are published automatically on push to `main`
-
-**Changelog is NOT updated during development on `develop`.** The `dev-plans/WORKITEMS-X.Y.md` files track progress with version numbers (work items + bug fixes for each release). The changelog is written once at release time.
-
-## Documentation
-
-When adding new features, changing configuration options, or modifying user-visible behavior, keep these docs in sync with the implementation:
-
-- `README.md` — public-facing project overview, installation, architecture, configuration tables, and repository layout
-- `ha-addon/DOCS.md` — user-facing documentation shown in the Home Assistant add-on panel
+`tests/conftest.py` adds `ha-addon/server` and `ha-addon/client` to `sys.path`. `pytest.ini` sets `asyncio_mode = auto`. Sample ESPHome YAML fixtures live in `tests/fixtures/esphome_configs/`.
 
 ## Frontend (`ha-addon/ui/`)
 
-React + TypeScript + Vite app. Build output goes to `ha-addon/server/static/`.
+React 19 + TypeScript 5.9 + Vite 8 + Tailwind v4 + shadcn/ui (Base UI primitives). Build output lands in `ha-addon/server/static/`. Path alias `@/*` → `src/*`.
 
-```bash
-cd ha-addon/ui && npm run build    # production build
-cd ha-addon/ui && npx vite         # dev server
-```
+- SWR polls workers/devices/queue at 1 Hz (state is cheap in-memory on the server side).
+- All server calls live in `src/api/client.ts` (or siblings under `src/api/`). Components never call `fetch()` directly — enforced by `scripts/check-invariants.sh` rule UI-1.
+- Shared types in `src/types/index.ts`. Playwright fixtures are typed against these so a field rename breaks tests.
 
-**Stack:** React 19, Vite 8, TypeScript 5.9, Tailwind v4 (with preflight), shadcn/ui (Base UI primitives).
+## Enforced Invariants
 
-**Key patterns:**
-- **shadcn components** in `src/components/ui/` — Dialog, DropdownMenu, Button, Badge, Checkbox, Sonner toast. Use these for all new interactive UI.
-- **CSS variables** in `src/theme.css` — app theme (`--bg`, `--surface`, `--border`, `--text`, `--accent`, etc.) mapped to shadcn variables. Both dark and light modes via `[data-theme="light"]`.
-- **Shared utilities** in `src/utils.ts` (`timeAgo`, `stripYaml`, `getJobBadge`, etc.) and `src/utils/terminal.ts` (terminal copy/download helpers).
-- **StatusDot** component for online/offline/checking/paused indicators.
-- **Polling** via `setInterval` in App.tsx (devices 15s, workers 5s, queue 3s). State lives in App.tsx, passed down as props.
-- **API client** in `src/api/client.ts` — all server calls, auto-reload on version change.
+Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` job) or by pytest / mypy / ruff / the TS build. **Violating these fails CI.**
 
-**Path alias:** `@/*` maps to `src/*` (configured in tsconfig + vite.config).
+**UI-1 — No `fetch()` outside `src/api/`.** All HTTP calls go through the `api/` layer. Components never call `fetch()` directly.
 
-## Design Principles
+**UI-2 — No Tailwind `@apply`.** Use utility classes in JSX. CSS files only for things Tailwind can't express (animations, complex selectors).
 
-- **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, etc.) must use shadcn/ui components. Don't hand-roll components that shadcn already provides.
-- **Use library components as intended.** When using shadcn/ui, Tailwind, or any library, leverage their built-in functionality rather than disabling features and reimplementing them. If a library component doesn't fit, adapt our code to work with it — don't strip and replace it. Take the easy/intended path, not hacky workarounds.
-- **Prefer composition over override.** Adjust layout/spacing to accommodate library behavior rather than adding `showCloseButton={false}` and rolling a custom close button.
-- **Server state in SWR, UI state in React.** SWR is the cache for server data — read from it, don't copy it into `useState`. Lift state only as high as needed.
-- **Shared TypeScript types for API responses.** Define types once for what the server returns and use them across components. No `any` or inline ad-hoc shapes.
-- **Tailwind utility classes in JSX, not custom CSS.** Only use CSS files for things Tailwind can't express (animations, complex selectors). No `@apply`. Use `cn()` (shadcn merge utility) for conditional classes, not string concatenation.
-- **One component per file, colocate related code.** Types, helpers, and constants used by a single component live near that component, not in a global utils grab-bag.
-- **Semantic HTML.** `<button>` not `<div onClick>`, `<table>` for tabular data. shadcn handles much of this — don't undermine it with custom markup.
-- **All API calls go through `api/client.ts`.** Components never call `fetch` directly.
-- **Batch operations get one toast.** When an action affects multiple items (e.g. "clean all caches"), use `Promise.all` and show a single summary toast — never one toast per item. Bulk actions should be handled in App.tsx, not by iterating callbacks in child components.
-- **Think about the UX.** Before shipping a UI change, mentally walk through it: does the layout make sense? Does it look right on the real dashboard with real data? Avoid `flex` on `<td>`, buttons that look like links, or anything that would look sloppy to a user.
-- **Update `.gitignore` whenever introducing a new tool, linter, framework, or library.** Most tools generate a cache, lock, build, or report directory (`.ruff_cache/`, `.pytest_cache/`, `.mypy_cache/`, `node_modules/`, `playwright-report/`, `test-results/`, `.vite/`, `htmlcov/`, `dist/`, `build/`, `.coverage`, etc.). Add the appropriate entries to `.gitignore` in the same commit that introduces the tool — don't wait for the cache to show up untracked.
+**UI-3 — No `any` type in new TS code.** Use `unknown` or a real type. Existing sanctioned uses (Monaco/xterm internals) are allow-listed with `// ALLOW_ANY: <reason>` inline.
+
+**UI-4 — No `flex`/`inline-flex` on `<td>`.** Table cells must not be flex containers — it breaks table layout.
+
+**UI-5 — Typed fixtures.** E2E Playwright fixtures in `ha-addon/ui/e2e/fixtures.ts` must import the runtime types from `src/types` so a field rename breaks the e2e build. (Enforced by `tsc -b` on the e2e project.)
+
+**PY-1 — YAML goes through `yaml.safe_load`.** Never hand-rolled regex parsers for YAML content (regression source: #160, ESPHome device-name detection). The `_ota_network_diagnostics` regex fallback is allow-listed because it tries `safe_load` first.
+
+**PY-2 — Every file that calls `subprocess.run`/`subprocess.Popen` must have a module-level `logger`.** The actual command line must also be logged before the subprocess runs (reviewed in PR; file-level logger presence is the grep-able floor). Bug sources: #176, #177, #180 — untriageable reports when the command line wasn't in the log.
+
+**PY-3 — `esphome upload` invocations must not pass `--no-logs`.** That flag is `esphome run`-only. Direct regression guard for #177.
+
+**PY-4 — Bump `IMAGE_VERSION` + `MIN_IMAGE_VERSION` when the worker Docker image changes.** System packages, Python version, `requirements.txt`, Dockerfile — any change to what `COPY`'d into the image (other than the auto-updatable `.py` source). A file-mtime check in `check-invariants.sh` warns if `requirements.txt` / `Dockerfile` is newer than `IMAGE_VERSION`. See the `1.3.1-dev.2` incident for why: the pydantic add-on broke every deployed worker because this wasn't bumped.
+
+**PY-5 — No `# noqa`, `# type: ignore`, `eslint-disable`, or `@ts-ignore` without a comment explaining why.** Enforced by code review; if you're silencing a tool, fix the root cause instead.
+
+**PY-6 — Pydantic models in `protocol.py` are the wire contract.** `ha-addon/server/protocol.py` and `ha-addon/client/protocol.py` must stay byte-identical (enforced by `tests/test_protocol.py::test_server_and_client_protocol_files_are_identical`). Every server-facing `/api/v1/*` handler parses its body through the typed model; workers build their requests from the typed model. New fields are additive + optional unless `PROTOCOL_VERSION` is bumped.
+
+**PY-7 — Every `--ignore-vuln` must have an applicability assessment.** When adding a CVE ignore to `pip-audit` (or any audit tool), the inline comment must include: (1) why the fix version can't be pulled in (transitive bound, breaking change, etc.), (2) whether our code actually exercises the vulnerable code path, and (3) a date so staleness is visible. Don't just say "can't upgrade" — say whether the vulnerability matters for this codebase. If it does matter, track a follow-up in WORKITEMS rather than silently ignoring it.
+
+## Design Judgment (aspirational — reviewed, not enforced)
+
+These aren't grep-checkable but matter just as much. They're how the codebase stays coherent.
+
+- **Disable, don't fail.** When a feature isn't available for a target/worker/job (no restart button in YAML, no API key, worker offline, etc.), render the button or menu item **disabled with an explanatory tooltip** rather than letting the user click it and watch it fail. The tooltip should tell them what's missing and ideally how to fix it. Detect availability up-front from data we already have (YAML metadata, registry state) — don't probe by trying. **Exception: the Upgrade button is always enabled** regardless of device state, because compiling for a target is meaningful even if the device is offline (the firmware is still produced and OTA-pending). Origin: bug #14 — Restart was always clickable but silently no-op'd for devices whose YAML had no restart button.
+- **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, selects) uses the shadcn wrappers in `components/ui/`. Don't hand-roll components that already exist there. If shadcn doesn't have it yet, add a thin wrapper (see `components/ui/input.tsx`, `components/ui/select.tsx`).
+- **Use library components as intended.** Prefer composition over override. Adjust layout to accommodate library behavior rather than stripping features.
+- **Server state in SWR, UI state in React.** SWR is the cache — read from it, don't copy it into `useState`.
+- **One component per file, colocate related code.** Types/helpers/constants used by a single component live near that component, not in a global utils grab-bag.
+- **Semantic HTML.** `<button>` not `<div onClick>`, `<table>` for tabular data.
+- **Batch operations get one toast.** Bulk actions use `Promise.all` and a single summary toast — never one toast per item. Bulk actions live in `App.tsx`, not in child component loops.
+- **Think about the UX before shipping.** Walk through the change mentally: does the layout make sense on real data? Would it look sloppy to a user?
+- **Update `.gitignore` whenever a new tool is introduced.** Most tools generate cache/lock/build/report directories — add them in the same commit that introduces the tool.
 
 ## Quality Standards (QG.1)
 
-Codified at the end of 1.3 from the conventions established during the Quality + Testing release. These are the bar for landing new code on `develop`. Most are automated; the rest are reviewed in the commit/PR.
+The bar for landing new code on `develop`. Most are automated; the rest are developer discipline.
 
 ### Automated gates (CI must be green)
 
-Every push runs the following — they all must pass:
-
-1. **`pytest tests/`** with `pytest-cov` — full test suite (currently 264 tests, ~55% server+client coverage). Tests live alongside the code they cover (`tests/test_<module>.py`).
-2. **`ruff check ha-addon/server/ ha-addon/client/`** — Python lint. Zero warnings allowed. If a check is too strict for a real case, narrow it (per-file `# ruff: noqa: <code>`) rather than disabling globally.
-3. **`mypy ha-addon/server/ --ignore-missing-imports`** and **`mypy ha-addon/client/ --ignore-missing-imports`** — type check. Zero errors. New code should have type annotations on function signatures and dataclass fields.
-4. **`cd ha-addon/ui && npm run build`** — TypeScript + Vite production build. Zero errors. The build also runs `tsc -b` so type errors fail the build.
-5. **`cd ha-addon/ui && npm run test:e2e`** — mocked Playwright (37 tests, ~5s). Full UI flow against `page.route()` API mocks.
-6. **`.github/workflows/compile-test.yml`** — real `esphome compile` against 16 fixture YAMLs (matrix of platforms/frameworks) inside both the client and server Docker images.
+1. **`pytest tests/`** with `pytest-cov` — full test suite.
+2. **`ruff check ha-addon/server/ ha-addon/client/`** — Python lint, zero warnings.
+3. **`mypy ha-addon/server/` and `mypy ha-addon/client/`** — type check, zero errors.
+4. **`cd ha-addon/ui && npm run build`** — TypeScript + Vite production build.
+5. **`cd ha-addon/ui && npm run test:e2e`** — 37-test mocked Playwright suite.
+6. **`bash scripts/check-invariants.sh`** — the enforced invariants above.
+7. **`.github/workflows/compile-test.yml`** — real `esphome compile` against 16 fixture YAMLs across platforms/frameworks.
 
 ### Manual gates (developer discipline)
 
-1. **Test coverage for new code.** Any new server module or significant function gets unit tests in the same commit. Bug fixes get a regression test that fails before the fix and passes after. Don't ship a fix without proving it stays fixed.
-2. **End-to-end coverage for user-visible features.** New UI features get a Playwright test in `e2e/` (mocked) at minimum. If the feature touches the real compile path, also add a test in `e2e-hass-4/` against the author's real instance.
-3. **Constants over magic strings.** When a string, header name, file path, or numeric threshold appears in two or more places, extract it. `ha-addon/server/constants.py` is the canonical home for shared server constants. UI strings used in exactly one place stay inline (we explicitly skipped extracting these in PY.6 — the indirection isn't worth it).
-4. **Error handling at boundaries.** Use the helpers in `ha-addon/server/helpers.py` (`safe_resolve`, `json_error`, `clamp`, `constant_time_compare`) instead of inline path-traversal/auth/clamping logic. Never bypass these on a "trusted internal call" — every endpoint is a boundary.
-5. **Don't bypass the linter or type checker.** No `# noqa`, `# type: ignore`, `eslint-disable`, or `@ts-ignore` without a comment explaining why and a follow-up plan. If you find yourself wanting to silence a tool, the right move is usually to fix the root cause.
-6. **Update `dev-plans/WORKITEMS-X.Y.md` immediately after completing work.** Check the box, add the specific dev.N tag. See "Project Tracking" below for the rules. Don't batch up multiple fixes and update at the end — you'll forget what landed when.
-7. **Bump `ha-addon/client/IMAGE_VERSION` when the worker Docker image changes.** That's the system packages, Python version, requirements.txt, or anything else `COPY`'d into the image (other than the auto-updatable `.py` source). Bump `MIN_IMAGE_VERSION` in `constants.py` at the same time so old workers get the "image stale" badge in the UI.
-8. **Production smoke tests after each turn.** `./push-to-hass-4.sh` deploys to hass-4 and runs the full `e2e-hass-4` Playwright suite (real compile + OTA flash to `cyd-office-info`). Run this after every turn — it's part of the dev loop, not a release-only step.
+1. **Test coverage for new code.** New module or significant function gets unit tests in the same commit. Bug fixes get a regression test that fails before the fix and passes after.
+2. **E2E coverage for user-visible features.** New UI features get a mocked Playwright test in `e2e/` at minimum. Features touching the real compile path also get a test in `e2e-hass-4/`.
+3. **Constants over magic strings.** When a string/header/path/threshold appears 2+ times, extract it. `ha-addon/server/constants.py` is the canonical home.
+4. **Error handling at boundaries.** Use the helpers in `ha-addon/server/helpers.py` (`safe_resolve`, `json_error`, `clamp`, `constant_time_compare`). Every endpoint is a boundary.
+5. **Update `dev-plans/WORKITEMS-X.Y.md` immediately after completing work.** Don't batch updates.
+6. **Production smoke test after every turn.** `./push-to-hass-4.sh` is part of the dev loop, not a release-only step.
 
 ### What this is NOT
 
-- **No code style enforcement beyond ruff.** We don't enforce line length, import order, or formatting beyond what ruff defaults to. Personal preference is fine; ruff catches what matters.
-- **No 100% coverage target.** 55% baseline is fine. Aim for tests that prove non-obvious behavior (state machines, edge cases, regressions), not cosmetic coverage of trivial getters.
-- **No "comprehensive" PR templates or lint configs.** This is a single-developer project with an AI pair. Keep the bar high but the process light.
+- No code style enforcement beyond ruff.
+- No coverage target. Aim for tests that prove non-obvious behavior, not cosmetic coverage of trivial getters.
+- No "comprehensive" PR templates. This is a single-developer project with an AI pair — keep the bar high, the process light.
+
+## Documentation
+
+When adding features or changing user-visible behavior, keep in sync:
+
+- `README.md` — public project overview.
+- `ha-addon/DOCS.md` — user-facing docs shown in the HA add-on panel.
+- `ha-addon/CHANGELOG.md` — **written for users, not developers.** ~90% of the entry should cover things users see and experience (new UI features, UX improvements, bug fixes with user-visible symptoms, configuration changes). ~10% at most for internal/behind-the-scenes work (tests, CI, protocol types, code cleanup) — collapse into a brief "Under the hood" section, not detailed workstream breakdowns. Group by what the user experiences, not by internal workstream labels. Never say "no new features" when there are user-visible features — scan the WORKITEMS bug list for UI/UX work.
 
 ## Project Tracking
 
-All roadmap, release process, and bug tracking lives in `dev-plans/`:
+Everything lives in `dev-plans/`:
 
-- `dev-plans/README.md` — index of all the files
-- `dev-plans/WORKITEMS-X.Y.md` — one file per release. Each file mixes feature work items (with checkboxes) and bug fixes (numbered, with FIXED/WONTFIX/etc. status). Bug numbers are global and monotonic across releases.
-- `dev-plans/WORKITEMS-1.3.1.md` — **current release.** Open bugs go at the bottom under "Open Bugs", folded into the Bug Fixes list as they land.
-- `dev-plans/archive/` — released WORKITEMS files from prior versions (1.0, 1.1, 1.2, 1.3). Historical reference only; don't edit.
-- `dev-plans/SECURITY_AUDIT.md` — security audit findings (refer when making security-relevant changes)
-- `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process (what Claude does vs. what the human does)
+- `dev-plans/README.md` — index.
+- `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
+- `dev-plans/WORKITEMS-1.4.md` — current release.
+- `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
+- `dev-plans/SECURITY_AUDIT.md` — security audit findings.
+- `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process.
 
-**Always update tracking files when completing work:**
-- Both work items and bug entries use the same checkbox format: `- [x] **#NNN** *(X.Y.Z-dev.N)* — description` (where `#NNN` only applies to bugs).
-- When a work item is done, check the box and add the specific version tag (e.g. `*(1.3.0-dev.7)*` — use the actual dev.N, not the generic `dev`).
-- When a bug is fixed, check the box and add the version tag. For wontfix/duplicate/stale entries, use `~~**#NNN**~~ WONTFIX —` (strike-through bold ID + label).
-- Do this immediately after the work is complete, not deferred to later.
-- **On release**, move the completed `WORKITEMS-X.Y.md` file into `dev-plans/archive/` and update both `dev-plans/README.md` and this file's "Project Tracking" section to reflect the new current release.
+**Turn** = one user prompt → one assistant response cycle. At the end of every turn:
+1. Run `bash scripts/bump-dev.sh` — auto-increments `-dev.N`. Never skip.
+2. Run `./push-to-hass-4.sh` for the prod smoke test.
+3. Update `dev-plans/WORKITEMS-X.Y.md` immediately — check the box, add the specific dev.N tag. Don't batch.
+
+**Work item / bug checkbox format:** `- [x] **#NNN** *(X.Y.Z-dev.N)* — description` (the `#NNN` only applies to bugs). Use the exact dev.N, not a generic `dev`. For wontfix/duplicate/stale entries, use `~~**#NNN**~~ WONTFIX —` (strike-through bold ID + label).
+
+**Next release file:** Create `dev-plans/WORKITEMS-X.Y+1.md` immediately after tagging `vX.Y.Z` (part of the post-release checklist). The current file moves to `dev-plans/archive/` at the same time, and this file's "Project Tracking" section is updated to point at the new current release.
+
+## Deployment
+
+`hass-4` is the local Home Assistant instance. `./push-to-hass-4.sh` deploys the add-on, waits for the new version to report ready, and runs the full `e2e-hass-4` Playwright suite (real compile + OTA to `cyd-office-info`). Run after every turn.

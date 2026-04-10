@@ -5,6 +5,7 @@ Importable standalone; no dependency on other client modules.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
@@ -12,6 +13,8 @@ import time
 from typing import Optional
 
 import psutil
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level constants

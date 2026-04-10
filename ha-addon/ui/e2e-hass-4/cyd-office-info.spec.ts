@@ -84,10 +84,18 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
     // the new one we're about to create
     const before = await latestJobIdFor(request, TARGET_FILENAME);
 
-    // Click the row's Upgrade button
+    // Click the row's Upgrade button — opens the UpgradeModal (#16). The
+    // modal lets the user pick a worker + ESPHome version; we accept the
+    // defaults and click the modal's Upgrade button to actually enqueue.
     const upgradeBtn = targetRow.getByRole('button', { name: /^upgrade$/i });
     await expect(upgradeBtn).toBeVisible();
     await upgradeBtn.click();
+
+    // Modal is open — find the confirm button (the second "Upgrade" button on
+    // the page, since the row's button is still in the DOM behind the modal).
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 5_000 });
+    await dialog.getByRole('button', { name: /^upgrade$/i }).click();
 
     // Wait for a NEW job (different ID) to appear via the API — source of truth
     await expect.poll(
@@ -160,6 +168,83 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
     ).toBe('success');
   });
 
+  test('editor opens, shows YAML, edits comment, saves, persists', async ({ page, request }) => {
+    // Regression for #15 — the editor stuck on a loading state because the
+    // E.9 CSP blocked Monaco's CDN load. Rather than just verifying it
+    // opens, we round-trip a real edit through the save endpoint and
+    // confirm the new content survives a reopen.
+    test.setTimeout(60_000);
+
+    await page.goto('/');
+    const targetRow = await findTargetRow(page);
+    await expect(targetRow).toBeVisible({ timeout: 30_000 });
+
+    // Click the row's Edit button
+    await targetRow.getByRole('button', { name: /^edit$/i }).click();
+
+    // Monaco container appears…
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 15_000 });
+    // …and actually rendered text (regression guard for the empty-loader
+    // failure mode where the div appears but Monaco never finished loading).
+    const firstViewLine = page.locator('.monaco-editor .view-line').first();
+    await expect(firstViewLine).toContainText(/esphome|wifi|api|substitutions/, { timeout: 15_000 });
+
+    // Read the original content via the API so we can edit it precisely
+    // (Monaco-driven keyboard input is fragile across platforms).
+    const beforeResp = await request.get(`./ui/api/targets/${TARGET_FILENAME}/content`);
+    expect(beforeResp.ok()).toBeTruthy();
+    const before = (await beforeResp.json() as { content: string }).content;
+
+    // Stamp a marker into the comment line so the test is idempotent and
+    // visible after the fact. Replace any prior marker to keep the file tidy.
+    const marker = `e2e-test-marker-${Date.now()}`;
+    let edited: string;
+    if (/comment:\s*(['"])?[^\n]*\1?/.test(before)) {
+      edited = before.replace(
+        /comment:\s*(['"])?[^\n]*\1?/,
+        `comment: "${marker}"`,
+      );
+    } else {
+      // No comment field — append one under the esphome: block
+      edited = before.replace(/(esphome:\s*\n)/, `$1  comment: "${marker}"\n`);
+    }
+    expect(edited).not.toBe(before);
+
+    // Save via the API directly (deterministic; doesn't rely on Save button
+    // wiring or toast timing).
+    const saveResp = await request.post(`./ui/api/targets/${TARGET_FILENAME}/content`, {
+      data: { content: edited },
+    });
+    expect(saveResp.ok(), 'save endpoint should accept the edit').toBeTruthy();
+
+    // #21 / #25: validate the edit. Runs directly on the server as a
+    // subprocess (esphome config), no queue involvement. The response is
+    // immediate — { success: bool, output: string }.
+    const validateResp = await request.post('./ui/api/validate', {
+      data: { target: TARGET_FILENAME },
+    });
+    expect(validateResp.ok(), 'validate endpoint should return 2xx').toBeTruthy();
+    const validateResult = await validateResp.json() as { success: boolean; output: string };
+    expect(
+      validateResult.success,
+      `validation should pass; output:\n${validateResult.output}`,
+    ).toBe(true);
+
+    // Reopen the editor and verify the marker shows up.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await targetRow.getByRole('button', { name: /^edit$/i }).click();
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 15_000 });
+    // Wait for any view-line containing the marker. Monaco may not have
+    // scrolled it into view, so search across all lines.
+    await expect.poll(
+      async () => (await page.locator('.monaco-editor').first().textContent()) ?? '',
+      { timeout: 10_000, message: 'edited marker should be in the editor after reopen' },
+    ).toContain(marker);
+
+    await page.keyboard.press('Escape');
+  });
+
   test('live device logs stream from cyd-office-info', async ({ page }) => {
     test.setTimeout(DEVICE_LOG_TIMEOUT_MS + 60_000);
 
@@ -188,6 +273,89 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
     // Close it
     await page.keyboard.press('Escape');
   });
+
+  // #24: parallel-compile coverage. Pin garage-door-big to the local-worker
+  // (which has 1 slot) and verify it runs to completion against a real ESP
+  // device. The local-worker existing on hass-4 with 1 slot is enforced as a
+  // precondition; the test fails fast if the topology has drifted.
+  test('parallel compile: garage-door-big pinned to local-worker', async ({ request }) => {
+    test.setTimeout(COMPILE_BUDGET_MS + 60_000);
+
+    // Precondition: local-worker is online with exactly 1 slot. Anything else
+    // means the test environment has drifted from the intended setup.
+    const workersResp = await request.get('./ui/api/workers');
+    expect(workersResp.ok(), 'workers endpoint should return 2xx').toBeTruthy();
+    const workers = (await workersResp.json()) as Array<{
+      client_id: string;
+      hostname: string;
+      online: boolean;
+      max_parallel_jobs?: number;
+    }>;
+    const localWorker = workers.find(w => w.hostname === 'local-worker');
+    expect(localWorker, 'local-worker should be registered').toBeDefined();
+    expect(localWorker!.online, 'local-worker should be online').toBe(true);
+    expect(
+      localWorker!.max_parallel_jobs,
+      `local-worker should have exactly 1 parallel slot (got ${localWorker!.max_parallel_jobs})`,
+    ).toBe(1);
+
+    // Trigger a pinned compile via the UI API. The bulk endpoint accepts a
+    // single-target list + pinned_client_id, same path the UpgradeModal uses.
+    const compileResp = await request.post('./ui/api/compile', {
+      data: {
+        targets: ['garage-door-big.yaml'],
+        pinned_client_id: localWorker!.client_id,
+      },
+    });
+    expect(compileResp.ok(), 'compile endpoint should accept the pinned request').toBeTruthy();
+    const compileJson = (await compileResp.json()) as { enqueued: number };
+    expect(compileJson.enqueued).toBeGreaterThan(0);
+
+    // Find the new job in the queue. We don't get the job_id from the
+    // compile endpoint directly; poll the queue for the most recent
+    // garage-door-big job pinned to our worker.
+    let jobId: string | null = null;
+    await expect.poll(
+      async () => {
+        const queue = await getQueue(request);
+        const candidates = queue
+          .filter(j => j.target === 'garage-door-big.yaml' && j.pinned_client_id === localWorker!.client_id)
+          .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+        if (candidates[0]) {
+          jobId = candidates[0].id;
+          return jobId;
+        }
+        return null;
+      },
+      { timeout: 15_000, message: 'pinned garage-door-big job should appear in the queue' },
+    ).not.toBeNull();
+    expect(jobId).toBeTruthy();
+
+    // Poll for terminal state. Pinned to a 1-slot worker, the job will run
+    // sequentially with whatever else local-worker is doing — same overall
+    // budget as the cyd-office-info compile is plenty.
+    let finalJob: QueueJob | null = null;
+    await expect.poll(
+      async () => {
+        const job = await getJob(request, jobId!);
+        if (job && isTerminal(job.state)) {
+          finalJob = job;
+          return job.state;
+        }
+        return job?.state ?? 'missing';
+      },
+      {
+        timeout: COMPILE_BUDGET_MS,
+        intervals: [2_000, 5_000, 10_000],
+        message: `garage-door-big compile did not finish within ${COMPILE_BUDGET_MS}ms`,
+      },
+    ).toMatch(/^(success|failed|timed_out)$/);
+
+    expect(finalJob, 'final job should be set').not.toBeNull();
+    expect(finalJob!.state, `final state: ${finalJob!.state}`).toBe('success');
+    // The job ran where we asked it to run.
+    expect(finalJob!.assigned_client_id).toBe(localWorker!.client_id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -201,6 +369,8 @@ interface QueueJob {
   ota_result?: string;
   created_at: string;
   finished_at?: string;
+  pinned_client_id?: string;
+  assigned_client_id?: string;
 }
 
 function isTerminal(state: string): boolean {

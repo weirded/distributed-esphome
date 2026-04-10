@@ -172,7 +172,10 @@ class DevicePoller:
     ) -> None:
         try:
             from zeroconf import ServiceStateChange  # noqa: PLC0415
-            info = await asyncio.get_event_loop().run_in_executor(
+            # C.8: get_running_loop is the modern equivalent of get_event_loop
+            # when we're already inside a coroutine — and is the only one that
+            # works in 3.12+.
+            info = await asyncio.get_running_loop().run_in_executor(
                 None, zeroconf.get_service_info, service_type, name
             )
             if info is None:
@@ -244,7 +247,9 @@ class DevicePoller:
                 or ip
             )
             if query_addr:
-                asyncio.ensure_future(self._query_device(existing_key, query_addr))
+                # C.8: create_task is the modern equivalent of ensure_future
+                # when we're scheduling a coroutine on the running loop.
+                asyncio.create_task(self._query_device(existing_key, query_addr))
 
         except Exception:
             logger.exception("Error handling mDNS service change for %s", name)
@@ -558,3 +563,28 @@ class DevicePoller:
 
     def get_devices(self) -> list[Device]:
         return list(self._devices.values())
+
+    async def refresh_target(self, compile_target: str) -> bool:
+        """Force an immediate device-info refresh for the device whose
+        ``compile_target`` matches *compile_target*.
+
+        Used by the API to push fresh ``running_version``/``compilation_time``
+        into the UI right after a successful OTA, instead of waiting up to
+        ``poll_interval`` seconds for the next mDNS poll cycle (#11).
+
+        Returns True if a refresh was attempted, False if no matching
+        device was found or it has no IP yet.
+        """
+        async with self._lock:
+            target_dev: Optional[Device] = None
+            for dev in self._devices.values():
+                if dev.compile_target == compile_target:
+                    target_dev = dev
+                    break
+            if target_dev is None or not target_dev.ip_address:
+                return False
+            name = target_dev.name
+            ip = self._address_overrides.get(name) or target_dev.ip_address
+        # Run the query OUTSIDE the lock — it does network I/O.
+        await self._query_device(name, ip)
+        return True

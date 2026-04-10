@@ -159,7 +159,10 @@ def test_get_esphome_version_returns_string():
 def test_get_esphome_version_returns_unknown_when_not_installed():
     """If esphome is not installed, should return 'unknown' without crashing."""
     import importlib.metadata as meta
+    import scanner
+
     original = meta.version
+    original_selected = scanner._selected_esphome_version
 
     def mock_version(pkg):
         if pkg == "esphome":
@@ -167,11 +170,13 @@ def test_get_esphome_version_returns_unknown_when_not_installed():
         return original(pkg)
 
     meta.version = mock_version
+    scanner._selected_esphome_version = None
     try:
         ver = get_esphome_version()
         assert ver == "unknown"
     finally:
         meta.version = original
+        scanner._selected_esphome_version = original_selected
 
 
 # ---------------------------------------------------------------------------

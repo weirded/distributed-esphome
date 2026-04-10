@@ -10,13 +10,28 @@ from typing import Optional
 
 import aiohttp
 from aiohttp import web
+from pydantic import ValidationError
 
 from app_config import AppConfig
 from constants import (
-    HA_SUPERVISOR_IP, HEADER_AUTHORIZATION, HEADER_X_CLIENT_ID, HEADER_X_WORKER_ID,
+    HEADER_X_CLIENT_ID, HEADER_X_WORKER_ID,
     MIN_IMAGE_VERSION,
 )
 from job_queue import JobState
+from protocol import (
+    PROTOCOL_VERSION,
+    DeregisterRequest,
+    HeartbeatRequest,
+    HeartbeatResponse,
+    JobAssignment,
+    JobLogAppend,
+    JobResultSubmission,
+    JobStatusUpdate,
+    OkResponse,
+    ProtocolError,
+    RegisterRequest,
+    RegisterResponse,
+)
 from scanner import create_bundle, get_esphome_version
 
 # Worker code bundled inside this container
@@ -41,71 +56,115 @@ def _cfg(request: web.Request) -> AppConfig:
     return request.app["config"]
 
 
-def _check_auth(request: web.Request) -> bool:
-    """Return True if the request is authorized."""
-    cfg = _cfg(request)
-    # Requests from HA supervisor (ingress internal address) are always trusted
-    peer = request.transport and request.transport.get_extra_info("peername")
-    if peer:
-        peer_ip = peer[0] if isinstance(peer, tuple) else str(peer)
-        if peer_ip == HA_SUPERVISOR_IP:
-            return True
-    auth_header = request.headers.get(HEADER_AUTHORIZATION, "")
-    from helpers import constant_time_compare  # noqa: PLC0415
-    if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], cfg.token):
-        return True
-    return False
-
-
 def _unauthorized() -> web.Response:
+    """Return a 401 response.
+
+    Kept as a thin helper because some downstream tests still call it; the
+    in-handler ``_check_auth`` was removed in C.7 — every ``/api/v1/*``
+    request is gated by ``main.auth_middleware`` before it reaches a handler,
+    and a duplicated check in the handler can drift (e.g. the middleware
+    uses ``constant_time_compare``; a future fix applied to one site
+    wouldn't reach the other).
+    """
     return web.json_response({"error": "Unauthorized"}, status=401)
 
 
-async def _register_worker_handler(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
+def _protocol_error(error: str, reason: Optional[str] = None, status: int = 400) -> web.Response:
+    """Return a structured ProtocolError response with HTTP *status*."""
+    body = ProtocolError(error=error, reason=reason).model_dump(exclude_none=True)
+    return web.json_response(body, status=status)
+
+
+def _first_error_reason(exc: ValidationError) -> str:
+    """Format the first pydantic validation error as a short human string."""
+    errors = exc.errors()
+    if not errors:
+        return str(exc)
+    first = errors[0]
+    loc = ".".join(str(p) for p in first.get("loc", ()))
+    return f"{loc}: {first.get('msg', 'invalid')}"
+
+
+async def _parse_body(request: web.Request, model_cls):  # type: ignore[no-untyped-def]
+    """Parse + validate a JSON body into *model_cls*.
+
+    Returns ``(model, None)`` on success or ``(None, response)`` on failure,
+    so callers can ``model, err = await _parse_body(...)`` and return ``err``.
+    """
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
+        return None, _protocol_error("invalid_json")
+    if not isinstance(body, dict):
+        return None, _protocol_error("invalid_payload", "expected JSON object")
+    try:
+        return model_cls.model_validate(body), None
+    except ValidationError as exc:
+        return None, _protocol_error("invalid_payload", _first_error_reason(exc))
 
-    hostname = body.get("hostname", "unknown")
-    platform = body.get("platform", "unknown")
-    client_version = body.get("client_version")
-    image_version = body.get("image_version")
-    existing_client_id = body.get("client_id")
+
+def _check_protocol_version(msg) -> Optional[web.Response]:  # type: ignore[no-untyped-def]
+    """Reject messages whose ``protocol_version`` is unknown to this server.
+
+    Today we only know version 1; accept that and reject everything else
+    with a structured error so the worker can log it clearly instead of
+    acting on a half-processed payload.
+    """
+    pv = getattr(msg, "protocol_version", None)
+    if pv is None:
+        return None
+    if pv != PROTOCOL_VERSION:
+        return _protocol_error(
+            "unsupported_protocol_version",
+            f"server speaks v{PROTOCOL_VERSION}, received v{pv}",
+        )
+    return None
+
+
+async def _register_worker_handler(request: web.Request) -> web.Response:
+    msg, err = await _parse_body(request, RegisterRequest)
+    if err is not None:
+        return err
+    assert msg is not None
+    pv_err = _check_protocol_version(msg)
+    if pv_err is not None:
+        return pv_err
+
     from helpers import clamp  # noqa: PLC0415
-    max_parallel_jobs = clamp(int(body.get("max_parallel_jobs", 1)), 0, 32)
-    system_info = body.get("system_info") if isinstance(body.get("system_info"), dict) else None
+    max_parallel_jobs = clamp(msg.max_parallel_jobs, 0, 32)
+    system_info_dict = msg.system_info.model_dump(exclude_none=True) if msg.system_info else None
+
     registry = request.app["registry"]
     client_id = registry.register(
-        hostname, platform, client_version, existing_client_id, max_parallel_jobs,
-        system_info, image_version=image_version,
+        msg.hostname,
+        msg.platform,
+        msg.client_version,
+        msg.client_id,
+        max_parallel_jobs,
+        system_info_dict,
+        image_version=msg.image_version,
     )
-    return web.json_response({"client_id": client_id})
+    return web.json_response(RegisterResponse(client_id=client_id).model_dump(exclude_none=True))
 
 
 async def _heartbeat_handler(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
+    msg, err = await _parse_body(request, HeartbeatRequest)
+    if err is not None:
+        return err
+    assert msg is not None
+    pv_err = _check_protocol_version(msg)
+    if pv_err is not None:
+        return pv_err
 
-    client_id = body.get("client_id")
-    if not client_id:
-        return web.json_response({"error": "client_id required"}, status=400)
-
-    system_info = body.get("system_info") if isinstance(body.get("system_info"), dict) else None
+    system_info_dict = msg.system_info.model_dump(exclude_none=True) if msg.system_info else None
     registry = request.app["registry"]
-    if not registry.heartbeat(client_id, system_info):
+    if not registry.heartbeat(msg.client_id, system_info_dict):
         # Unknown worker — let it re-register
-        return web.json_response({"error": "Unknown client_id"}, status=404)
+        return _protocol_error("unknown_client_id", status=404)
 
-    # Include requested config changes in heartbeat response
-    worker = registry.get(client_id)
-    resp: dict = {"ok": True}
+    # Build response from registry state
+    worker = registry.get(msg.client_id)
+    resp = HeartbeatResponse(ok=True)
 
     # Only advertise a newer source-code version to workers running an
     # up-to-date Docker image. A stale image can't be fixed by rewriting
@@ -113,17 +172,17 @@ async def _heartbeat_handler(request: web.Request) -> web.Response:
     # so suppressing server_client_version prevents an auto-update loop
     # that would just fail to pick up the real changes.
     if worker is None or _image_version_ok(worker.image_version):
-        resp["server_client_version"] = _get_server_client_version()
+        resp.server_client_version = _get_server_client_version()
     else:
-        resp["image_upgrade_required"] = True
-        resp["min_image_version"] = MIN_IMAGE_VERSION
+        resp.image_upgrade_required = True
+        resp.min_image_version = MIN_IMAGE_VERSION
 
     if worker and worker.requested_max_parallel_jobs is not None:
-        resp["set_max_parallel_jobs"] = worker.requested_max_parallel_jobs
+        resp.set_max_parallel_jobs = worker.requested_max_parallel_jobs
     if worker and worker.pending_clean:
-        resp["clean_build_cache"] = True
+        resp.clean_build_cache = True
         worker.pending_clean = False
-    return web.json_response(resp)
+    return web.json_response(resp.model_dump(exclude_none=True))
 
 
 def _image_version_ok(reported: Optional[str]) -> bool:
@@ -143,22 +202,16 @@ def _image_version_ok(reported: Optional[str]) -> bool:
 
 async def _deregister_handler(request: web.Request) -> web.Response:
     """Remove a worker from the registry on clean shutdown."""
-    if not _check_auth(request):
-        return _unauthorized()
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
-
-    client_id = body.get("client_id")
-    if not client_id:
-        return web.json_response({"error": "client_id required"}, status=400)
+    msg, err = await _parse_body(request, DeregisterRequest)
+    if err is not None:
+        return err
+    assert msg is not None
 
     registry = request.app["registry"]
-    if registry.remove(client_id):
-        logger.info("Worker %s deregistered (clean shutdown)", client_id)
-        return web.json_response({"ok": True})
-    return web.json_response({"error": "Unknown client_id"}, status=404)
+    if registry.remove(msg.client_id):
+        logger.info("Worker %s deregistered (clean shutdown)", msg.client_id)
+        return web.json_response(OkResponse().model_dump())
+    return _protocol_error("unknown_client_id", status=404)
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +259,6 @@ async def deregister_client(request: web.Request) -> web.Response:
 
 @routes.get("/api/v1/jobs/next")
 async def get_next_job(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
-
     client_id = request.headers.get(HEADER_X_CLIENT_ID) or request.rel_url.query.get("client_id")
     if not client_id:
         return web.json_response({"error": f"{HEADER_X_CLIENT_ID} header or client_id param required"}, status=400)
@@ -299,38 +349,28 @@ async def get_next_job(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    return web.json_response(
-        {
-            "job_id": job.id,
-            "target": job.target,
-            "esphome_version": job.esphome_version,
-            "bundle_b64": bundle_b64,
-            "timeout_seconds": job.timeout_seconds,
-            "ota_only": job.ota_only,
-            "validate_only": job.validate_only,
-            "ota_address": job.ota_address,
-            "server_timezone": server_tz,
-        }
+    assignment = JobAssignment(
+        job_id=job.id,
+        target=job.target,
+        esphome_version=job.esphome_version,
+        bundle_b64=bundle_b64,
+        timeout_seconds=job.timeout_seconds,
+        ota_only=job.ota_only,
+        validate_only=job.validate_only,
+        ota_address=job.ota_address,
+        server_timezone=server_tz,
     )
+    return web.json_response(assignment.model_dump(exclude_none=True))
 
 
 @routes.post("/api/v1/jobs/{id}/result")
 async def submit_job_result(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
-
     job_id = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
 
-    status = body.get("status")
-    log = body.get("log")
-    ota_result = body.get("ota_result")
-
-    if status not in ("success", "failed"):
-        return web.json_response({"error": "status must be 'success' or 'failed'"}, status=400)
+    msg, err = await _parse_body(request, JobResultSubmission)
+    if err is not None:
+        return err
+    assert msg is not None
 
     queue = request.app["queue"]
     registry = request.app["registry"]
@@ -340,36 +380,46 @@ async def submit_job_result(request: web.Request) -> web.Response:
     if job and job.assigned_client_id:
         registry.set_job(job.assigned_client_id, None)
 
-    ok = await queue.submit_result(job_id, status, log, ota_result)
+    ok = await queue.submit_result(job_id, msg.status, msg.log, msg.ota_result)
     if not ok:
-        return web.json_response({"error": "Job not found or in unexpected state"}, status=404)
+        return _protocol_error("job_not_found_or_wrong_state", status=404)
 
-    return web.json_response({"ok": True})
+    # #11: trigger an immediate device-info refresh after a successful OTA so
+    # the UI sees the new running_version + compilation_time within ~1s
+    # instead of waiting up to one device_poller cycle (default 60s). Skip on
+    # failures and on validate-only jobs (which don't change the device).
+    if msg.status == "success" and msg.ota_result == "success" and job is not None:
+        device_poller = request.app.get("device_poller")
+        if device_poller is not None:
+            try:
+                # Don't block the response on the device-info round-trip;
+                # fire-and-forget on the event loop.
+                import asyncio  # noqa: PLC0415
+                asyncio.create_task(device_poller.refresh_target(job.target))
+            except Exception:
+                logger.exception("Failed to schedule post-OTA device refresh for %s", job.target)
+
+    return web.json_response(OkResponse().model_dump())
 
 
 @routes.post("/api/v1/jobs/{id}/status")
 async def update_job_status(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
-
     job_id = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
 
-    status_text = body.get("status_text", "")
+    msg, err = await _parse_body(request, JobStatusUpdate)
+    if err is not None:
+        return err
+    assert msg is not None
+
     queue = request.app["queue"]
-    ok = await queue.update_status(job_id, status_text)
+    ok = await queue.update_status(job_id, msg.status_text)
     if not ok:
-        return web.json_response({"error": "Job not found"}, status=404)
-    return web.json_response({"ok": True})
+        return _protocol_error("job_not_found", status=404)
+    return web.json_response(OkResponse().model_dump())
 
 
 @routes.get("/api/v1/client/version")
 async def get_client_version(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
     return web.json_response({"version": _get_server_client_version()})
 
 
@@ -381,9 +431,6 @@ async def get_client_code(request: web.Request) -> web.Response:
     because source-code updates alone can't fix a stale image and would
     just cause them to repeatedly exec into broken state.
     """
-    if not _check_auth(request):
-        return _unauthorized()
-
     # Look up the caller's image version from the registry
     client_id = request.headers.get(HEADER_X_CLIENT_ID) or request.rel_url.query.get("client_id")
     if client_id:
@@ -416,37 +463,48 @@ async def get_client_code(request: web.Request) -> web.Response:
 @routes.post("/api/v1/jobs/{id}/log")
 async def append_job_log(request: web.Request) -> web.Response:
     """Append streaming log lines from a build worker (HTTP batched)."""
-    if not _check_auth(request):
-        return _unauthorized()
     job_id = request.match_info["id"]
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "Invalid JSON"}, status=400)
 
-    lines = body.get("lines", "")
+    # C.3: refuse oversized log uploads at the request boundary so a single
+    # huge POST body never gets buffered into RAM before the in-function cap
+    # in JobQueue.append_log fires. We use 4× MAX_LOG_BYTES (≈2 MB) as the
+    # ceiling — generous enough that legitimate batched flushes are never
+    # rejected, but tight enough to prevent a malicious or buggy worker from
+    # parking gigabytes in the parser.
+    from job_queue import MAX_LOG_BYTES  # noqa: PLC0415
+    max_body = MAX_LOG_BYTES * 4
+    content_length = request.content_length
+    if content_length is not None and content_length > max_body:
+        return _protocol_error(
+            "log_payload_too_large",
+            f"body {content_length} bytes exceeds cap {max_body}",
+            status=413,
+        )
+
+    msg, err = await _parse_body(request, JobLogAppend)
+    if err is not None:
+        return err
+    assert msg is not None
+
     queue = request.app["queue"]
-    ok = await queue.append_log(job_id, lines)
+    ok = await queue.append_log(job_id, msg.lines)
     if not ok:
-        return web.json_response({"error": "Job not found"}, status=404)
+        return _protocol_error("job_not_found", status=404)
 
     # Forward to any browser WebSocket subscribers
     subscribers: dict = request.app.get("log_subscribers", {})
     for sub_ws in list(subscribers.get(job_id, set())):
         try:
-            await sub_ws.send_str(lines)
+            await sub_ws.send_str(msg.lines)
         except Exception:
             subscribers[job_id].discard(sub_ws)
 
-    return web.json_response({"ok": True})
+    return web.json_response(OkResponse().model_dump())
 
 
 @routes.get("/api/v1/jobs/{id}/log/ws")
 async def ws_worker_log(request: web.Request) -> web.WebSocketResponse:
     """WebSocket endpoint for build workers to stream log lines."""
-    if not _check_auth(request):
-        return _unauthorized()  # type: ignore[return-value]
-
     job_id = request.match_info["id"]
     queue = request.app["queue"]
     job = queue.get(job_id)
@@ -475,9 +533,6 @@ async def ws_worker_log(request: web.Request) -> web.WebSocketResponse:
 
 @routes.get("/api/v1/status")
 async def get_status(request: web.Request) -> web.Response:
-    if not _check_auth(request):
-        return _unauthorized()
-
     cfg = _cfg(request)
     registry = request.app["registry"]
     queue = request.app["queue"]

@@ -109,8 +109,8 @@ async def _enqueue_job(
 
 async def _register(ta: _App, hostname: str = "build-box", platform: str = "linux/amd64",
                     system_info: dict | None = None,
-                    image_version: str | None = "2") -> str:
-    # Defaults to image_version="2" (current MIN_IMAGE_VERSION) so most tests
+                    image_version: str | None = "4") -> str:
+    # Defaults to image_version="4" (current MIN_IMAGE_VERSION) so most tests
     # exercise the happy path. Tests that want to simulate a stale-image worker
     # explicitly pass image_version=None or an older number.
     body: dict = {"hostname": hostname, "platform": platform}
@@ -1021,5 +1021,74 @@ async def test_get_client_code_allows_fresh_image(tmp_path):
         assert resp.status == 200
         data = await resp.json()
         assert "files" in data
+    finally:
+        await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# B.5 — LIB.0 image_version full parametrization
+#
+# Covers the edge cases not in the existing parametrized test: empty string,
+# and garbage non-numeric string. Both must be treated as "stale" by the
+# heartbeat response (image_upgrade_required=True), not accepted as valid.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "image_version,expected_upgrade_required",
+    [
+        (None, True),        # pre-LIB.0 worker — no field at all
+        ("", True),          # empty string — falsy, cannot parse as int
+        ("1", True),         # integer but below MIN_IMAGE_VERSION=4
+        ("2", True),         # still stale — pydantic added in v3, deps locked in v4
+        ("3", True),         # still stale — hash-pinned deps were added in v4
+        ("4", False),        # exactly MIN_IMAGE_VERSION — fresh
+        ("5", False),        # above MIN_IMAGE_VERSION — fresh
+        ("garbage", True),   # non-numeric — int() raises, treated as stale
+    ],
+)
+async def test_heartbeat_image_version_full_parametrization(
+    tmp_path, image_version, expected_upgrade_required,
+):
+    """Assert the heartbeat branch taken for every image_version edge case.
+
+    When ``image_upgrade_required`` is True the server must also send
+    ``min_image_version`` and MUST NOT advertise ``server_client_version``
+    (which would cause the worker to attempt an in-place source update that
+    can't actually work on a stale Docker image).
+    """
+    ta = await _make_app(tmp_path)
+    try:
+        body: dict = {"hostname": "w", "platform": "linux/amd64"}
+        if image_version is not None:
+            body["image_version"] = image_version
+
+        reg_resp = await ta.post(
+            "/api/v1/workers/register",
+            json=body,
+            headers=AUTH_HEADERS,
+        )
+        assert reg_resp.status == 200
+        client_id = (await reg_resp.json())["client_id"]
+
+        hb_resp = await ta.post(
+            "/api/v1/workers/heartbeat",
+            json={"client_id": client_id},
+            headers=AUTH_HEADERS,
+        )
+        assert hb_resp.status == 200
+        data = await hb_resp.json()
+
+        if expected_upgrade_required:
+            assert data.get("image_upgrade_required") is True, (
+                f"image_version={image_version!r}: expected image_upgrade_required, got {data}"
+            )
+            assert "min_image_version" in data
+            assert "server_client_version" not in data, (
+                "server_client_version must be suppressed for stale images "
+                "to prevent the auto-update loop"
+            )
+        else:
+            assert data.get("image_upgrade_required") is None
+            assert "server_client_version" in data
     finally:
         await ta.close()

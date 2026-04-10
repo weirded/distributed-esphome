@@ -1,0 +1,77 @@
+# Dependabot config (E.6).
+#
+# Weekly schedule for normal PRs. The release-time gate in
+# ``dev-plans/RELEASE_CHECKLIST.md`` runs ``gh api`` against the alerts
+# endpoint and refuses to tag when any high/critical alert is open — that
+# is the "no release with known-vulnerable libs" floor on top of this
+# auto-PR cadence.
+#
+# Five ecosystems:
+#   - pip × 2 (server + client requirements.txt)
+#   - npm (frontend)
+#   - docker × 2 (server + client Dockerfile base images)
+#   - github-actions (every workflow under .github/workflows/)
+#
+# Open PR cap is intentionally low so the queue doesn't snowball.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /ha-addon/server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+
+  - package-ecosystem: pip
+    directory: /ha-addon/client
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+
+  - package-ecosystem: npm
+    directory: /ha-addon/ui
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - frontend
+
+  - package-ecosystem: docker
+    directory: /ha-addon
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+
+  - package-ecosystem: docker
+    directory: /ha-addon/client
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci

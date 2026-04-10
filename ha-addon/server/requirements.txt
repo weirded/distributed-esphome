@@ -1,4 +1,5 @@
 aiohttp>=3.9
+pydantic>=2
 aioesphomeapi>=18.0
 zeroconf>=0.131
 pyyaml>=6.0

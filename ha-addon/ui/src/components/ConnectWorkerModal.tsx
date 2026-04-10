@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ServerInfo } from '../types';
+import type { ServerInfo, WorkerPreset } from '../types';
 import {
   Dialog,
   DialogContent,
@@ -7,11 +7,15 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Select } from './ui/select';
 
 interface Props {
   serverInfo: ServerInfo;
   esphomeVersion: string | null;
   onClose: () => void;
+  /** Pre-populate fields when reconnecting an existing worker (bug #7). */
+  preset?: WorkerPreset | null;
 }
 
 type Shell = 'bash' | 'powershell';
@@ -57,7 +61,7 @@ function buildDockerCmd(params: {
   return lines.join('\n');
 }
 
-export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Props) {
+export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset }: Props) {
   const port = serverInfo.port || 8765;
   const addrs = serverInfo.server_addresses?.length
     ? serverInfo.server_addresses
@@ -66,11 +70,14 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
 
   const [serverUrl, setServerUrl] = useState(urlOptions[0] || '');
   const [containerName, setContainerName] = useState('distributed-esphome-worker');
-  const [hostname, setHostname] = useState('');
-  const [maxJobs, setMaxJobs] = useState(2);
+  // preset fields pre-populate when reconnecting an existing worker (bug #7).
+  // We read them once at mount and don't sync later — the modal is short-lived
+  // and a mid-edit prop change would be surprising.
+  const [hostname, setHostname] = useState(preset?.hostname ?? '');
+  const [maxJobs, setMaxJobs] = useState(preset?.max_parallel_jobs ?? 2);
   const [seedVersion, setSeedVersion] = useState(esphomeVersion || '');
   const seedUserEdited = useRef(false);
-  const [hostPlatform, setHostPlatform] = useState('');
+  const [hostPlatform, setHostPlatform] = useState(preset?.host_platform ?? '');
   const [restartPolicy, setRestartPolicy] = useState('unless-stopped');
   const [shell, setShell] = useState<Shell>('bash');
   const [copied, setCopied] = useState(false);
@@ -129,22 +136,26 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
         <DialogHeader>
           <DialogTitle>Connect a Build Worker</DialogTitle>
         </DialogHeader>
-        <div style={{ padding: 18 }}>
+        <div className="p-[18px]">
           <div className="connect-form">
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Server URL</label>
-              <select className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)] cursor-pointer" value={serverUrl} onChange={e => setServerUrl(e.target.value)}>
+              <Select value={serverUrl} onChange={e => setServerUrl(e.target.value)}>
                 {urlOptions.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Server Token</label>
-              <input className="sensitive w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)] text-[var(--text-muted)] cursor-default" type="text" value={serverInfo.token || ''} readOnly />
+              <Input
+                className="sensitive text-[var(--text-muted)] cursor-default"
+                type="text"
+                value={serverInfo.token || ''}
+                readOnly
+              />
             </div>
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Container Name</label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              <Input
                 type="text"
                 value={containerName}
                 onChange={e => setContainerName(e.target.value)}
@@ -152,8 +163,7 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
             </div>
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Hostname</label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              <Input
                 type="text"
                 value={hostname}
                 placeholder="$(hostname)"
@@ -162,8 +172,7 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
             </div>
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Max Parallel Jobs</label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              <Input
                 type="number"
                 value={maxJobs}
                 min={1}
@@ -173,8 +182,7 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
             </div>
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">ESPHome Seed Version</label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              <Input
                 type="text"
                 value={seedVersion}
                 onChange={e => { seedUserEdited.current = true; setSeedVersion(e.target.value); }}
@@ -183,12 +191,9 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">
                 Host Platform{' '}
-                <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none' }}>
-                  (optional)
-                </span>
+                <span className="text-[var(--text-muted)] font-normal normal-case">(optional)</span>
               </label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]"
+              <Input
                 type="text"
                 value={hostPlatform}
                 placeholder="e.g. macOS 15.3 (Apple M1 Pro)"
@@ -197,11 +202,11 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose }: Prop
             </div>
             <div>
               <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Restart Policy</label>
-              <select className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)] cursor-pointer" value={restartPolicy} onChange={e => setRestartPolicy(e.target.value)}>
+              <Select value={restartPolicy} onChange={e => setRestartPolicy(e.target.value)}>
                 <option value="unless-stopped">unless-stopped</option>
                 <option value="always">always</option>
                 <option value="no">no</option>
-              </select>
+              </Select>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>

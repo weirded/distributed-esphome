@@ -10,7 +10,7 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import { getApiKey, restartDevice } from '../api/client';
-import type { Device, Target, Worker } from '../types';
+import type { Device, Job, Target, Worker } from '../types';
 import { stripYaml, timeAgo } from '../utils';
 import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
@@ -33,7 +33,7 @@ import {
 } from './ui/dialog';
 
 /* ---- Column configuration ---- */
-type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project';
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap';
 
 interface OptionalColumnDef {
   id: OptionalColumnId;
@@ -45,7 +45,10 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'ha', label: 'HA', defaultVisible: true },
   { id: 'ip', label: 'IP', defaultVisible: true },
+  { id: 'net', label: 'Net', defaultVisible: true },
   { id: 'running', label: 'Version', defaultVisible: true },
+  { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
+  { id: 'ap', label: 'AP', defaultVisible: false },
   { id: 'area', label: 'Area', defaultVisible: false },
   { id: 'comment', label: 'Comment', defaultVisible: false },
   { id: 'project', label: 'Project', defaultVisible: false },
@@ -74,8 +77,21 @@ interface Props {
   devices: Device[];
   workers: Worker[];
   streamerMode: boolean;
+  /**
+   * Map of target filename → currently active (PENDING/WORKING) job for that
+   * target, derived in App.tsx from the live queue. Used to render an
+   * "Upgrading…" status and disable the Upgrade button while a compile is
+   * in flight (#32).
+   */
+  activeJobsByTarget: Map<string, Job>;
   onCompile: (targets: string[] | 'all' | 'outdated') => void;
-  onCompileOnWorker: (target: string, clientId: string) => void;
+  /**
+   * Per-row click handler for the Upgrade button (#16). Opens the
+   * UpgradeModal which collects worker + ESPHome version preferences. The
+   * onCompile prop is still used for the bulk Upgrade dropdown actions
+   * (Upgrade All, Upgrade Outdated, etc.) — those don't go through the modal.
+   */
+  onUpgradeOne: (target: string) => void;
   onEdit: (target: string) => void;
   onLogs: (target: string) => void;
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
@@ -94,6 +110,20 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
  * Returns null when there's nothing useful to display (no source, or
  * the address is just the {name}.local fallback no one configured).
  */
+/**
+ * Render a short display label for the device's primary network type (#10).
+ * Returns null when the YAML didn't declare any of wifi/ethernet/openthread —
+ * the column shows a dash in that case.
+ */
+function formatNetworkType(t: 'wifi' | 'ethernet' | 'thread' | null | undefined): string | null {
+  switch (t) {
+    case 'wifi': return 'WiFi';
+    case 'ethernet': return 'Eth';
+    case 'thread': return 'Thread';
+    default: return null;
+  }
+}
+
 function formatAddressSource(source: string | null | undefined): string | null {
   switch (source) {
     case 'mdns': return 'via mDNS';
@@ -197,7 +227,7 @@ function DeleteModal({ target, onConfirm, onClose }: {
   );
 }
 
-export function DevicesTab({ targets, devices, workers, streamerMode, onCompile, onCompileOnWorker, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
@@ -322,7 +352,13 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       }
     ),
     columnHelper.accessor(
-      row => row.online == null ? 'unknown' : row.online ? 'online' : 'offline',
+      row => {
+        // Active job sorts first so a "currently upgrading" group sticks to
+        // the top of an ascending sort.
+        if (activeJobsByTarget.has(row.target)) return 'a-upgrading';
+        if (row.online == null) return 'b-unknown';
+        return row.online ? 'c-online' : 'd-offline';
+      },
       {
         id: 'status',
         header: ({ column }) => <SortHeader label="Status" column={column} />,
@@ -330,6 +366,18 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
           const lastSeenEl = t.last_seen
             ? <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>
             : null;
+          // Active job takes priority over the device's online state — even
+          // an offline device can have a job in flight (the worker compiles
+          // first, OTA happens later).
+          const activeJob = activeJobsByTarget.get(t.target);
+          if (activeJob) {
+            const statusText = activeJob.status_text || (activeJob.state === 'pending' ? 'Pending…' : 'Compiling…');
+            return (
+              <span title={statusText}>
+                <StatusDot status="upgrading" label={statusText} />
+              </span>
+            );
+          }
           if (t.online == null) return <StatusDot status="checking" />;
           if (t.online) return <><StatusDot status="online" />{lastSeenEl}</>;
           return <><StatusDot status="offline" />{lastSeenEl}</>;
@@ -387,6 +435,89 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       },
       sortingFn: 'alphanumeric',
     }),
+    // #10 — network type (default-visible). Sorts by primary network then
+    // by ip mode (static before dhcp), so an ascending sort groups
+    // "WiFi · Static" together followed by "WiFi · DHCP", then Ethernet,
+    // then Thread. Tooltip shows all five facts in one line. The "·M"
+    // suffix marks Matter devices (#13).
+    columnHelper.accessor(
+      row => `${row.network_type ?? 'zzz'}-${row.network_static_ip ? '0' : '1'}-${row.network_matter ? '0' : '1'}`,
+      {
+        id: 'net',
+        header: ({ column }) => <SortHeader label="Net" column={column} />,
+        cell: ({ row: { original: t } }) => {
+          const label = formatNetworkType(t.network_type);
+          if (!label) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          const ipMode = t.network_static_ip ? 'Static' : 'DHCP';
+          const facts: string[] = [label, ipMode];
+          if (t.network_ipv6) facts.push('IPv6');
+          if (t.network_ap_fallback) facts.push('AP fallback');
+          if (t.network_matter) facts.push('Matter');
+          const tooltip = facts.join(' · ');
+          return (
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--text)',
+                whiteSpace: 'nowrap',
+              }}
+              title={tooltip}
+            >
+              {label}
+              {t.network_static_ip && (
+                <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 3 }} title="Static IP">·S</span>
+              )}
+              {t.network_matter && (
+                <span style={{ color: 'var(--accent)', fontSize: 10, marginLeft: 3 }} title="Matter">·M</span>
+              )}
+            </span>
+          );
+        },
+        sortingFn: 'alphanumeric',
+      },
+    ),
+    // #19: combined IP Mode + IPv6 column. Sorts by mode then by ipv6 so an
+    // ascending sort groups all "Static + IPv6" together. Renders as e.g.
+    // "Static · IPv6" or just "DHCP" or "—" for unmanaged-network targets.
+    columnHelper.accessor(
+      row => {
+        if (!row.network_type) return '';
+        const mode = row.network_static_ip ? 'static' : 'dhcp';
+        return `${mode}-${row.network_ipv6 ? '6' : '4'}`;
+      },
+      {
+        id: 'ipconfig',
+        header: ({ column }) => <SortHeader label="IP Config" column={column} />,
+        cell: ({ row: { original: t } }) => {
+          if (!t.network_type) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          const mode = t.network_static_ip ? 'Static' : 'DHCP';
+          return (
+            <span style={{ fontSize: 12 }} title={`${mode}${t.network_ipv6 ? ' · IPv6' : ''}`}>
+              {mode}
+              {t.network_ipv6 && (
+                <span style={{ color: 'var(--success)', marginLeft: 4 }}>· IPv6</span>
+              )}
+            </span>
+          );
+        },
+        sortingFn: 'alphanumeric',
+      },
+    ),
+    columnHelper.accessor(row => row.network_ap_fallback ? 'yes' : '', {
+      id: 'ap',
+      header: ({ column }) => <SortHeader label="AP" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span
+          style={{ fontSize: 12 }}
+          title={t.network_ap_fallback ? 'Fallback access point configured (wifi.ap)' : undefined}
+        >
+          {t.network_ap_fallback
+            ? <span style={{ color: 'var(--success)' }}>Yes</span>
+            : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
     columnHelper.accessor(row => row.running_version || '', {
       id: 'running',
       header: ({ column }) => <SortHeader label="Version" column={column} />,
@@ -441,9 +572,28 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       enableHiding: false,
       cell: ({ row: { original: t } }) => {
         const upgradeVariant = t.needs_update ? 'success' : 'secondary';
+        // #23 revision: the Upgrade button stays enabled even while a job
+        // is running for this target. Clicking it re-opens the UpgradeModal
+        // and the server-side coalescing rules (#23) take care of the rest:
+        // the second click creates a single "Queued" follow-up; a third
+        // click updates that follow-up in place. This matches the
+        // CLAUDE.md "Disable, don't fail" guideline's explicit Upgrade
+        // exception — compiling for a target is always meaningful, even
+        // if one is already running, because the latest YAML will be used.
+        const inFlight = activeJobsByTarget.has(t.target);
+        const upgradeTitle = inFlight
+          ? `A build is already running. Click to queue the next compile (will use the latest YAML at the time it starts).`
+          : undefined;
         return (
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <Button variant={upgradeVariant as 'success' | 'secondary'} size="sm" onClick={() => onCompile([t.target])}>Upgrade</Button>
+            <Button
+              variant={upgradeVariant as 'success' | 'secondary'}
+              size="sm"
+              title={upgradeTitle}
+              onClick={() => onUpgradeOne(t.target)}
+            >
+              Upgrade
+            </Button>
             <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
             <span
               className="action-menu-trigger"
@@ -460,7 +610,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCompile, onCompileOnWorker, onEdit, onLogs, onToast]);
+  ], [workers, onCompile, onUpgradeOne, onEdit, onLogs, onToast]);
 
   const table = useReactTable({
     data: filteredTargets,
@@ -660,13 +810,11 @@ export function DevicesTab({ targets, devices, workers, streamerMode, onCompile,
       {menuTarget && menuPos && (
         <DeviceMenu
           target={menuTarget}
-          workers={workers}
           position={menuPos}
           onToast={onToast}
           onDelete={(t) => { setMenuTarget(null); setMenuPos(null); setDeleteTarget(t); }}
           onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
           onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
-          onCompileOnWorker={(t, w) => { setMenuTarget(null); setMenuPos(null); onCompileOnWorker(t, w); }}
           onClose={() => { setMenuTarget(null); setMenuPos(null); }}
         />
       )}
@@ -692,23 +840,19 @@ function SortHeader({ label, column }: { label: string; column: { getIsSorted: (
 
 function DeviceMenu({
   target: t,
-  workers,
   position,
   onToast,
   onDelete,
   onRename,
   onLogs,
-  onCompileOnWorker,
   onClose,
 }: {
   target: Target;
-  workers: Worker[];
   position: { top: number; left: number };
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string) => void;
   onRename: (target: string) => void;
   onLogs: (target: string) => void;
-  onCompileOnWorker: (target: string, clientId: string) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -736,10 +880,6 @@ function DeviceMenu({
     }
   }
 
-  const onlineWorkers = [...workers]
-    .filter(w => w.online && !w.disabled && (w.max_parallel_jobs ?? 0) > 0)
-    .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
-
   return (
     <>
       {/* Backdrop to close on outside click */}
@@ -763,7 +903,18 @@ function DeviceMenu({
       >
         <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Device</div>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onLogs(t.target)}>Live Logs</button>
-        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={handleRestart}>Restart</button>
+        {/* #14: gray out Restart when the YAML doesn't expose a restart button.
+            We follow the same disabled-with-tooltip pattern as the API Key
+            button below — disabled rather than hidden so the user knows the
+            option exists and what they need to do (add `button: - platform:
+            restart` to the YAML). */}
+        <button
+          className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_restart_button ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`}
+          onClick={handleRestart}
+          title={t.has_restart_button ? undefined : 'No restart button in this device\'s YAML — add `button: [{platform: restart}]` to enable.'}
+        >
+          Restart
+        </button>
         <button className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_api_key ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`} onClick={handleCopyApiKey}>Copy API Key</button>
 
         <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
@@ -772,47 +923,14 @@ function DeviceMenu({
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
 
-        {onlineWorkers.length > 0 && (
-          <>
-            <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
-            <div className="group/sub relative">
-              <div className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-sm cursor-default hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]">
-                Upgrade on...
-                <span className="ml-auto text-xs">&#9666;</span>
-              </div>
-              <div
-                className="invisible group-hover/sub:visible absolute top-0 min-w-[140px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
-                ref={(el) => {
-                  if (!el) return;
-                  const parent = el.parentElement?.getBoundingClientRect();
-                  if (!parent) return;
-                  // Default: open to the left (right-full)
-                  const spaceLeft = parent.left;
-                  const subWidth = el.offsetWidth || 160;
-                  if (spaceLeft >= subWidth) {
-                    el.style.right = '100%';
-                    el.style.left = 'auto';
-                    el.style.marginRight = '4px';
-                  } else {
-                    el.style.left = '100%';
-                    el.style.right = 'auto';
-                    el.style.marginLeft = '4px';
-                  }
-                  // Vertical: flip up if it extends below viewport
-                  const rect = el.getBoundingClientRect();
-                  if (rect.bottom > window.innerHeight) {
-                    el.style.top = 'auto';
-                    el.style.bottom = '0';
-                  }
-                }}
-              >
-                {onlineWorkers.map(w => (
-                  <button key={w.client_id} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onCompileOnWorker(t.target, w.client_id)}>{w.hostname}</button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+        {/*
+          #16: the "Upgrade on..." submenu was removed from the per-row
+          context menu. Worker selection now lives in the UpgradeModal that
+          opens from the row's Upgrade button itself, which also lets the
+          user pick the ESPHome version. The hover-bridge / width work from
+          #31 was on this submenu — that fix lives on in the historical
+          1.3.1 dev cycle but the affected element no longer exists.
+        */}
       </div>
     </>
   );
@@ -824,8 +942,13 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
     : <StatusDot status="offline" />;
 
   const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>;
+  const sourceLabel = formatAddressSource(d.address_source);
 
-  // Unmanaged devices (no config) don't have web_server info — never link their IP
+  // Unmanaged devices (no config) don't have web_server info — never link their IP.
+  // The IP column still gets the "via mDNS" / "wifi.use_address" / etc. source
+  // label plus an "in HA" marker when Home Assistant confirms the device exists
+  // (MAC or entity match). That lets the user tell a real ESPHome device without
+  // a YAML from a stray mDNS broadcast at a glance.
   return (
     <tr>
       <td></td>
@@ -834,12 +957,37 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
         <div className="device-filename" style={{ color: '#6b7280' }}>No config</div>
       </td>
       {isVisible('status') && <td>{statusEl}</td>}
-      {isVisible('ha') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ha') && (
+        <td style={{ fontSize: 12 }}>
+          {d.ha_configured
+            ? <span style={{ color: 'var(--success)' }}>Yes</span>
+            : dash}
+        </td>
+      )}
       {isVisible('ip') && (
         <td style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
           <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
+          {(sourceLabel || d.ha_configured) && (
+            <div
+              style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
+              title={
+                d.ha_configured
+                  ? `Address source: ${d.address_source ?? 'unknown'} · Home Assistant confirms this device exists`
+                  : `Address source: ${d.address_source ?? 'unknown'}`
+              }
+            >
+              {[sourceLabel, d.ha_configured ? 'in HA' : null].filter(Boolean).join(' · ')}
+            </div>
+          )}
         </td>
       )}
+      {/* #10/#19 — Net/IP Config/AP columns. Unmanaged devices have no YAML
+          so we can't know any of this; render dashes. The cell order MUST
+          match the columns array order in the columns memo above:
+            status → ha → ip → net → ipconfig → ap → running → area → comment → project */}
+      {isVisible('net') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ipconfig') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('ap') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('running') && <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>}
       {isVisible('area') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('comment') && <td style={{ fontSize: 12 }}>{dash}</td>}

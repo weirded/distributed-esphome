@@ -154,7 +154,22 @@ export function QueueTab({
       header: ({ column }) => <SortHeader label="State" column={column} />,
       cell: ({ row: { original: job } }) => {
         const { label: badgeLabel, cls: badgeCls } = getJobBadge(job);
-        return <span className={badgeCls}>{badgeLabel}</span>;
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className={badgeCls}>{badgeLabel}</span>
+            {/* #23: a follow-up job is "queued behind" another running job
+                for the same target. Show a small badge next to the State so
+                the user knows it won't start until the predecessor finishes. */}
+            {job.is_followup && job.state === 'pending' && (
+              <span
+                className="inline-flex items-center rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--accent)]"
+                title="This compile is queued and will start after the running compile for the same device finishes. Re-clicking Upgrade replaces this entry instead of adding more."
+              >
+                Queued
+              </span>
+            )}
+          </span>
+        );
       },
       sortingFn: stateSort,
     }),
@@ -181,18 +196,49 @@ export function QueueTab({
           : '—';
 
         const pinnedHostname = pinnedClient?.hostname || job.assigned_hostname;
-        const showPinned =
+        const showPinnedHint =
           pinnedHostname && job.pinned_client_id && job.state === 'pending';
 
+        // #17: pushpin icon when the user explicitly pinned the job to a
+        // specific worker (UpgradeModal worker selector). Visible on every
+        // pinned row regardless of state, so the user can audit history.
         return (
-          <span style={{ fontSize: 12 }}>
-            {clientName}
-            {showPinned && (
-              <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>→ {pinnedHostname}</span></>
+          <span style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {job.pinned_client_id && (
+              <span
+                title={
+                  pinnedHostname
+                    ? `Pinned to ${pinnedHostname} via Upgrade modal`
+                    : 'Pinned to a specific worker via Upgrade modal'
+                }
+                aria-label="pinned to specific worker"
+                style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}
+              >
+                📌
+              </span>
             )}
+            <span>
+              {clientName}
+              {showPinnedHint && !job.assigned_hostname && (
+                <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>→ {pinnedHostname}</span></>
+              )}
+            </span>
           </span>
         );
       },
+      sortingFn: 'alphanumeric',
+    }),
+    // #17: ESPHome version column. Shows the version stamped on each job,
+    // which may differ from the global default when the user picked a
+    // non-default in the Upgrade modal.
+    columnHelper.accessor(row => row.esphome_version || '', {
+      id: 'esphome_version',
+      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      cell: ({ row: { original: job } }) => (
+        <span style={{ fontSize: 12, fontFamily: 'monospace' }}>
+          {job.esphome_version || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        </span>
+      ),
       sortingFn: 'alphanumeric',
     }),
     columnHelper.accessor(row => new Date(row.created_at), {
@@ -249,7 +295,13 @@ export function QueueTab({
               <Button variant="destructive" size="sm" onClick={() => onCancel([job.id])}>Cancel</Button>
             )}
             {canRetry && (
-              <Button variant="warn" size="sm" onClick={() => onRetry([job.id])}>Retry</Button>
+              // #20: successful jobs get "Rerun" (green) since "Retry" implies
+              // failure recovery — re-running a successful job is just a
+              // re-compile, not a retry. Failed/timed-out jobs keep "Retry"
+              // (warn / amber).
+              isJobSuccessful(job)
+                ? <Button variant="success" size="sm" onClick={() => onRetry([job.id])}>Rerun</Button>
+                : <Button variant="warn" size="sm" onClick={() => onRetry([job.id])}>Retry</Button>
             )}
             {hasLog && (
               <Button variant="secondary" size="sm" onClick={() => onOpenLog(job.id)}>Log</Button>

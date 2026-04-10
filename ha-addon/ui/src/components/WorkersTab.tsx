@@ -21,7 +21,7 @@ interface Props {
   onSetParallelJobs: (id: string, count: number) => void;
   onCleanCache: (id: string) => void;
   onCleanAllCaches: () => void;
-  onConnectWorker: () => void;
+  onConnectWorker: (preset?: import('../types').WorkerPreset | null) => void;
 }
 
 function workerPlatformHtml(si: SystemInfo): React.ReactNode {
@@ -333,7 +333,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
             <td>{statusEl}{uptimeEl}</td>
             <td>{jobEl}</td>
-            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} onReinstall={onConnectWorker} /></td>
+            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} onReinstall={() => onConnectWorker({
+              hostname: c.hostname,
+              max_parallel_jobs: c.max_parallel_jobs,
+              host_platform: c.system_info?.os_version,
+            })} /></td>
             <td>
               <SlotControl
                 slots={slots}
@@ -417,7 +421,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
           <div className="actions">
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{countText}</span>
             <Button variant="outline" size="sm" onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>Clean All Caches</Button>
-            <Button size="sm" onClick={onConnectWorker}>+ Connect Worker</Button>
+            <Button size="sm" onClick={() => onConnectWorker()}>+ Connect Worker</Button>
           </div>
         </div>
         <div className="table-wrap">
