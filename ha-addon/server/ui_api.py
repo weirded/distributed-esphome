@@ -634,8 +634,52 @@ async def validate_config(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# Per-device metadata + schedule endpoints
+# Per-device metadata + schedule + version pinning endpoints
 # ---------------------------------------------------------------------------
+
+@routes.post("/ui/api/targets/{filename}/pin")
+async def pin_target_version(request: web.Request) -> web.Response:
+    """Pin a device to a specific ESPHome version.
+
+    Body: ``{"version": "2026.3.3"}``
+    The pin is stored in the ``# distributed-esphome:`` comment block.
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None or not path.exists():
+        return json_error("Target not found", 404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    version = body.get("version", "").strip()
+    if not version:
+        return web.json_response({"error": "version required"}, status=400)
+
+    meta = read_device_meta(cfg.config_dir, filename)
+    meta["pin_version"] = version
+    write_device_meta(cfg.config_dir, filename, meta)
+    logger.info("Pinned %s to version %s", filename, version)
+    return web.json_response({"ok": True, "pinned_version": version})
+
+
+@routes.delete("/ui/api/targets/{filename}/pin")
+async def unpin_target_version(request: web.Request) -> web.Response:
+    """Remove the version pin from a device."""
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None or not path.exists():
+        return json_error("Target not found", 404)
+
+    meta = read_device_meta(cfg.config_dir, filename)
+    meta.pop("pin_version", None)
+    write_device_meta(cfg.config_dir, filename, meta)
+    logger.info("Unpinned %s", filename)
+    return web.json_response({"ok": True})
 
 @routes.post("/ui/api/targets/{filename}/meta")
 async def update_target_meta(request: web.Request) -> web.Response:
@@ -818,9 +862,22 @@ async def start_compile(request: web.Request) -> web.Response:
     run_id = str(uuid.uuid4())
     enqueued = 0
     for target in selected:
+        # VP.7: if the device is pinned to a specific version, use the pinned
+        # version for this job — not the global/override version. This ensures
+        # bulk "Upgrade All" doesn't accidentally flash pinned devices with
+        # the wrong firmware. The version_override from the UI (when set via
+        # the UpgradeModal) takes precedence over the pin, since the user
+        # explicitly chose it for this specific run.
+        effective_version = job_version
+        if not version_override:
+            device_meta = read_device_meta(cfg.config_dir, target)
+            pinned = device_meta.get("pin_version")
+            if pinned:
+                effective_version = pinned
+
         job = await queue.enqueue(
             target=target,
-            esphome_version=job_version,
+            esphome_version=effective_version,
             run_id=run_id,
             timeout_seconds=cfg.job_timeout,
             ota_address=ota_addresses.get(target),

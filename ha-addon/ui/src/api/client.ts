@@ -398,3 +398,36 @@ export async function toggleTargetSchedule(
   if (!r.ok) throw new Error(data.error || String(r.status));
   return { schedule_enabled: data.schedule_enabled ?? false };
 }
+
+// ---------------------------------------------------------------------------
+// Version pinning
+// ---------------------------------------------------------------------------
+
+export async function pinTargetVersion(
+  filename: string,
+  version: string,
+): Promise<void> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/pin`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version }),
+    },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
+export async function unpinTargetVersion(filename: string): Promise<void> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/pin`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}

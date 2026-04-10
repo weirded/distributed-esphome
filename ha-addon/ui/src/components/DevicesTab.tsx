@@ -9,7 +9,7 @@ import {
   type VisibilityState,
   type RowSelectionState,
 } from '@tanstack/react-table';
-import { getApiKey, restartDevice } from '../api/client';
+import { getApiKey, restartDevice, pinTargetVersion, unpinTargetVersion } from '../api/client';
 import type { Device, Job, Target, Worker } from '../types';
 import { stripYaml, timeAgo } from '../utils';
 import { StatusDot } from './StatusDot';
@@ -33,7 +33,7 @@ import {
 } from './ui/dialog';
 
 /* ---- Column configuration ---- */
-type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap';
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule';
 
 interface OptionalColumnDef {
   id: OptionalColumnId;
@@ -49,6 +49,7 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'running', label: 'Version', defaultVisible: true },
   { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
   { id: 'ap', label: 'AP', defaultVisible: false },
+  { id: 'schedule', label: 'Schedule', defaultVisible: false },
   { id: 'area', label: 'Area', defaultVisible: false },
   { id: 'comment', label: 'Comment', defaultVisible: false },
   { id: 'project', label: 'Project', defaultVisible: false },
@@ -116,6 +117,41 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
  * Returns null when the YAML didn't declare any of wifi/ethernet/openthread —
  * the column shows a dash in that case.
  */
+/**
+ * Convert a 5-field cron expression to a short human-readable string.
+ * Covers common presets; falls back to the raw expression for complex ones.
+ */
+function formatCronHuman(cron: string | null | undefined): string | null {
+  if (!cron) return null;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return cron;
+  const [min, hour, dom, _mon, dow] = parts;
+  void _mon;
+
+  // Every N hours
+  if (min === '0' && hour.startsWith('*/')) {
+    const n = parseInt(hour.slice(2), 10);
+    return n === 1 ? 'Hourly' : `Every ${n}h`;
+  }
+  // Daily at HH:MM
+  if (dom === '*' && dow === '*' && !hour.includes('/') && !min.includes('/')) {
+    return `Daily ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  }
+  // Weekly on day at HH:MM
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (dom === '*' && dow !== '*' && !hour.includes('/')) {
+    const dayNum = parseInt(dow, 10);
+    const day = dayNames[dayNum] ?? dow;
+    return `${day} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  }
+  // Monthly on Nth at HH:MM
+  if (dom !== '*' && dow === '*' && !hour.includes('/')) {
+    const suffix = dom === '1' ? 'st' : dom === '2' ? 'nd' : dom === '3' ? 'rd' : 'th';
+    return `${dom}${suffix} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  }
+  return cron;
+}
+
 function formatNetworkType(t: 'wifi' | 'ethernet' | 'thread' | null | undefined): string | null {
   switch (t) {
     case 'wifi': return 'WiFi';
@@ -238,6 +274,33 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
+
+  // VP.4: pin/unpin version from the hamburger menu.
+  async function handlePin(target: string) {
+    // Pin to the device's current running version (from the poller), or the
+    // global server version if the device hasn't reported a version yet.
+    const t = targets.find(x => x.target === target);
+    const version = t?.running_version || t?.server_version;
+    if (!version) {
+      onToast('No version available to pin to', 'error');
+      return;
+    }
+    try {
+      await pinTargetVersion(target, version);
+      onToast(`Pinned ${stripYaml(target)} to ${version}`, 'success');
+    } catch (err) {
+      onToast('Pin failed: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleUnpin(target: string) {
+    try {
+      await unpinTargetVersion(target);
+      onToast(`Unpinned ${stripYaml(target)}`, 'success');
+    } catch (err) {
+      onToast('Unpin failed: ' + (err as Error).message, 'error');
+    }
+  }
 
   // Persist column visibility and unmanaged toggle to localStorage
   useEffect(() => {
@@ -525,6 +588,26 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
             : <span style={{ color: 'var(--text-muted)' }}>—</span>}
         </span>
       ),
+      sortingFn: 'alphanumeric',
+    }),
+    // #5: human-readable schedule column (toggleable, default off).
+    columnHelper.accessor(row => row.schedule || '', {
+      id: 'schedule',
+      header: ({ column }) => <SortHeader label="Schedule" column={column} />,
+      cell: ({ row: { original: t } }) => {
+        if (!t.schedule) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+        const human = formatCronHuman(t.schedule);
+        const enabled = t.schedule_enabled !== false;
+        return (
+          <span
+            style={{ fontSize: 12, opacity: enabled ? 1 : 0.5 }}
+            title={`${t.schedule}${enabled ? '' : ' (paused)'}`}
+          >
+            {human}
+            {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>(paused)</span>}
+          </span>
+        );
+      },
       sortingFn: 'alphanumeric',
     }),
     columnHelper.accessor(row => row.running_version || '', {
@@ -825,6 +908,8 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
           onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
           onSchedule={(t) => { setMenuTarget(null); setMenuPos(null); onSchedule(t); }}
+          onPin={(t) => { setMenuTarget(null); setMenuPos(null); handlePin(t); }}
+          onUnpin={(t) => { setMenuTarget(null); setMenuPos(null); handleUnpin(t); }}
           onClose={() => { setMenuTarget(null); setMenuPos(null); }}
         />
       )}
@@ -856,6 +941,8 @@ function DeviceMenu({
   onRename,
   onLogs,
   onSchedule,
+  onPin,
+  onUnpin,
   onClose,
 }: {
   target: Target;
@@ -865,6 +952,8 @@ function DeviceMenu({
   onRename: (target: string) => void;
   onLogs: (target: string) => void;
   onSchedule: (target: string) => void;
+  onPin: (target: string) => void;
+  onUnpin: (target: string) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -933,6 +1022,10 @@ function DeviceMenu({
 
         <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Config</div>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onSchedule(t.target)}>Schedule Upgrade...</button>
+        {t.pinned_version
+          ? <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onUnpin(t.target)}>Unpin version ({t.pinned_version})</button>
+          : <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onPin(t.target)}>Pin to current version</button>
+        }
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
 
@@ -1001,6 +1094,7 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
       {isVisible('net') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('ipconfig') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('ap') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('schedule') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('running') && <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>}
       {isVisible('area') && <td style={{ fontSize: 12 }}>{dash}</td>}
       {isVisible('comment') && <td style={{ fontSize: 12 }}>{dash}</td>}
