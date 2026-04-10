@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 ARG BUILD_ARCH
 ARG BUILD_VERSION
