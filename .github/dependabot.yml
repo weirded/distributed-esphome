@@ -1,12 +1,13 @@
 # Dependabot config (E.6).
 #
-# Weekly schedule for normal PRs. The release-time gate in
-# ``dev-plans/RELEASE_CHECKLIST.md`` runs ``gh api`` against the alerts
-# endpoint and refuses to tag when any high/critical alert is open — that
-# is the "no release with known-vulnerable libs" floor on top of this
-# auto-PR cadence.
+# All PRs target ``develop`` (not main) so dependency updates flow through
+# the normal dev cycle and get included in the next release. Targeting main
+# would require merging then pulling back into develop — unnecessary churn.
 #
-# Five ecosystems:
+# Weekly schedule. The release-time gate in ``dev-plans/RELEASE_CHECKLIST.md``
+# checks for open high/critical alerts before tagging.
+#
+# Six ecosystems:
 #   - pip × 2 (server + client requirements.txt)
 #   - npm (frontend)
 #   - docker × 2 (server + client Dockerfile base images)
@@ -18,6 +19,7 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: /ha-addon/server
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -28,6 +30,7 @@ updates:
 
   - package-ecosystem: pip
     directory: /ha-addon/client
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -38,6 +41,7 @@ updates:
 
   - package-ecosystem: npm
     directory: /ha-addon/ui
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -48,6 +52,7 @@ updates:
 
   - package-ecosystem: docker
     directory: /ha-addon
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -63,6 +68,7 @@ updates:
 
   - package-ecosystem: docker
     directory: /ha-addon/client
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -76,6 +82,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
