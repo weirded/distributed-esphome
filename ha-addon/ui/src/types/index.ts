@@ -61,6 +61,16 @@ export interface Target {
    * is treated as a Matter signal too).
    */
   network_matter?: boolean;
+  /** Per-device pinned ESPHome version from YAML metadata comment. */
+  pinned_version?: string | null;
+  /** Cron schedule expression (5-field). */
+  schedule?: string | null;
+  /** Whether the schedule is active. */
+  schedule_enabled?: boolean;
+  /** ISO datetime of last scheduled run. */
+  schedule_last_run?: string | null;
+  /** Comma-separated tags from YAML metadata comment. */
+  tags?: string | null;
 }
 
 export interface Device {
@@ -152,6 +162,8 @@ export interface Job {
    * a "Queued" badge so the user can see "next compile is waiting".
    */
   is_followup?: boolean;
+  /** True when this job was triggered by the cron scheduler, not a manual action. */
+  scheduled?: boolean;
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;

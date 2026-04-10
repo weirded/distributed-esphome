@@ -72,6 +72,7 @@ class Job:
     # enqueue calls update the existing follow-up's esphome_version /
     # pinned_client_id rather than creating new entries.
     is_followup: bool = False
+    scheduled: bool = False  # True if triggered by the cron scheduler (not a manual action)
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -97,6 +98,7 @@ class Job:
             "ota_address": self.ota_address,
             "pinned_client_id": self.pinned_client_id,
             "is_followup": self.is_followup,
+            "scheduled": self.scheduled,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -128,6 +130,7 @@ class Job:
             ota_address=d.get("ota_address"),
             pinned_client_id=d.get("pinned_client_id"),
             is_followup=d.get("is_followup", False),
+            scheduled=d.get("scheduled", False),
         )
 
     def duration_seconds(self) -> Optional[float]:

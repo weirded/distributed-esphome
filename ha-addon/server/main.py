@@ -465,6 +465,103 @@ async def config_scanner(app: web.Application) -> None:
             logger.exception("Error in config scanner")
 
 
+async def schedule_checker(app: web.Application) -> None:
+    """Background task: check per-device cron schedules every 60s.
+
+    For each target that has a ``schedule`` + ``schedule_enabled: true`` in its
+    ``# distributed-esphome:`` comment block, compute whether the next cron tick
+    has passed since the last run. If so, enqueue a compile+OTA job (same path
+    as clicking Upgrade) and write ``schedule_last_run`` back to the comment.
+    """
+    import uuid as _uuid  # noqa: PLC0415
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from scanner import scan_configs, read_device_meta, write_device_meta, get_esphome_version  # noqa: PLC0415
+
+    try:
+        from croniter import croniter  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError:
+        logger.warning("croniter not installed — per-device scheduling disabled")
+        return
+
+    cfg: AppConfig = app["config"]
+    queue: JobQueue = app["queue"]
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            targets = scan_configs(cfg.config_dir)
+            now = datetime.now(timezone.utc)
+
+            for target in targets:
+                try:
+                    meta = read_device_meta(cfg.config_dir, target)
+                    cron_expr = meta.get("schedule")
+                    enabled = meta.get("schedule_enabled", False)
+                    if not cron_expr or not enabled:
+                        continue
+
+                    # Determine last_run. If absent, use epoch so the first
+                    # cron tick after the schedule is set fires immediately.
+                    last_run_str = meta.get("schedule_last_run")
+                    if last_run_str:
+                        last_run = datetime.fromisoformat(last_run_str)
+                        if last_run.tzinfo is None:
+                            last_run = last_run.replace(tzinfo=timezone.utc)
+                    else:
+                        last_run = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+                    cron = croniter(cron_expr, last_run)
+                    next_run = cron.get_next(datetime)
+                    if next_run.tzinfo is None:
+                        next_run = next_run.replace(tzinfo=timezone.utc)
+
+                    if next_run > now:
+                        continue  # not yet due
+
+                    # Determine compile version: pinned or global.
+                    version = meta.get("pin_version") or get_esphome_version()
+
+                    # Get OTA address if available.
+                    device_poller = app.get("device_poller")
+                    ota_address = None
+                    if device_poller:
+                        for dev in device_poller.get_devices():
+                            if dev.compile_target == target and dev.ip_address:
+                                ota_address = (
+                                    device_poller._address_overrides.get(dev.name)
+                                    or dev.ip_address
+                                )
+                                break
+
+                    run_id = str(_uuid.uuid4())
+                    job = await queue.enqueue(
+                        target=target,
+                        esphome_version=version,
+                        run_id=run_id,
+                        timeout_seconds=cfg.job_timeout,
+                        ota_address=ota_address,
+                    )
+                    if job is not None:
+                        job.scheduled = True
+                        logger.info(
+                            "Schedule fired for %s (cron=%s): enqueued job %s (version=%s)",
+                            target, cron_expr, job.id, version,
+                        )
+
+                    # Persist last_run. Re-read meta to avoid overwriting a
+                    # concurrent user edit (small window, but safe).
+                    fresh_meta = read_device_meta(cfg.config_dir, target)
+                    fresh_meta["schedule_last_run"] = now.isoformat()
+                    write_device_meta(cfg.config_dir, target, fresh_meta)
+
+                except Exception:
+                    logger.debug("Schedule check failed for %s", target, exc_info=True)
+
+        except Exception:
+            logger.exception("Error in schedule checker")
+
+
 # ---------------------------------------------------------------------------
 # ESPHome version detection and PyPI version list
 # ---------------------------------------------------------------------------
@@ -754,6 +851,7 @@ def create_app() -> web.Application:
         app["config_scanner_task"] = asyncio.create_task(config_scanner(app))
         app["pypi_version_refresher_task"] = asyncio.create_task(pypi_version_refresher(app))
         app["ha_entity_poller_task"] = asyncio.create_task(ha_entity_poller(app))
+        app["schedule_checker_task"] = asyncio.create_task(schedule_checker(app))
 
         # Start local worker if client code is bundled
         local_worker_script = Path("/app/client/client.py")
@@ -797,7 +895,7 @@ def create_app() -> web.Application:
                 proc.kill()
             logger.info("Local worker stopped")
 
-        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task"):
+        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task", "schedule_checker_task"):
             task = app.get(task_name)
             if task:
                 task.cancel()

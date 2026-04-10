@@ -14,7 +14,7 @@ from app_config import AppConfig
 from helpers import safe_resolve, json_error
 from device_poller import Device
 from job_queue import JobState
-from scanner import scan_configs, get_esphome_version, set_esphome_version, get_device_metadata
+from scanner import scan_configs, get_esphome_version, set_esphome_version, get_device_metadata, read_device_meta, write_device_meta
 
 logger = logging.getLogger(__name__)
 
@@ -261,8 +261,11 @@ async def get_targets(request: web.Request) -> web.Response:
             "running_version": dev.running_version if dev else None,
             "compilation_time": dev.compilation_time if dev else None,
             "config_modified": config_modified,
+            # VP: if the device is pinned, compare against the pinned version
+            # instead of the global server version. A pinned device at its
+            # pinned version is NOT "outdated" even if the global version is newer.
             "needs_update": (
-                dev.running_version != server_version
+                dev.running_version != (meta.get("pinned_version") or server_version)
                 if dev and dev.running_version
                 else None
             ),
@@ -281,6 +284,12 @@ async def get_targets(request: web.Request) -> web.Response:
             "network_ipv6": meta.get("network_ipv6", False),
             "network_ap_fallback": meta.get("network_ap_fallback", False),
             "network_matter": meta.get("network_matter", False),
+            # Per-device metadata from the # distributed-esphome: comment block.
+            "pinned_version": meta.get("pinned_version"),
+            "schedule": meta.get("schedule"),
+            "schedule_enabled": meta.get("schedule_enabled", False),
+            "schedule_last_run": meta.get("schedule_last_run"),
+            "tags": meta.get("tags"),
         }
         result.append(entry)
 
@@ -622,6 +631,122 @@ async def validate_config(request: web.Request) -> web.Response:
     else:
         logger.warning("Validation failed for %s (exit %d)", target, proc.returncode or -1)
     return web.json_response({"success": success, "output": output})
+
+
+# ---------------------------------------------------------------------------
+# Per-device metadata + schedule endpoints
+# ---------------------------------------------------------------------------
+
+@routes.post("/ui/api/targets/{filename}/meta")
+async def update_target_meta(request: web.Request) -> web.Response:
+    """Update arbitrary per-device metadata stored in the YAML comment block.
+
+    Body: dict of key→value. ``null`` values delete the key.
+    E.g. ``{"pin_version": "2026.3.3", "tags": "office"}``
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None or not path.exists():
+        return json_error("Target not found", 404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Expected a JSON object"}, status=400)
+
+    meta = read_device_meta(cfg.config_dir, filename)
+    for key, value in body.items():
+        if value is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = value
+    write_device_meta(cfg.config_dir, filename, meta)
+    logger.info("Updated metadata for %s: %s", filename, list(body.keys()))
+    return web.json_response({"ok": True})
+
+
+@routes.post("/ui/api/targets/{filename}/schedule")
+async def set_target_schedule(request: web.Request) -> web.Response:
+    """Set a cron schedule for automatic compile+OTA on a device.
+
+    Body: ``{"cron": "0 2 * * 0"}``
+    Returns: ``{"ok": true, "schedule": "...", "schedule_enabled": true}``
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None or not path.exists():
+        return json_error("Target not found", 404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    cron_expr = body.get("cron", "").strip()
+    if not cron_expr:
+        return web.json_response({"error": "cron expression required"}, status=400)
+
+    # Validate the cron expression.
+    try:
+        from croniter import croniter  # type: ignore[import-untyped]  # noqa: PLC0415
+        croniter(cron_expr)  # raises ValueError if invalid
+    except ValueError as exc:
+        return web.json_response({"error": f"Invalid cron expression: {exc}"}, status=400)
+    except ImportError:
+        # croniter not installed — accept the expression unvalidated rather
+        # than blocking the feature. The scheduler will log when it can't parse.
+        pass
+
+    meta = read_device_meta(cfg.config_dir, filename)
+    meta["schedule"] = cron_expr
+    meta["schedule_enabled"] = True
+    write_device_meta(cfg.config_dir, filename, meta)
+    logger.info("Schedule set for %s: %s", filename, cron_expr)
+    return web.json_response({
+        "ok": True,
+        "schedule": cron_expr,
+        "schedule_enabled": True,
+    })
+
+
+@routes.delete("/ui/api/targets/{filename}/schedule")
+async def delete_target_schedule(request: web.Request) -> web.Response:
+    """Remove the cron schedule from a device."""
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None or not path.exists():
+        return json_error("Target not found", 404)
+
+    meta = read_device_meta(cfg.config_dir, filename)
+    meta.pop("schedule", None)
+    meta.pop("schedule_enabled", None)
+    meta.pop("schedule_last_run", None)
+    write_device_meta(cfg.config_dir, filename, meta)
+    logger.info("Schedule removed for %s", filename)
+    return web.json_response({"ok": True})
+
+
+@routes.post("/ui/api/targets/{filename}/schedule/toggle")
+async def toggle_target_schedule(request: web.Request) -> web.Response:
+    """Toggle the schedule enabled/disabled without clearing the expression."""
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None or not path.exists():
+        return json_error("Target not found", 404)
+
+    meta = read_device_meta(cfg.config_dir, filename)
+    if not meta.get("schedule"):
+        return web.json_response({"error": "No schedule configured"}, status=400)
+    meta["schedule_enabled"] = not meta.get("schedule_enabled", False)
+    write_device_meta(cfg.config_dir, filename, meta)
+    logger.info("Schedule toggled for %s: enabled=%s", filename, meta["schedule_enabled"])
+    return web.json_response({"ok": True, "schedule_enabled": meta["schedule_enabled"]})
 
 
 @routes.post("/ui/api/compile")

@@ -336,3 +336,65 @@ export async function renameTarget(
   }
   return r.json() as Promise<{ new_filename: string }>;
 }
+
+// ---------------------------------------------------------------------------
+// Per-device metadata + schedule
+// ---------------------------------------------------------------------------
+
+export async function updateTargetMeta(
+  filename: string,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/meta`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(meta),
+    },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
+export async function setTargetSchedule(
+  filename: string,
+  cron: string,
+): Promise<{ schedule_enabled: boolean }> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cron }),
+    },
+  );
+  const data = await r.json() as { schedule_enabled?: boolean; error?: string };
+  if (!r.ok) throw new Error(data.error || String(r.status));
+  return { schedule_enabled: data.schedule_enabled ?? true };
+}
+
+export async function deleteTargetSchedule(filename: string): Promise<void> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
+    { method: 'DELETE' },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || String(r.status));
+  }
+}
+
+export async function toggleTargetSchedule(
+  filename: string,
+): Promise<{ schedule_enabled: boolean }> {
+  const r = await apiFetch(
+    `./ui/api/targets/${encodeURIComponent(filename)}/schedule/toggle`,
+    { method: 'POST' },
+  );
+  const data = await r.json() as { schedule_enabled?: boolean; error?: string };
+  if (!r.ok) throw new Error(data.error || String(r.status));
+  return { schedule_enabled: data.schedule_enabled ?? false };
+}

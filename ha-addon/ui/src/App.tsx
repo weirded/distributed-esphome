@@ -23,11 +23,15 @@ import {
   setEsphomeVersion,
   setInitialAddonVersion,
   validateConfig,
+  setTargetSchedule,
+  deleteTargetSchedule,
+  toggleTargetSchedule,
 } from './api/client';
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
 import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
 import { UpgradeModal } from './components/UpgradeModal';
+import { ScheduleModal } from './components/ScheduleModal';
 import { EditorModal } from './components/EditorModal';
 import { EsphomeVersionDropdown } from './components/EsphomeVersionDropdown';
 import { LogModal } from './components/LogModal';
@@ -146,6 +150,7 @@ export default function App() {
   const [connectModalPreset, setConnectModalPreset] = useState<import('./types').WorkerPreset | null>(null);
   // #16: per-target Upgrade modal. Stores the target filename + display name.
   const [upgradeModalTarget, setUpgradeModalTarget] = useState<{ target: string; displayName: string } | null>(null);
+  const [scheduleModalTarget, setScheduleModalTarget] = useState<string | null>(null);
   const [renameModalTarget, setRenameModalTarget] = useState<string | null>(null);
 
   // Apply theme to <html> element on mount and on change
@@ -482,6 +487,7 @@ export default function App() {
             onToast={addToast}
             onDelete={handleDeleteDevice}
             onRename={handleRenameDevice}
+            onSchedule={setScheduleModalTarget}
           />
         )}
         {activeTab === 'queue' && (
@@ -571,6 +577,52 @@ export default function App() {
           onClose={() => setUpgradeModalTarget(null)}
         />
       )}
+
+      {scheduleModalTarget && (() => {
+        const t = targets.find(x => x.target === scheduleModalTarget);
+        const displayName = t?.friendly_name || stripYaml(scheduleModalTarget);
+        return (
+          <ScheduleModal
+            target={scheduleModalTarget}
+            displayName={displayName}
+            currentSchedule={t?.schedule}
+            currentEnabled={t?.schedule_enabled}
+            onSave={async (cron) => {
+              try {
+                await setTargetSchedule(scheduleModalTarget, cron);
+                addToast(`Schedule set for ${displayName}`, 'success');
+                setScheduleModalTarget(null);
+                mutateDevices();
+              } catch (err) {
+                addToast('Schedule failed: ' + (err as Error).message, 'error');
+              }
+            }}
+            onDelete={async () => {
+              try {
+                await deleteTargetSchedule(scheduleModalTarget);
+                addToast(`Schedule removed for ${displayName}`, 'success');
+                setScheduleModalTarget(null);
+                mutateDevices();
+              } catch (err) {
+                addToast('Delete failed: ' + (err as Error).message, 'error');
+              }
+            }}
+            onToggle={async () => {
+              try {
+                const result = await toggleTargetSchedule(scheduleModalTarget);
+                addToast(
+                  result.schedule_enabled ? `Schedule enabled for ${displayName}` : `Schedule paused for ${displayName}`,
+                  'success',
+                );
+                mutateDevices();
+              } catch (err) {
+                addToast('Toggle failed: ' + (err as Error).message, 'error');
+              }
+            }}
+            onClose={() => setScheduleModalTarget(null)}
+          />
+        );
+      })()}
 
       {renameModalTarget && (
         <RenameModal

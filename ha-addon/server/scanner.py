@@ -98,6 +98,130 @@ def create_bundle(config_dir: str) -> bytes:
 # Cache resolved configs by (target, mtime) to avoid repeated git clones
 _config_cache: dict[str, tuple[float, dict]] = {}  # target → (mtime, resolved_config)
 
+# ---------------------------------------------------------------------------
+# Per-device metadata stored as a YAML comment block at the top of each file.
+# Format:
+#   # distributed-esphome:
+#   #   pin_version: 2026.3.3
+#   #   schedule: 0 2 * * 0
+#   #   schedule_enabled: true
+# The block is invisible to ESPHome's parser and travels with the file.
+# ---------------------------------------------------------------------------
+
+_META_MARKER = "# distributed-esphome:"
+
+
+def read_device_meta(config_dir: str, target: str) -> dict:
+    """Read the ``# distributed-esphome:`` comment block from the top of a YAML file.
+
+    The block must appear at the very top of the file (before any non-comment,
+    non-blank line) to avoid matching user comments deeper in the file.
+
+    Returns an empty dict if no block is found or if parsing fails.
+    """
+    import yaml  # noqa: PLC0415
+
+    path = Path(config_dir) / target
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError):
+        return {}
+
+    # Scan from the top for the marker. Skip blank lines before it.
+    marker_idx: int | None = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue  # skip blank lines at the top
+        if stripped == _META_MARKER.strip():
+            marker_idx = i
+            break
+        if not stripped.startswith("#"):
+            # Hit non-comment content before finding the marker → no block.
+            return {}
+
+    if marker_idx is None:
+        return {}
+
+    # Collect continuation lines: `#   key: value` (indented under the marker).
+    # A continuation line must start with `#` followed by at least 2 spaces of
+    # indent (so `#   ` — the marker has 0 indent, children have 2+).
+    block_lines: list[str] = []
+    for line in lines[marker_idx + 1:]:
+        # Continuation: starts with "# " + at least 2 spaces of indent
+        if line.startswith("#") and len(line) > 2 and line[1] == " " and line[2] == " ":
+            # Strip the "# " prefix (first 2 chars)
+            block_lines.append(line[2:])
+        else:
+            break  # end of block
+
+    if not block_lines:
+        return {}
+
+    yaml_text = "\n".join(block_lines)
+    try:
+        result = yaml.safe_load(yaml_text)
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        logger.debug("Failed to parse device meta for %s", target, exc_info=True)
+        return {}
+
+
+def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
+    """Write, replace, or remove the ``# distributed-esphome:`` comment block.
+
+    - Non-empty ``meta``: serializes to YAML, prefixes with ``# ``, inserts
+      at the top of the file (before the first non-comment non-blank line).
+    - Empty ``meta`` (``{}``): removes any existing block entirely.
+
+    Preserves all other content in the file. Invalidates ``_config_cache``.
+    """
+    import yaml  # noqa: PLC0415
+
+    path = Path(config_dir) / target
+    content = path.read_text(encoding="utf-8")
+    lines = content.splitlines(keepends=True)
+
+    # 1. Remove any existing block (marker + continuations).
+    new_lines: list[str] = []
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if not in_block and stripped == _META_MARKER.strip():
+            in_block = True
+            continue  # skip the marker line
+        if in_block:
+            # Continuation: "# " + 2+ spaces indent
+            raw = line.rstrip("\n").rstrip("\r")
+            if raw.startswith("#") and len(raw) > 2 and raw[1] == " " and raw[2] == " ":
+                continue  # skip continuation line
+            # Also skip the blank line we insert after the block (if any)
+            if stripped == "" and not new_lines:
+                continue
+            in_block = False
+        new_lines.append(line)
+
+    # 2. If meta is non-empty, build the new block and prepend.
+    if meta:
+        # Serialize the dict as YAML (no document markers, default flow off)
+        yaml_text = yaml.dump(meta, default_flow_style=False, sort_keys=False)
+        # Prefix each line with "#   " (2-space indent under the marker)
+        comment_lines = [_META_MARKER + "\n"]
+        for yaml_line in yaml_text.splitlines():
+            comment_lines.append(f"#   {yaml_line}\n")
+        comment_lines.append("\n")  # blank line separator
+
+        # Find insertion point: before the first non-blank non-comment line.
+        # If the file starts with other comments (e.g., a shebang or user
+        # comment), insert BEFORE them so our block is always first.
+        new_lines = comment_lines + new_lines
+
+    # 3. Write back.
+    path.write_text("".join(new_lines), encoding="utf-8")
+
+    # 4. Invalidate the config cache for this target.
+    _config_cache.pop(target, None)
+
 
 def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
     """Fully resolve an ESPHome YAML config including packages and substitutions.
@@ -180,7 +304,23 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         "network_ipv6": False,       # top-level network.enable_ipv6 is true
         "network_ap_fallback": False,  # wifi.ap block configured
         "network_matter": False,     # matter: block present OR openthread: present
+        # Per-device metadata from the # distributed-esphome: comment block.
+        "pinned_version": None,      # pin_version from comment block
+        "schedule": None,            # cron expression (5-field)
+        "schedule_enabled": False,   # whether the schedule is active
+        "schedule_last_run": None,   # ISO datetime of last triggered run
+        "tags": None,                # comma-separated tag string
     }
+    # Read the per-device metadata comment block FIRST — it's cheap (text scan,
+    # no YAML resolution) and provides fields the rest of this function doesn't.
+    device_meta = read_device_meta(config_dir, target)
+    if device_meta:
+        result["pinned_version"] = device_meta.get("pin_version")
+        result["schedule"] = device_meta.get("schedule")
+        result["schedule_enabled"] = device_meta.get("schedule_enabled", False)
+        result["schedule_last_run"] = device_meta.get("schedule_last_run")
+        result["tags"] = device_meta.get("tags")
+
     config = _resolve_esphome_config(config_dir, target)
     if config is not None:
         _extract_metadata(config, result)

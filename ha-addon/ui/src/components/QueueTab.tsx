@@ -204,6 +204,15 @@ export function QueueTab({
         // pinned row regardless of state, so the user can audit history.
         return (
           <span style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {job.scheduled && (
+              <span
+                title="Triggered by schedule"
+                aria-label="scheduled run"
+                style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}
+              >
+                🕐
+              </span>
+            )}
             {job.pinned_client_id && (
               <span
                 title={

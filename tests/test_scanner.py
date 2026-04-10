@@ -424,3 +424,176 @@ def test_static_ip_fixture_metadata():
     meta = get_device_metadata(str(FIXTURES), "static_ip_device.yaml")
     assert meta["friendly_name"] == "Static IP Device"
     assert meta["device_name_raw"] == "static-ip-device"
+
+
+# ---------------------------------------------------------------------------
+# Per-device metadata comment block (read_device_meta / write_device_meta)
+# ---------------------------------------------------------------------------
+
+from scanner import read_device_meta, write_device_meta
+
+
+def test_read_device_meta_empty_file(tmp_path):
+    """File with no metadata block returns empty dict."""
+    f = tmp_path / "device.yaml"
+    f.write_text("esphome:\n  name: test\n")
+    assert read_device_meta(str(tmp_path), "device.yaml") == {}
+
+
+def test_read_device_meta_basic(tmp_path):
+    """Reads a well-formed block with pin_version and schedule."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# distributed-esphome:\n"
+        "#   pin_version: 2026.3.3\n"
+        "#   schedule: 0 2 * * 0\n"
+        "#   schedule_enabled: true\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+    meta = read_device_meta(str(tmp_path), "device.yaml")
+    assert meta["pin_version"] == "2026.3.3"
+    assert meta["schedule"] == "0 2 * * 0"
+    assert meta["schedule_enabled"] is True
+
+
+def test_read_device_meta_with_tags(tmp_path):
+    """Tags field parses correctly."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# distributed-esphome:\n"
+        "#   tags: office, sensors\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+    meta = read_device_meta(str(tmp_path), "device.yaml")
+    assert meta["tags"] == "office, sensors"
+
+
+def test_read_device_meta_ignores_deep_comments(tmp_path):
+    """Block must be at the TOP of the file, before any YAML content."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "esphome:\n"
+        "  name: test\n"
+        "\n"
+        "# distributed-esphome:\n"
+        "#   pin_version: should-not-match\n"
+    )
+    assert read_device_meta(str(tmp_path), "device.yaml") == {}
+
+
+def test_read_device_meta_with_leading_blank_lines(tmp_path):
+    """Blank lines before the marker are OK."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "\n"
+        "\n"
+        "# distributed-esphome:\n"
+        "#   pin_version: 2026.3.3\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+    meta = read_device_meta(str(tmp_path), "device.yaml")
+    assert meta["pin_version"] == "2026.3.3"
+
+
+def test_write_device_meta_adds_block(tmp_path):
+    """Adds a block to a file that has none."""
+    f = tmp_path / "device.yaml"
+    f.write_text("esphome:\n  name: test\n")
+
+    write_device_meta(str(tmp_path), "device.yaml", {"pin_version": "2026.3.3"})
+
+    content = f.read_text()
+    assert "# distributed-esphome:" in content
+    assert "#   pin_version: 2026.3.3" in content
+    # Original content is preserved
+    assert "esphome:" in content
+    assert "name: test" in content
+
+
+def test_write_device_meta_replaces_block(tmp_path):
+    """Replaces an existing block with new values."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# distributed-esphome:\n"
+        "#   pin_version: old\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+
+    write_device_meta(str(tmp_path), "device.yaml", {"pin_version": "new", "schedule": "0 2 * * *"})
+
+    content = f.read_text()
+    assert "old" not in content
+    assert "#   pin_version: new" in content
+    assert "#   schedule: 0 2 * * *" in content
+
+
+def test_write_device_meta_removes_block_when_empty(tmp_path):
+    """Empty dict removes the block entirely."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# distributed-esphome:\n"
+        "#   pin_version: 2026.3.3\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+
+    write_device_meta(str(tmp_path), "device.yaml", {})
+
+    content = f.read_text()
+    assert "distributed-esphome" not in content
+    assert "esphome:" in content
+
+
+def test_write_device_meta_preserves_other_comments(tmp_path):
+    """Other comment lines in the file survive the write."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# My device config\n"
+        "esphome:\n"
+        "  name: test\n"
+        "# End of file\n"
+    )
+
+    write_device_meta(str(tmp_path), "device.yaml", {"schedule": "0 2 * * *"})
+
+    content = f.read_text()
+    assert "# My device config" in content
+    assert "# End of file" in content
+    assert "# distributed-esphome:" in content
+
+
+def test_write_device_meta_invalidates_cache(tmp_path):
+    """_config_cache entry is removed after write."""
+    from scanner import _config_cache
+
+    f = tmp_path / "device.yaml"
+    f.write_text("esphome:\n  name: test\n")
+    _config_cache["device.yaml"] = (0.0, {"fake": True})
+
+    write_device_meta(str(tmp_path), "device.yaml", {"pin_version": "1.0"})
+    assert "device.yaml" not in _config_cache
+
+
+def test_roundtrip_read_write(tmp_path):
+    """write then read returns the same dict."""
+    f = tmp_path / "device.yaml"
+    f.write_text("esphome:\n  name: test\n")
+
+    meta = {
+        "pin_version": "2026.3.3",
+        "schedule": "0 2 * * 0",
+        "schedule_enabled": True,
+        "tags": "office, sensors",
+    }
+    write_device_meta(str(tmp_path), "device.yaml", meta)
+    result = read_device_meta(str(tmp_path), "device.yaml")
+    assert result == meta

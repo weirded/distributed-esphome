@@ -97,6 +97,7 @@ interface Props {
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string, archive: boolean) => void;
   onRename: (oldTarget: string, newName: string) => void;
+  onSchedule: (target: string) => void;
 }
 
 function matchesFilter(filter: string, ...fields: (string | null | undefined)[]): boolean {
@@ -227,7 +228,7 @@ function DeleteModal({ target, onConfirm, onClose }: {
   );
 }
 
-export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename, onSchedule }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
@@ -344,7 +345,15 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
         ),
         cell: ({ row: { original: t } }) => (
           <>
-            <span className="device-name">{t.friendly_name || t.device_name || stripYaml(t.target)}</span>
+            <span className="device-name">
+              {t.friendly_name || t.device_name || stripYaml(t.target)}
+              {t.schedule && t.schedule_enabled && (
+                <span title={`Scheduled: ${t.schedule}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>🕐</span>
+              )}
+              {t.pinned_version && (
+                <span title={`Pinned to ${t.pinned_version}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>📌</span>
+              )}
+            </span>
             <div className="device-filename">{stripYaml(t.target)}</div>
           </>
         ),
@@ -815,6 +824,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           onDelete={(t) => { setMenuTarget(null); setMenuPos(null); setDeleteTarget(t); }}
           onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
           onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
+          onSchedule={(t) => { setMenuTarget(null); setMenuPos(null); onSchedule(t); }}
           onClose={() => { setMenuTarget(null); setMenuPos(null); }}
         />
       )}
@@ -845,6 +855,7 @@ function DeviceMenu({
   onDelete,
   onRename,
   onLogs,
+  onSchedule,
   onClose,
 }: {
   target: Target;
@@ -853,6 +864,7 @@ function DeviceMenu({
   onDelete: (target: string) => void;
   onRename: (target: string) => void;
   onLogs: (target: string) => void;
+  onSchedule: (target: string) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -920,6 +932,7 @@ function DeviceMenu({
         <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
 
         <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Config</div>
+        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onSchedule(t.target)}>Schedule Upgrade...</button>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
 
