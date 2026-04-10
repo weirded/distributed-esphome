@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.3.1
+
+**New features**
+
+- **Upgrade modal** — clicking Upgrade on a device opens a dialog where you can pick which worker should run the build and which ESPHome version to use. The version override is per-job only — it won't change your global default. Replaces the old "Upgrade on..." submenu.
+- **Queued follow-up compiles** — clicking Upgrade while a compile is already running for the same device queues exactly one follow-up that starts automatically when the current build finishes. It picks up the latest YAML at the time it starts, so you can edit → save → click Upgrade again without waiting. Re-clicking a third time updates the queued follow-up (worker, version) instead of piling up entries. The Queue tab shows a "Queued" badge on these follow-up jobs.
+- **Network columns on the Devices tab** — new toggleable columns show each device's network type (WiFi / Ethernet / Thread), IP mode (Static / DHCP), IPv6 status, Matter support, and whether a fallback access point is configured. The "Net" column is visible by default; the others can be toggled from the column picker.
+- **Upgrading indicator** ([#32](https://github.com/weirded/distributed-esphome/issues/32)) — an orange pulsing dot appears in the Status column while a device has a compile in flight, with live status text ("Compiling…", "OTA Retry", etc.) from the queue. No more wondering whether your Upgrade click registered.
+- **Save & Upgrade goes through the modal** — the editor's "Save & Upgrade" button now opens the same Upgrade dialog so you can pick a worker and version before triggering the build.
+- **Queue tab improvements** — new "Version" column shows the ESPHome version each job will compile against. A 📌 pushpin icon appears next to workers that were explicitly chosen in the Upgrade modal. Successful jobs show a green "Rerun" button instead of the amber "Retry".
+- **HA-confirmed unmanaged devices** — devices discovered via mDNS that don't have a YAML config but ARE known to Home Assistant now show "in HA" under the IP and "Yes" in the HA column, so you can tell real ESPHome devices from stray mDNS broadcasts.
+- **Connect Worker modal remembers context** — clicking the "Image Stale" badge on a worker pre-populates the hostname, max parallel jobs, and host platform from the existing worker.
+
+**Improvements**
+
+- Devices, Workers, and Queue tabs now poll at 1 Hz (was 3–15 seconds) for much snappier updates.
+- After a successful OTA, the device's running version updates within ~1 second instead of waiting up to 60 seconds for the next poll cycle.
+- Compile and clean-cache actions instantly refresh the relevant UI data instead of lagging by one poll interval.
+- Unavailable actions (like Restart on devices without a restart button in their YAML) are now grayed out with an explanatory tooltip instead of silently failing when clicked.
+- ESPHome add-on version detection works with any slug format (including hashed community-repo slugs) without needing elevated Supervisor permissions.
+- Repeated identical warnings from the HA entity poller are demoted to DEBUG after the second occurrence, so a persistent HA outage doesn't drown the logs.
+- Every 401 rejection now logs a structured reason (missing header, wrong scheme, token mismatch) with the peer IP, making auth issues much easier to diagnose.
+
+**Bug fixes**
+
+- [#25](https://github.com/weirded/distributed-esphome/issues/25) — UI didn't load on HAOS with 1.3.0 (startup blocked on Supervisor API + poller tight-retry loop).
+- [#27](https://github.com/weirded/distributed-esphome/issues/27) — Divider line between managed and unmanaged devices disappeared on toggle.
+- [#31](https://github.com/weirded/distributed-esphome/issues/31) — "Upgrade on..." submenu overflowed with long hostnames and closed when moving the mouse to it.
+- [#6](https://github.com/weirded/distributed-esphome/issues/6) — Intermittent `Failed to install Python dependencies into penv` on ARM Mac workers (increased network timeouts for uv/pip).
+- Restart endpoint no longer silently reports success when the device has no restart button — it returns a clear error with the candidates it tried.
+- A corrupted `queue.json` entry no longer crashes the server at startup — the bad entry is skipped and logged.
+- Matter/Thread devices with both `wifi:` and `openthread:` blocks are now correctly detected as Thread (was incorrectly picking WiFi due to block-order precedence).
+- Editor no longer gets stuck on a loading screen (CSP was blocking Monaco's CDN; now allowed).
+
+**Under the hood**
+
+- Server↔worker payloads are now typed via pydantic v2 models with protocol versioning and forward-compatible field handling. Malformed requests return structured errors instead of being half-processed.
+- Python dependencies are hash-pinned in lockfiles and installed with `--require-hashes`. pip-audit + npm audit gate CI. Dependabot configured for all ecosystems. GHCR images are cosign-signed.
+- Security response headers (CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Frame-Options) on every UI response.
+- 338 Python tests (was 264), 37 mocked Playwright tests, 6 prod Playwright tests against a real HA instance with real device compilation + OTA.
+- New `scripts/check-invariants.sh` enforces 8 codebase rules in CI (no `fetch()` outside `api/`, no `any` in TS, YAML via `safe_load` only, etc.).
+
 ## 1.3.0
 
 Theme: **Quality + Testing.** Mostly internal hardening to prevent regressions and increase confidence in future releases. A handful of user-visible bug fixes and small UX improvements ride along.

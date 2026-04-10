@@ -166,6 +166,7 @@ When adding features or changing user-visible behavior, keep in sync:
 
 - `README.md` — public project overview.
 - `ha-addon/DOCS.md` — user-facing docs shown in the HA add-on panel.
+- `ha-addon/CHANGELOG.md` — **written for users, not developers.** ~90% of the entry should cover things users see and experience (new UI features, UX improvements, bug fixes with user-visible symptoms, configuration changes). ~10% at most for internal/behind-the-scenes work (tests, CI, protocol types, code cleanup) — collapse into a brief "Under the hood" section, not detailed workstream breakdowns. Group by what the user experiences, not by internal workstream labels. Never say "no new features" when there are user-visible features — scan the WORKITEMS bug list for UI/UX work.
 
 ## Project Tracking
 
@@ -173,7 +174,7 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.3.1.md` — current release.
+- `dev-plans/WORKITEMS-1.4.md` — current release.
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process.

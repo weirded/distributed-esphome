@@ -4,8 +4,7 @@ Roadmap and bug tracking for distributed-esphome, organized by release.
 
 ## Active files
 
-- **[WORKITEMS-1.3.1.md](WORKITEMS-1.3.1.md)** — **Current release.** Hardening point release between 1.3 and 1.4: typed server↔worker contracts, targeted regression tests, fragility fixes, CLAUDE.md rewrite
-- **[WORKITEMS-1.4.md](WORKITEMS-1.4.md)** — Planned: ESPHome Dashboard parity (create device, firmware download, web serial)
+- **[WORKITEMS-1.4.md](WORKITEMS-1.4.md)** — **Current release.** ESPHome Dashboard parity (create device, firmware download, web serial)
 - **[WORKITEMS-1.5.md](WORKITEMS-1.5.md)** — Planned: Power-user features (file tree editor, config diff)
 - **[WORKITEMS-1.6.md](WORKITEMS-1.6.md)** — Planned: LLM-powered assistance (AI editor, release breaking-change analyzer)
 - **[WORKITEMS-future.md](WORKITEMS-future.md)** — Backlog without committed scope
@@ -20,6 +19,7 @@ Historical release plans for versions already shipped. Kept for reference but no
 - **[archive/WORKITEMS-1.1.md](archive/WORKITEMS-1.1.md)** — React UI rewrite, Monaco editor, HA integration, device lifecycle (89 bug fixes)
 - **[archive/WORKITEMS-1.2.md](archive/WORKITEMS-1.2.md)** — shadcn/ui design system, TanStack Table, SWR, local worker (69 bug fixes)
 - **[archive/WORKITEMS-1.3.md](archive/WORKITEMS-1.3.md)** — Quality + Testing: CI, Playwright, ruff, coverage, security hardening, client image version detection
+- **[archive/WORKITEMS-1.3.1.md](archive/WORKITEMS-1.3.1.md)** — Hardening: typed protocol, safety-net tests, supply chain, upgrade modal, network columns, 24 bug fixes
 
 ## How this works
 

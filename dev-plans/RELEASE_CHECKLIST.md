@@ -20,7 +20,7 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
   - `ha-addon/DOCS.md` — HA add-on panel docs.
   - `ha-addon/config.yaml` — `description`, `map`, `ports`, `options`, `schema`.
   Remove stale content (outdated diagrams, references to removed features, duplication of what the code already says).
-- [ ] **Close out `dev-plans/WORKITEMS-X.Y.md`**: mark all completed, move any deferred items to the next release file.
+- [ ] **Close out `dev-plans/WORKITEMS-X.Y.md`**: mark all completed, move any deferred items to the next release file. Then **move** the file to `dev-plans/archive/` (`git mv dev-plans/WORKITEMS-X.Y.md dev-plans/archive/`).
 - [ ] **Grep TODO/FIXME/HACK** in changed files — resolve or document as known issues.
 
 ### You do
