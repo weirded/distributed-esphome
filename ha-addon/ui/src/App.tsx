@@ -430,6 +430,7 @@ export default function App() {
         <EsphomeVersionDropdown
           versions={esphomeVersions}
           onSelect={handleSelectEsphomeVersion}
+          onRefresh={() => mutateEsphomeVersions()}
         />
         <span
           className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap"
@@ -566,17 +567,21 @@ export default function App() {
         />
       )}
 
-      {upgradeModalTarget && (
-        <UpgradeModal
-          target={upgradeModalTarget.target}
-          displayName={upgradeModalTarget.displayName}
-          workers={workers}
-          esphomeVersions={esphomeVersions.available}
-          defaultEsphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? null}
-          onConfirm={handleUpgradeConfirm}
-          onClose={() => setUpgradeModalTarget(null)}
-        />
-      )}
+      {upgradeModalTarget && (() => {
+        const t = targets.find(x => x.target === upgradeModalTarget.target);
+        return (
+          <UpgradeModal
+            target={upgradeModalTarget.target}
+            displayName={upgradeModalTarget.displayName}
+            workers={workers}
+            esphomeVersions={esphomeVersions.available}
+            defaultEsphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? null}
+            pinnedVersion={t?.pinned_version}
+            onConfirm={handleUpgradeConfirm}
+            onClose={() => setUpgradeModalTarget(null)}
+          />
+        );
+      })()}
 
       {scheduleModalTarget && (() => {
         const t = targets.find(x => x.target === scheduleModalTarget);

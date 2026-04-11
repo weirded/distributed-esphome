@@ -12,12 +12,14 @@ import {
 interface Props {
   versions: EsphomeVersions;
   onSelect: (version: string) => void;
+  onRefresh?: () => void;
 }
 
-export function EsphomeVersionDropdown({ versions, onSelect }: Props) {
+export function EsphomeVersionDropdown({ versions, onSelect, onRefresh }: Props) {
   const sel = versions.selected || '?';
 
   return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
     <DropdownMenu>
       <DropdownMenuTrigger className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap" title="Click to change ESPHome version" style={{ cursor: 'pointer' }}>
         ESPHome {sel} &#9660;
@@ -45,5 +47,15 @@ export function EsphomeVersionDropdown({ versions, onSelect }: Props) {
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+    {onRefresh && (
+      <button
+        className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
+        title="Refresh available ESPHome versions from PyPI"
+        onClick={onRefresh}
+      >
+        &#8635;
+      </button>
+    )}
+    </span>
   );
 }

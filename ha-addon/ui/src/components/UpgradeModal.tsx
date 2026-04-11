@@ -34,6 +34,8 @@ interface Props {
   esphomeVersions: string[];
   /** The currently selected/default ESPHome version (radio default). */
   defaultEsphomeVersion: string | null;
+  /** If the device is pinned, the pinned version. Shown as a warning. */
+  pinnedVersion?: string | null;
   /**
    * Called when the user clicks Upgrade. Receives the selected worker
    * client_id (or null for `<any>`) and the selected ESPHome version
@@ -52,6 +54,7 @@ export function UpgradeModal({
   workers,
   esphomeVersions,
   defaultEsphomeVersion,
+  pinnedVersion,
   onConfirm,
   onClose,
 }: Props) {
@@ -136,6 +139,21 @@ export function UpgradeModal({
               global default isn't changed.
             </div>
           </div>
+
+          {/* VP.5 / #10: warn when upgrading a pinned device with a different version */}
+          {pinnedVersion && selectedVersion && selectedVersion !== pinnedVersion && (
+            <div
+              className="rounded-lg border border-[var(--warn)] bg-[var(--warn)]/10 px-3 py-2 text-[12px]"
+              style={{ color: 'var(--warn)' }}
+            >
+              <strong>Pinned device.</strong> This device is pinned to{' '}
+              <code className="bg-[var(--surface)] px-1 rounded">{pinnedVersion}</code>
+              , but this upgrade will compile with{' '}
+              <code className="bg-[var(--surface)] px-1 rounded">{selectedVersion}</code>
+              . The pin itself won't change — future scheduled and bulk upgrades will
+              still use the pinned version.
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={onClose}>Cancel</Button>

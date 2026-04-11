@@ -12,17 +12,35 @@ Pin individual devices to a specific ESPHome version. Pinned devices compile wit
 - [x] **VP.2 Scanner: write/clear pin** *(1.4.0-dev.2)* — `write_device_meta()` handles arbitrary key-value writes including `pin_version`. The `POST /ui/api/targets/{f}/meta` endpoint wraps it for the UI (set `pin_version` to a value, or `null` to clear).
 - [x] **VP.3 API endpoints** *(1.4.0-dev.3)* — `POST /ui/api/targets/{target}/pin` (set pin, body `{version}`) and `DELETE /ui/api/targets/{target}/pin` (clear pin). Dedicated convenience endpoints on top of the generic `/meta`.
 - [x] **VP.4 Hamburger menu** *(1.4.0-dev.3)* — "Pin to current version" (pins to the device's running_version) / "Unpin version (X.Y.Z)" (when pinned). Uses `pinTargetVersion` / `unpinTargetVersion` API client functions.
-- [ ] **VP.5 UpgradeModal** — "Keep device pinned" checkbox when upgrading a pinned device (compiles with the pinned version instead of the selected one).
+- [x] **VP.5 UpgradeModal** *(1.4.0-dev.5)* — Warning banner when upgrading a pinned device with a different version. Shows the pinned version, the selected compile version, and explains the pin itself won't change (future scheduled/bulk upgrades still use the pinned version). Revised from "keep pinned checkbox" to a simpler informational warning per bug #10 — the pin is never auto-changed by an upgrade.
 - [x] **VP.6 Visual indicator** *(1.4.0-dev.2)* — 📌 pin icon next to device name when `pinned_version` is set (with tooltip showing the version).
 - [x] **VP.7 Compile guard** *(1.4.0-dev.3)* — when a pinned device is included in bulk "Upgrade All/Outdated", the compile endpoint reads `pin_version` from the device's metadata comment and uses it instead of the global version. An explicit `version_override` from the UpgradeModal still takes precedence.
 - [x] **VP.8 Scheduled Upgrades integration** *(1.4.0-dev.2)* — the `schedule_checker()` background task uses `meta.get("pin_version") or get_esphome_version()` as the compile version, so pinned devices respect their pin during scheduled runs.
 
 ## Device Organization
 
-Note: the `tags` field is already supported by the metadata comment system (1.4.0-dev.2) — `read_device_meta()` / `write_device_meta()` handle it, and `/ui/api/targets` returns it. What remains is the UI for filtering/grouping by tags.
+Key/value tags (like AWS resource tags), stored in the per-device `# distributed-esphome:` comment block as a `tags:` map. Users can group the Devices table by any tag key (Notion-style table groups) and filter by `key=value`.
 
-- [ ] **6.3 Device groups/tags** — filter/group UI in Devices tab using the `tags` field from the YAML comment block
-- [ ] **6.6 Bulk operations** — extend multi-select: bulk delete, bulk validate, bulk tag
+Format in the YAML comment block:
+```yaml
+# distributed-esphome:
+#   tags:
+#     location: kitchen
+#     floor: "1"
+#     env: prod
+#     owner: stefan
+```
+
+The existing `tags` field landed in 1.4.0-dev.2 as a simple list of strings — that needs to migrate to a key/value map. `read_device_meta()` should accept both shapes during the transition (list → coerce to `{tag: ""}` or warn-and-ignore) and `write_device_meta()` always writes the map shape going forward.
+
+- [ ] **DO.1 Tag schema migration** — `read_device_meta()` accepts either list-of-strings (legacy) or string-keyed map; normalizes to map on read. `write_device_meta()` always writes the map. Add a unit test that round-trips both shapes.
+- [ ] **DO.2 Tag CRUD endpoints** — `POST /ui/api/targets/{f}/tags` (set, body `{key, value}`), `DELETE /ui/api/targets/{f}/tags/{key}` (clear). Reuses `read_device_meta()` / `write_device_meta()`. Validates key is non-empty, max 64 chars, no leading/trailing whitespace; value is string, max 256 chars (allow empty for "key present, no value").
+- [ ] **DO.3 Tag editor UI** — modal opened from the device hamburger menu ("Edit tags…"). Shows current tags as editable rows: `[key] [value] [×]` plus an "+ Add tag" button. Save persists via `POST /ui/api/targets/{f}/tags` for each changed entry. Datalist autocomplete on `key` from the union of all keys currently in use across the fleet.
+- [ ] **DO.4 Tag column** — toggleable "Tags" column on the Devices tab showing each device's tags as compact `key=value` chips (truncated, full set in tooltip). Sortable by string representation.
+- [ ] **DO.5 Group-by-tag selector** — top-of-table dropdown: "Group by: [None / location / floor / env / …]". When set, rows are grouped under sticky group headers showing the value (e.g., "location: kitchen — 4 devices"). Devices without that tag key fall into an "— unset —" group at the bottom. Group state persists in localStorage. Like Notion table groups: collapsible group headers, group-level select-all checkbox.
+- [ ] **DO.6 Filter by tag** — top-of-table filter chips: click a tag chip in any row to add it as a filter (`location=kitchen`). Multiple chips AND together. Clear-all button. Filter state in URL query string so it survives reloads and is shareable.
+- [ ] **DO.7 Bulk tag operations** — extend multi-select on the Devices tab: "Set tag…" (prompts for key+value, applies to all selected via `Promise.all`), "Remove tag…" (prompts for key, removes from all selected). Single summary toast per bulk action.
+- [ ] **DO.8 Bulk delete + bulk validate** *(formerly 6.6)* — extend multi-select: bulk delete and bulk validate alongside the existing bulk upgrade.
 
 ## Scheduled Upgrades ([#30](https://github.com/weirded/distributed-esphome/issues/30))
 
@@ -43,7 +61,6 @@ Per-device cron scheduler for automatic compile+OTA. Schedule is stored in the d
 ## Build Operations
 
 - [ ] **5.2 Build cache status** — workers report cache stats, display in UI
-- [ ] **5.4 Notification hooks** — webhook URL for job success/failure (Slack/Discord)
 
 ## Firmware Download
 
@@ -71,4 +88,12 @@ After a successful compile, extract the firmware binary and make it downloadable
 - [x] **6** *(1.4.0-dev.4)* — Pin indicator moved from name column to version column. Shows 📌 + pinned version number next to the running version (e.g., "2026.3.3 📌 2024.11.1").
 
 - [x] **7** *(1.4.0-dev.4)* — Hamburger menu too narrow for "Unpin version (2026.3.3)". Changed from fixed `min-w-[160px]` to `min-w-[200px] w-max max-w-[320px]` so it sizes to content (grows for long text, capped at 320px to prevent viewport overflow).
+
+- [x] **8** *(1.4.0-dev.5)* — Moved "Schedule Selected..." out of the Upgrade dropdown into a new "Actions ▾" dropdown between Upgrade and the column picker gear icon. Cleaner separation: Upgrade dropdown is compile-only, Actions is for bulk metadata operations.
+
+- [x] **9** *(1.4.0-dev.5)* — Pin indicator simplified: just 📌 next to the running version (no repeated version number). The pinned version is in the tooltip and the hamburger menu.
+
+- [x] **10** *(1.4.0-dev.5)* — Pinned-device upgrade warning in UpgradeModal. When the selected compile version differs from the device's pin, an amber warning banner explains: "This device is pinned to X, but this upgrade will compile with Y. The pin itself won't change — future scheduled and bulk upgrades will still use the pinned version." The upgrade honors the modal's selected version without touching the pin (VP.7 already handled the compile guard).
+
+- [x] **11** *(1.4.0-dev.5)* — Refresh button (↻) next to the ESPHome version picker in the top nav. Triggers `mutateEsphomeVersions()` to re-fetch from the server (which queries PyPI). New `onRefresh` prop on `EsphomeVersionDropdown`.
 

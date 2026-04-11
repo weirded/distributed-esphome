@@ -615,7 +615,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
         <span style={{ fontSize: 12 }}>
           {t.running_version || '—'}
           {t.pinned_version && (
-            <span title={`Pinned to ${t.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌 {t.pinned_version}</span>
+            <span title={`Pinned to ${t.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>
           )}
           {t.config_modified && <div className="config-modified">config changed</div>}
         </span>
@@ -805,6 +805,17 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
                   <DropdownMenuItem onClick={handleCompileSelected}>
                     Upgrade Selected
                   </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* #8: Actions dropdown — non-compile bulk operations */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-sm text-[var(--text)] hover:bg-[var(--border)] cursor-pointer">
+                Actions &#9662;
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
                   <DropdownMenuItem onClick={handleScheduleSelected} disabled={Object.keys(rowSelection).length === 0}>
                     Schedule Selected...
                   </DropdownMenuItem>
