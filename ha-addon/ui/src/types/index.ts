@@ -43,6 +43,12 @@ export interface Target {
   ha_configured?: boolean;
   ha_connected?: boolean | null;
   /**
+   * HA device registry ID — present when we matched the device to HA by MAC.
+   * Used by the UI to deep-link the HA column to /config/devices/device/<id>.
+   * (#35)
+   */
+  ha_device_id?: string | null;
+  /**
    * Primary network connectivity block (#10). Mirrors ESPHome's own
    * resolver precedence: wifi → ethernet → openthread. Null when none of
    * the three blocks is present in the resolved config.
@@ -106,6 +112,8 @@ export interface Device {
    * Only meaningful when ha_configured is true.
    */
   ha_connected?: boolean | null;
+  /** HA device registry ID for deep-linking. See Target.ha_device_id (#35). */
+  ha_device_id?: string | null;
 }
 
 export interface SystemInfo {

@@ -152,27 +152,35 @@ def _ha_status_for_target(
     meta: dict,
     device_mac: str | None = None,
     ha_mac_set: set[str] | None = None,
-) -> tuple[bool, bool | None]:
-    """Return (ha_configured, ha_connected) for a given compile target.
+    ha_mac_to_device_id: dict[str, str] | None = None,
+) -> tuple[bool, bool | None, str | None]:
+    """Return (ha_configured, ha_connected, ha_device_id) for a compile target.
 
     Matching priority:
     1. MAC address (most reliable — HA identifies ESPHome devices by MAC)
     2. Direct name lookup (friendly_name, esphome.name, filename)
     3. Prefix match against entity locals
 
-    Returns (False, None) when no match is found.
+    Returns (False, None, None) when no match is found.
+
+    #35: ha_device_id is resolved when a MAC match succeeds, so the UI can
+    deep-link to /config/devices/device/<id>. Non-MAC matches don't yield an
+    id because we only build the mac→id map from HA's device registry.
     """
     # 1. MAC address match (authoritative — doesn't depend on naming)
     #    HA connections store MACs as "aa:bb:cc:dd:ee:ff" (lowercase with colons).
     #    Device poller MACs from aioesphomeapi are "AA:BB:CC:DD:EE:FF" (uppercase).
+    ha_device_id: str | None = None
     if device_mac and ha_mac_set:
         mac_lower = device_mac.lower()
         mac_confirmed = mac_lower in ha_mac_set
+        if mac_confirmed and ha_mac_to_device_id:
+            ha_device_id = ha_mac_to_device_id.get(mac_lower)
     else:
         mac_confirmed = False
 
     if not ha_entity_status and not mac_confirmed:
-        return False, None
+        return False, None, ha_device_id
 
     # 2. Name matching for connectivity state
     candidates: list[str] = []
@@ -188,14 +196,14 @@ def _ha_status_for_target(
     for norm_name in candidates:
         entry = ha_entity_status.get(norm_name)
         if entry:
-            return True, entry.get("connected")
+            return True, entry.get("connected"), ha_device_id
 
     # Prefix match
     for norm_name in candidates:
         prefix = norm_name + "_"
         for key, entry in ha_entity_status.items():
             if key.startswith(prefix) or key == norm_name:
-                return True, entry.get("connected")
+                return True, entry.get("connected"), ha_device_id
 
     # 3. MAC fragment match — some devices register with HA using internal names
     #    that include MAC fragments (e.g. screek_humen_sensor_1u_c76926 contains
@@ -205,13 +213,13 @@ def _ha_status_for_target(
         if mac_suffix and len(mac_suffix) == 6:
             for key, entry in ha_entity_status.items():
                 if mac_suffix in key:
-                    return True, entry.get("connected")
+                    return True, entry.get("connected"), ha_device_id
 
     # 4. If MAC confirmed via HA device identifiers but name didn't match
     if mac_confirmed:
-        return True, None
+        return True, None, ha_device_id
 
-    return False, None
+    return False, None, ha_device_id
 
 
 @routes.get("/ui/api/targets")
@@ -222,6 +230,7 @@ async def get_targets(request: web.Request) -> web.Response:
     server_version = get_esphome_version()
     ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
     ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
+    ha_mac_to_device_id: dict[str, str] = request.app.get("ha_mac_to_device_id", {})
 
     targets = scan_configs(cfg.config_dir)
 
@@ -258,8 +267,9 @@ async def get_targets(request: web.Request) -> web.Response:
                     break
 
         device_mac = dev.mac_address if dev else None
-        ha_configured, ha_connected = _ha_status_for_target(
-            ha_entity_status, target, meta, device_mac=device_mac, ha_mac_set=ha_mac_set,
+        ha_configured, ha_connected, ha_device_id = _ha_status_for_target(
+            ha_entity_status, target, meta, device_mac=device_mac,
+            ha_mac_set=ha_mac_set, ha_mac_to_device_id=ha_mac_to_device_id,
         )
 
         # 4.2c: Use HA connected state as additional online signal.
@@ -301,6 +311,7 @@ async def get_targets(request: web.Request) -> web.Response:
             "has_restart_button": meta.get("has_restart_button", False),
             "ha_configured": ha_configured,
             "ha_connected": ha_connected,
+            "ha_device_id": ha_device_id,
             # #10 — network facts surfaced by the toggleable Net/IP Mode/IPv6/AP columns
             "network_type": meta.get("network_type"),
             "network_static_ip": meta.get("network_static_ip", False),
@@ -518,6 +529,7 @@ async def get_devices(request: web.Request) -> web.Response:
     server_version = get_esphome_version()
     ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
     ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
+    ha_mac_to_device_id: dict[str, str] = request.app.get("ha_mac_to_device_id", {})
 
     if not device_poller:
         return web.json_response([])
@@ -536,15 +548,17 @@ async def get_devices(request: web.Request) -> web.Response:
         # can reuse the same matcher the targets endpoint uses — no
         # friendly_name, just the raw device name.
         meta = {"device_name_raw": dev.name}
-        ha_configured, ha_connected = _ha_status_for_target(
+        ha_configured, ha_connected, ha_device_id = _ha_status_for_target(
             ha_entity_status,
             target=dev.name,
             meta=meta,
             device_mac=dev.mac_address,
             ha_mac_set=ha_mac_set,
+            ha_mac_to_device_id=ha_mac_to_device_id,
         )
         d["ha_configured"] = ha_configured
         d["ha_connected"] = ha_connected
+        d["ha_device_id"] = ha_device_id
         result.append(d)
 
     return web.json_response(result)
@@ -1602,7 +1616,7 @@ async def debug_ha_status(request: web.Request) -> web.Response:
         meta = get_device_metadata(cfg.config_dir, target)
         dev = devices_by_target.get(target)
         device_mac = dev.mac_address if dev else None
-        ha_configured, ha_connected = _ha_status_for_target(
+        ha_configured, ha_connected, _ha_device_id = _ha_status_for_target(
             ha_entity_status, target, meta, device_mac=device_mac, ha_mac_set=ha_mac_set,
         )
         candidates = []

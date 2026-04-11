@@ -12,7 +12,7 @@ import {
 import { getApiKey, restartDevice, pinTargetVersion, unpinTargetVersion, setTargetSchedule } from '../api/client';
 import { UpgradeModal } from './UpgradeModal';
 import type { Device, Job, Target, Worker } from '../types';
-import { stripYaml, timeAgo } from '../utils';
+import { stripYaml, timeAgo, haDeepLink } from '../utils';
 import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
 import {
@@ -462,13 +462,32 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       {
         id: 'ha',
         header: ({ column }) => <SortHeader label="HA" column={column} />,
-        cell: ({ row: { original: t } }) => (
-          <span style={{ fontSize: 12 }}>
-            {t.ha_configured
-              ? <span style={{ color: 'var(--success)' }}>Yes</span>
-              : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-          </span>
-        ),
+        cell: ({ row: { original: t } }) => {
+          if (!t.ha_configured) {
+            return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>;
+          }
+          // #35: when we have a device_id (matched via MAC), make "Yes" a
+          // clickable deep-link to the HA device page. If we don't have a
+          // device_id (matched only via name), just show the text.
+          if (t.ha_device_id) {
+            const href = haDeepLink(`/config/devices/device/${t.ha_device_id}`);
+            if (href) {
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener"
+                  title="Open device in Home Assistant"
+                  style={{ fontSize: 12, color: 'var(--success)', textDecoration: 'none' }}
+                  className="hover:underline"
+                >
+                  Yes ↗
+                </a>
+              );
+            }
+          }
+          return <span style={{ fontSize: 12, color: 'var(--success)' }}>Yes</span>;
+        },
         sortingFn: 'alphanumeric',
       }
     ),

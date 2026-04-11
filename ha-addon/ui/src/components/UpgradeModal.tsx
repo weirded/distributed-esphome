@@ -204,7 +204,9 @@ export function UpgradeModal({
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent style={{ maxWidth: 480 }}>
         <DialogHeader>
-          <DialogTitle>Upgrade — {displayName}</DialogTitle>
+          <DialogTitle>
+            {mode === 'schedule' ? 'Schedule Upgrade' : 'Upgrade'} — {displayName}
+          </DialogTitle>
         </DialogHeader>
         <div className="p-[18px] flex flex-col gap-4">
 

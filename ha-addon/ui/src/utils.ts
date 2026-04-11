@@ -5,6 +5,35 @@ export function timeAgo(isoString: string): string {
   return Math.floor(ago / 3600) + 'h ago';
 }
 
+/**
+ * Build an absolute URL for a Home Assistant deep-link (#35).
+ *
+ * When the add-on is loaded via HA Ingress (the primary deployment), the
+ * parent window is HA itself, so we use `window.top.location.origin`. When
+ * accessed directly on the add-on's port (e.g. http://hass-4.local:8765),
+ * we fall back to the same hostname on the default HA port 8123.
+ *
+ * Returns null if window.top access throws (cross-origin) and we can't
+ * derive a reasonable fallback.
+ */
+export function haDeepLink(path: string): string | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const top = window.top;
+    if (top && top !== window) {
+      try {
+        return `${top.location.origin}${path}`;
+      } catch {
+        /* cross-origin parent — fall through */
+      }
+    }
+    const loc = window.location;
+    return `${loc.protocol}//${loc.hostname}:8123${path}`;
+  } catch {
+    return null;
+  }
+}
+
 export function stripYaml(s: string | undefined | null): string {
   return s ? s.replace(/\.ya?ml$/i, '') : (s ?? '');
 }

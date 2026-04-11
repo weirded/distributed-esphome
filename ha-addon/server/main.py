@@ -305,14 +305,17 @@ async def ha_entity_poller(app: web.Application) -> None:
                         "Template API call failed", exc_info=True,
                     )
 
-                # 1b. Get MAC addresses for ESPHome devices via template API.
+                # 1b. Get MAC + device_id for ESPHome devices via template API.
                 # ESPHome devices store MACs in device connections (not identifiers):
                 #   connections = [["mac", "50:02:91:3c:11:43"]]
+                # #35: we also grab the HA device_id so the UI can build a
+                # deep-link to /config/devices/device/<id>.
                 ha_mac_set: set[str] = set()
+                ha_mac_to_device_id: dict[str, str] = {}
                 if esphome_entity_ids:
                     try:
                         tmpl = (
-                            "{%- set ns = namespace(macs=[], seen=[]) -%}"
+                            "{%- set ns = namespace(pairs=[], seen=[]) -%}"
                             "{%- for eid in integration_entities('esphome') -%}"
                             "  {%- set did = device_id(eid) -%}"
                             "  {%- if did and did not in ns.seen -%}"
@@ -321,13 +324,13 @@ async def ha_entity_poller(app: web.Application) -> None:
                             "    {%- if conns -%}"
                             "      {%- for conn in conns -%}"
                             "        {%- if conn[0] == 'mac' -%}"
-                            "          {%- set ns.macs = ns.macs + [conn[1]] -%}"
+                            "          {%- set ns.pairs = ns.pairs + [[conn[1], did]] -%}"
                             "        {%- endif -%}"
                             "      {%- endfor -%}"
                             "    {%- endif -%}"
                             "  {%- endif -%}"
                             "{%- endfor -%}"
-                            "{{ ns.macs | unique | list | tojson }}"
+                            "{{ ns.pairs | tojson }}"
                         )
                         async with session.post(
                             "http://supervisor/core/api/template",
@@ -336,11 +339,15 @@ async def ha_entity_poller(app: web.Application) -> None:
                             timeout=timeout,
                         ) as resp:
                             if resp.status == 200:
-                                raw_macs = await resp.text()
+                                raw_pairs = await resp.text()
                                 try:
-                                    parsed_macs = _json.loads(raw_macs)
-                                    if isinstance(parsed_macs, list):
-                                        ha_mac_set = {str(m).lower() for m in parsed_macs}
+                                    parsed = _json.loads(raw_pairs)
+                                    if isinstance(parsed, list):
+                                        for item in parsed:
+                                            if isinstance(item, list) and len(item) == 2:
+                                                mac_lc = str(item[0]).lower()
+                                                ha_mac_set.add(mac_lc)
+                                                ha_mac_to_device_id[mac_lc] = str(item[1])
                                 except (_json.JSONDecodeError, TypeError):
                                     pass
                     except Exception:
@@ -409,6 +416,7 @@ async def ha_entity_poller(app: web.Application) -> None:
             app["ha_entity_status"].clear()
             app["ha_entity_status"].update(ha_status)
             app["ha_mac_set"] = ha_mac_set
+            app["ha_mac_to_device_id"] = ha_mac_to_device_id
 
             # A full successful poll resets the suppression state so the next
             # transient failure gets its warning re-promoted.
