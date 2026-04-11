@@ -29,6 +29,30 @@ def _cfg(request: web.Request) -> AppConfig:
     return request.app["config"]
 
 
+@routes.get("/ui/api/_debug/scheduler")
+async def debug_scheduler(request: web.Request) -> web.Response:
+    """Diagnostic endpoint — reports on the schedule_checker background task."""
+    app = request.app
+    task = app.get("schedule_checker_task")
+    task_info: dict = {}
+    if task is None:
+        task_info["status"] = "not_created"
+    else:
+        task_info["done"] = task.done()
+        task_info["cancelled"] = task.cancelled()
+        if task.done() and not task.cancelled():
+            exc = task.exception()
+            task_info["exception"] = f"{type(exc).__name__}: {exc}" if exc else None
+    return web.json_response({
+        "task": task_info,
+        "started_at": app.get("schedule_checker_started_at"),
+        "tick_count": app.get("schedule_checker_tick_count"),
+        "last_tick": app.get("schedule_checker_last_tick"),
+        "last_error": app.get("schedule_checker_last_error"),
+        "seen_once": app.get("schedule_checker_seen_once"),
+    })
+
+
 @routes.get("/ui/api/esphome-schema")
 async def get_esphome_schema(request: web.Request) -> web.Response:
     """Return ESPHome component names for editor autocomplete.

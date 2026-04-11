@@ -487,12 +487,20 @@ async def schedule_checker(app: web.Application) -> None:
     cfg: AppConfig = app["config"]
     queue: JobQueue = app["queue"]
 
+    app["schedule_checker_started_at"] = datetime.now(timezone.utc).isoformat()
+    app["schedule_checker_tick_count"] = 0
+    app["schedule_checker_last_tick"] = None
+    app["schedule_checker_last_error"] = None
+    app["schedule_checker_seen_once"] = {}
+
     logger.info("schedule_checker started (config_dir=%s)", cfg.config_dir)
     while True:
         await asyncio.sleep(60)
         try:
             targets = scan_configs(cfg.config_dir)
             now = datetime.now(timezone.utc)
+            app["schedule_checker_tick_count"] += 1
+            app["schedule_checker_last_tick"] = now.isoformat()
             logger.info("schedule_checker tick at %s — %d targets", now.isoformat(), len(targets))
 
             for target in targets:
@@ -502,6 +510,7 @@ async def schedule_checker(app: web.Application) -> None:
                     # #17: one-time schedule — fires once then auto-clears.
                     once_str = meta.get("schedule_once")
                     if once_str:
+                        app["schedule_checker_seen_once"][target] = once_str
                         logger.info("schedule_checker: %s has schedule_once=%s", target, once_str)
                         try:
                             once_dt = datetime.fromisoformat(once_str)
@@ -604,7 +613,8 @@ async def schedule_checker(app: web.Application) -> None:
                 except Exception:
                     logger.exception("Schedule check failed for %s", target)
 
-        except Exception:
+        except Exception as e:
+            app["schedule_checker_last_error"] = f"{type(e).__name__}: {e}"
             logger.exception("Error in schedule checker")
 
 
