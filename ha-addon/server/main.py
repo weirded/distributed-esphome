@@ -491,7 +491,6 @@ async def schedule_checker(app: web.Application) -> None:
     app["schedule_checker_tick_count"] = 0
     app["schedule_checker_last_tick"] = None
     app["schedule_checker_last_error"] = None
-    app["schedule_checker_seen_once"] = {}
 
     logger.info("schedule_checker started (config_dir=%s)", cfg.config_dir)
     while True:
@@ -501,7 +500,6 @@ async def schedule_checker(app: web.Application) -> None:
             now = datetime.now(timezone.utc)
             app["schedule_checker_tick_count"] += 1
             app["schedule_checker_last_tick"] = now.isoformat()
-            logger.info("schedule_checker tick at %s — %d targets", now.isoformat(), len(targets))
 
             for target in targets:
                 try:
@@ -510,13 +508,10 @@ async def schedule_checker(app: web.Application) -> None:
                     # #17: one-time schedule — fires once then auto-clears.
                     once_str = meta.get("schedule_once")
                     if once_str:
-                        app["schedule_checker_seen_once"][target] = once_str
-                        logger.info("schedule_checker: %s has schedule_once=%s", target, once_str)
                         try:
                             once_dt = datetime.fromisoformat(once_str)
                             if once_dt.tzinfo is None:
                                 once_dt = once_dt.replace(tzinfo=timezone.utc)
-                            logger.info("schedule_checker: %s once_dt=%s now=%s due=%s", target, once_dt.isoformat(), now.isoformat(), once_dt <= now)
                             if once_dt <= now:
                                 version = meta.get("pin_version") or get_esphome_version()
                                 device_poller = app.get("device_poller")

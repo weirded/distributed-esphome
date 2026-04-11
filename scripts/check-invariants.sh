@@ -178,6 +178,33 @@ if [[ -f "$reqs_file" && -f "$image_ver_file" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
+# (PY-8) Every direct dependency in requirements.txt must also be pinned in
+# requirements.lock. Root cause of bug #34 (1.4.0-dev.17): croniter was added
+# to ha-addon/server/requirements.txt in the scheduler feature PR but
+# scripts/refresh-deps.sh was never run, so requirements.lock never picked
+# it up. The Dockerfile installs from the lock only (via --require-hashes),
+# so the scheduler task returned silently on croniter ImportError and no
+# scheduled upgrades ever fired in prod.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+for reqs in ha-addon/server/requirements.txt ha-addon/client/requirements.txt; do
+    lock="${reqs%.txt}.lock"
+    [[ -f "$reqs" && -f "$lock" ]] || continue
+    while IFS= read -r line; do
+        # Skip blank lines and comments
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Extract package name (everything before ==/>=/~=/<=/< /> /!=/<space>)
+        pkg="$(echo "$line" | sed -E 's/[[:space:]]*([A-Za-z0-9_.-]+).*/\1/' | tr '[:upper:]' '[:lower:]')"
+        [[ -z "$pkg" ]] && continue
+        # Lock entries are normalized to lowercase by pip-compile; check for
+        # "^pkg==" at the start of a line (before continuation backslash).
+        if ! grep -qiE "^${pkg}==" "$lock"; then
+            fail "PY-8" "$lock: package '$pkg' from $reqs is not pinned in the lockfile. Run: bash scripts/refresh-deps.sh"
+        fi
+    done < "$reqs"
+done
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 

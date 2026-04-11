@@ -119,6 +119,8 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 **PY-7 — Every `--ignore-vuln` must have an applicability assessment.** When adding a CVE ignore to `pip-audit` (or any audit tool), the inline comment must include: (1) why the fix version can't be pulled in (transitive bound, breaking change, etc.), (2) whether our code actually exercises the vulnerable code path, and (3) a date so staleness is visible. Don't just say "can't upgrade" — say whether the vulnerability matters for this codebase. If it does matter, track a follow-up in WORKITEMS rather than silently ignoring it.
 
+**PY-8 — Every direct dep in `requirements.txt` must also appear in `requirements.lock`.** Dockerfiles install from the lockfile with `--require-hashes`, so anything present only in `requirements.txt` is silently missing from the image. Root cause of bug #39: `croniter` was added to `ha-addon/server/requirements.txt` but `scripts/refresh-deps.sh` was never rerun — the production image had no croniter, `schedule_checker` caught the `ImportError` and returned, and no scheduled upgrade ever fired in prod. `scripts/check-invariants.sh` now verifies the lockfile covers every entry in the .txt file.
+
 ## Design Judgment (aspirational — reviewed, not enforced)
 
 These aren't grep-checkable but matter just as much. They're how the codebase stays coherent.

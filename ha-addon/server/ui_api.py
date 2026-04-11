@@ -49,7 +49,6 @@ async def debug_scheduler(request: web.Request) -> web.Response:
         "tick_count": app.get("schedule_checker_tick_count"),
         "last_tick": app.get("schedule_checker_last_tick"),
         "last_error": app.get("schedule_checker_last_error"),
-        "seen_once": app.get("schedule_checker_seen_once"),
     })
 
 
