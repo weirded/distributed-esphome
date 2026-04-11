@@ -99,8 +99,13 @@ interface Props {
     esphomeVersion: string | null;
     updatePin?: string | null;
   }) => void;
-  onSaveSchedule: (cron: string) => void;
-  onSaveOnce: (datetime: string) => void;
+  /**
+   * Save a recurring cron schedule. `version` is the user's pin choice —
+   * `null` means "Latest" (unpin / use server default at run time), a
+   * specific string means "pin the device to this version".
+   */
+  onSaveSchedule: (cron: string, version: string | null) => void;
+  onSaveOnce: (datetime: string, version: string | null) => void;
   onDeleteSchedule: () => void;
   onClose: () => void;
 }
@@ -132,9 +137,10 @@ export function UpgradeModal({
     .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
 
   const [selectedWorker, setSelectedWorker] = useState<string>('');
-  const [selectedVersion, setSelectedVersion] = useState<string>(
-    defaultEsphomeVersion ?? esphomeVersions[0] ?? '',
-  );
+  // #31: selectedVersion = '' means "Latest" (no pin / use current default at
+  // run time). If the device is currently pinned, default to that pin. Otherwise
+  // default to "Latest" so the schedule auto-updates with new ESPHome releases.
+  const [selectedVersion, setSelectedVersion] = useState<string>(pinnedVersion ?? '');
 
   const versionList: string[] = [];
   if (defaultEsphomeVersion) versionList.push(defaultEsphomeVersion);
@@ -154,16 +160,29 @@ export function UpgradeModal({
   const [dow, setDow] = useState(parsed?.dow ?? '0');
   const [rawCron, setRawCron] = useState(currentSchedule ?? '');
   const [cronMode, setCronMode] = useState<'friendly' | 'cron'>(parsed || !currentSchedule ? 'friendly' : 'cron');
+  // #33: datetime-local expects a *local* wall-clock value (no timezone). Using
+  // `toISOString()` returns UTC, so east-of-UTC users would see a time in the
+  // past and west-of-UTC users (e.g. the author) would see a time many hours
+  // in the future. Build the value from local components instead.
   const [onceDate, setOnceDate] = useState(() => {
-    if (currentOnce) return new Date(currentOnce).toISOString().slice(0, 16);
-    return new Date().toISOString().slice(0, 16);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const toLocalInput = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return toLocalInput(currentOnce ? new Date(currentOnce) : new Date());
   });
 
   const effectiveCron = cronMode === 'cron' ? rawCron.trim() : buildCron(interval, every, time, dow);
   const hasExistingSchedule = !!(currentSchedule || currentOnce);
 
   // --- Pin warning ---
+  // Shows when the user's version choice in "Now" mode would change an
+  // existing pin. selectedVersion === '' means "Latest" which is treated as
+  // leaving the pin alone in Now mode (don't auto-unpin a manual pin on a
+  // one-off upgrade).
   const shouldUpdatePin = pinnedVersion && selectedVersion && selectedVersion !== pinnedVersion;
+
+  // For schedule saves: '' ("Latest") → null (unpin), otherwise the string.
+  const scheduleVersion: string | null = selectedVersion || null;
 
   function handleConfirm() {
     if (mode === 'now') {
@@ -174,9 +193,9 @@ export function UpgradeModal({
       });
     } else {
       if (scheduleType === 'once') {
-        onSaveOnce(new Date(onceDate).toISOString());
+        onSaveOnce(new Date(onceDate).toISOString(), scheduleVersion);
       } else {
-        onSaveSchedule(effectiveCron);
+        onSaveSchedule(effectiveCron, scheduleVersion);
       }
     }
   }
@@ -219,10 +238,11 @@ export function UpgradeModal({
               <div>
                 <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">ESPHome version</label>
                 <Select value={selectedVersion} onChange={e => setSelectedVersion(e.target.value)}>
+                  <option value="">
+                    Latest{defaultEsphomeVersion ? ` — currently ${defaultEsphomeVersion}` : ''}
+                  </option>
                   {versionList.map(v => (
-                    <option key={v} value={v}>
-                      {v}{v === defaultEsphomeVersion ? ' (default)' : ''}
-                    </option>
+                    <option key={v} value={v}>{v}</option>
                   ))}
                 </Select>
               </div>

@@ -26,6 +26,7 @@ import {
   setTargetSchedule,
   deleteTargetSchedule,
   pinTargetVersion,
+  unpinTargetVersion,
 } from './api/client';
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
 import { DeviceLogModal } from './components/DeviceLogModal';
@@ -82,6 +83,21 @@ function getInitialTheme(): 'dark' | 'light' {
   const stored = localStorage.getItem('theme');
   if (stored === 'light' || stored === 'dark') return stored;
   return 'dark';
+}
+
+// #31: Reconcile the user's schedule-mode version choice with the device's
+// current pin. `desiredVersion === null` means "Latest" (ensure unpinned);
+// a specific string means "ensure pinned to this version".
+async function applyScheduleVersion(
+  target: string,
+  currentPin: string | null,
+  desiredVersion: string | null,
+): Promise<void> {
+  if (desiredVersion === null) {
+    if (currentPin) await unpinTargetVersion(target);
+  } else if (desiredVersion !== currentPin) {
+    await pinTargetVersion(target, desiredVersion);
+  }
 }
 
 export default function App() {
@@ -617,8 +633,9 @@ export default function App() {
             currentOnce={t?.schedule_once}
             defaultMode={upgradeModalTarget.defaultMode}
             onUpgradeNow={handleUpgradeConfirm}
-            onSaveSchedule={async (cron) => {
+            onSaveSchedule={async (cron, version) => {
               try {
+                await applyScheduleVersion(upgradeModalTarget.target, t?.pinned_version ?? null, version);
                 await setTargetSchedule(upgradeModalTarget.target, cron);
                 addToast(`Schedule set for ${upgradeModalTarget.displayName}`, 'success');
                 setUpgradeModalTarget(null);
@@ -627,9 +644,10 @@ export default function App() {
                 addToast('Schedule failed: ' + (err as Error).message, 'error');
               }
             }}
-            onSaveOnce={async (datetime) => {
+            onSaveOnce={async (datetime, version) => {
               try {
                 const { setTargetScheduleOnce } = await import('./api/client');
+                await applyScheduleVersion(upgradeModalTarget.target, t?.pinned_version ?? null, version);
                 await setTargetScheduleOnce(upgradeModalTarget.target, datetime);
                 addToast(`One-time upgrade scheduled for ${upgradeModalTarget.displayName}`, 'success');
                 setUpgradeModalTarget(null);

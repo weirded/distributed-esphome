@@ -960,7 +960,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           scheduleOnly
           defaultMode="schedule"
           onUpgradeNow={() => {}}
-          onSaveSchedule={async (cron) => {
+          onSaveSchedule={async (cron, _version) => {
             try {
               await Promise.all(selectedTargets.map(t => setTargetSchedule(t, cron)));
               onToast(`Schedule set for ${selectedTargets.length} device(s)`, 'success');
@@ -970,7 +970,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
               onToast('Schedule failed: ' + (err as Error).message, 'error');
             }
           }}
-          onSaveOnce={async (datetime) => {
+          onSaveOnce={async (datetime, _version) => {
             try {
               const { setTargetScheduleOnce } = await import('../api/client');
               await Promise.all(selectedTargets.map(t => setTargetScheduleOnce(t, datetime)));
