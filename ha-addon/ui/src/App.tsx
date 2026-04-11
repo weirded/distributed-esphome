@@ -33,6 +33,7 @@ import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
 import { UpgradeModal } from './components/UpgradeModal';
 import { ScheduleModal } from './components/ScheduleModal';
+import { SchedulesTab } from './components/SchedulesTab';
 import { EditorModal } from './components/EditorModal';
 import { EsphomeVersionDropdown } from './components/EsphomeVersionDropdown';
 import { LogModal } from './components/LogModal';
@@ -44,7 +45,7 @@ import type { Device, Job, Target, Worker } from './types';
 import { stripYaml } from './utils';
 import './theme.css';
 
-type TabName = 'devices' | 'queue' | 'workers';
+type TabName = 'devices' | 'queue' | 'workers' | 'schedules';
 
 function getTabCount(
   tab: TabName,
@@ -70,6 +71,10 @@ function getTabCount(
   if (tab === 'workers') {
     const online = workers.filter(c => c.online).length;
     return `${online}/${workers.length}`;
+  }
+  if (tab === 'schedules') {
+    const scheduled = targets.filter(t => t.schedule || t.schedule_once).length;
+    return String(scheduled);
   }
   return '';
 }
@@ -417,6 +422,7 @@ export default function App() {
   const devicesCount = getTabCount('devices', targets, devices, displayQueue, workers);
   const queueCount = getTabCount('queue', targets, devices, displayQueue, workers);
   const workersCount = getTabCount('workers', targets, devices, displayQueue, workers);
+  const schedulesCount = getTabCount('schedules', targets, devices, displayQueue, workers);
 
   // Seed version for connect modal: prefer selected esphome version, fall back to server_version field
   const seedVersion = esphomeVersions.selected ||
@@ -473,18 +479,24 @@ export default function App() {
       </header>
 
       <nav className="sticky top-[52px] z-40 flex overflow-x-auto border-b border-[var(--border)] bg-[var(--surface)] px-5">
-        {(['devices', 'queue', 'workers'] as TabName[]).map(tab => (
-          <button
-            key={tab}
-            className={`inline-flex items-center gap-1.5 px-4 h-11 bg-transparent border-none border-b-[3px] border-b-transparent text-[13px] font-medium cursor-pointer whitespace-nowrap transition-colors ${activeTab === tab ? 'text-[var(--text)] border-b-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
-            onClick={() => switchTab(tab)}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}{' '}
-            <span className={`inline-block rounded-full px-1.5 py-px text-[11px] font-semibold ${activeTab === tab ? 'bg-[var(--accent)] text-white' : 'bg-[var(--surface2)] text-[var(--text-muted)]'}`}>
-              {tab === 'devices' ? devicesCount : tab === 'queue' ? queueCount : workersCount}
-            </span>
-          </button>
-        ))}
+        {(['devices', 'queue', 'workers', 'schedules'] as TabName[]).map(tab => {
+          const count = tab === 'devices' ? devicesCount
+            : tab === 'queue' ? queueCount
+            : tab === 'workers' ? workersCount
+            : schedulesCount;
+          return (
+            <button
+              key={tab}
+              className={`inline-flex items-center gap-1.5 px-4 h-11 bg-transparent border-none border-b-[3px] border-b-transparent text-[13px] font-medium cursor-pointer whitespace-nowrap transition-colors ${activeTab === tab ? 'text-[var(--text)] border-b-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+              onClick={() => switchTab(tab)}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}{' '}
+              <span className={`inline-block rounded-full px-1.5 py-px text-[11px] font-semibold ${activeTab === tab ? 'bg-[var(--accent)] text-white' : 'bg-[var(--surface2)] text-[var(--text-muted)]'}`}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
       </nav>
 
       <main>
@@ -532,6 +544,13 @@ export default function App() {
             onCleanCache={handleCleanWorkerCache}
             onCleanAllCaches={handleCleanAllCaches}
             onConnectWorker={(preset) => { setConnectModalPreset(preset ?? null); setConnectModalOpen(true); }}
+          />
+        )}
+        {activeTab === 'schedules' && (
+          <SchedulesTab
+            targets={targets}
+            workers={workers}
+            onSchedule={setScheduleModalTarget}
           />
         )}
       </main>
