@@ -551,6 +551,8 @@ export default function App() {
             targets={targets}
             workers={workers}
             onSchedule={setScheduleModalTarget}
+            onRefresh={() => mutateDevices()}
+            onToast={addToast}
           />
         )}
       </main>
