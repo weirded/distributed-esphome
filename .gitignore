@@ -25,6 +25,10 @@ htmlcov/
 *.tar.gz
 *.tar
 
+# Playwright MCP artifacts (screenshots + accessibility snapshots)
+.playwright-mcp/
+/*.png
+
 # IDE
 .vscode/
 .idea/
