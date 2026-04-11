@@ -156,10 +156,7 @@ export function UpgradeModal({
   const [cronMode, setCronMode] = useState<'friendly' | 'cron'>(parsed || !currentSchedule ? 'friendly' : 'cron');
   const [onceDate, setOnceDate] = useState(() => {
     if (currentOnce) return new Date(currentOnce).toISOString().slice(0, 16);
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(2, 0, 0, 0);
-    return tomorrow.toISOString().slice(0, 16);
+    return new Date().toISOString().slice(0, 16);
   });
 
   const effectiveCron = cronMode === 'cron' ? rawCron.trim() : buildCron(interval, every, time, dow);
@@ -295,7 +292,7 @@ export function UpgradeModal({
                 )
               ) : (
                 <div>
-                  <Input type="datetime-local" value={onceDate} min={new Date().toISOString().slice(0, 16)} onChange={e => setOnceDate(e.target.value)} />
+                  <Input type="datetime-local" value={onceDate} onChange={e => setOnceDate(e.target.value)} />
                   <div className="mt-1 text-[10px] text-[var(--text-muted)]">Upgrades once at this time, then the schedule is removed.</div>
                 </div>
               )}
