@@ -12,7 +12,7 @@ import {
 import { getApiKey, restartDevice, pinTargetVersion, unpinTargetVersion, setTargetSchedule } from '../api/client';
 import { UpgradeModal } from './UpgradeModal';
 import type { Device, Job, Target, Worker } from '../types';
-import { stripYaml, timeAgo, haDeepLink } from '../utils';
+import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../utils';
 import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
 import {
@@ -128,37 +128,6 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
  * Convert a 5-field cron expression to a short human-readable string.
  * Covers common presets; falls back to the raw expression for complex ones.
  */
-function formatCronHuman(cron: string | null | undefined): string | null {
-  if (!cron) return null;
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return cron;
-  const [min, hour, dom, _mon, dow] = parts;
-  void _mon;
-
-  // Every N hours
-  if (min === '0' && hour.startsWith('*/')) {
-    const n = parseInt(hour.slice(2), 10);
-    return n === 1 ? 'Hourly' : `Every ${n}h`;
-  }
-  // Daily at HH:MM
-  if (dom === '*' && dow === '*' && !hour.includes('/') && !min.includes('/')) {
-    return `Daily ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
-  }
-  // Weekly on day at HH:MM
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  if (dom === '*' && dow !== '*' && !hour.includes('/')) {
-    const dayNum = parseInt(dow, 10);
-    const day = dayNames[dayNum] ?? dow;
-    return `${day} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
-  }
-  // Monthly on Nth at HH:MM
-  if (dom !== '*' && dow === '*' && !hour.includes('/')) {
-    const suffix = dom === '1' ? 'st' : dom === '2' ? 'nd' : dom === '3' ? 'rd' : 'th';
-    return `${dom}${suffix} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
-  }
-  return cron;
-}
-
 function formatNetworkType(t: 'wifi' | 'ethernet' | 'thread' | null | undefined): string | null {
   switch (t) {
     case 'wifi': return 'WiFi';
@@ -614,10 +583,21 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       sortingFn: 'alphanumeric',
     }),
     // #5: human-readable schedule column (toggleable, default off).
-    columnHelper.accessor(row => row.schedule || '', {
+    // #40: render both recurring (t.schedule) and one-time (t.schedule_once)
+    // schedules — previously only the recurring cron was shown, so devices
+    // with a one-time schedule displayed "—".
+    columnHelper.accessor(row => row.schedule || row.schedule_once || '', {
       id: 'schedule',
       header: ({ column }) => <SortHeader label="Schedule" column={column} />,
       cell: ({ row: { original: t } }) => {
+        if (t.schedule_once && !t.schedule) {
+          const when = new Date(t.schedule_once).toLocaleString();
+          return (
+            <span style={{ fontSize: 12 }} title={`One-time: ${t.schedule_once}`}>
+              Once: {when}
+            </span>
+          );
+        }
         if (!t.schedule) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
         const human = formatCronHuman(t.schedule);
         const enabled = t.schedule_enabled !== false;
@@ -1186,7 +1166,23 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
       {isVisible('ha') && (
         <td style={{ fontSize: 12 }}>
           {d.ha_configured
-            ? <span style={{ color: 'var(--success)' }}>Yes</span>
+            ? (d.ha_device_id
+                ? (() => {
+                    const href = haDeepLink(`/config/devices/device/${d.ha_device_id}`);
+                    return href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener"
+                        title="Open device in Home Assistant"
+                        style={{ color: 'var(--success)', textDecoration: 'none' }}
+                        className="hover:underline"
+                      >
+                        Yes ↗
+                      </a>
+                    ) : <span style={{ color: 'var(--success)' }}>Yes</span>;
+                  })()
+                : <span style={{ color: 'var(--success)' }}>Yes</span>)
             : dash}
         </td>
       )}

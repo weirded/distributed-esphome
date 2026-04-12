@@ -93,6 +93,11 @@ function findParentComponent(
 interface Props {
   target: string | null;
   onClose: () => void;
+  /** #42: called right before onClose when the editor closes via a successful
+   *  save (Save or Save & Upgrade). Parent uses this to distinguish a
+   *  saved-close from a cancel/dismiss-close — cancelling out of a newly
+   *  created device with no save should clean up the leftover file. */
+  onSaved?: (target: string) => void;
   onToast: (msg: string, type?: ToastType) => void;
   onValidate?: (target: string) => Promise<{ success: boolean; output: string } | null>;
   onCompile?: (target: string) => void;
@@ -228,7 +233,7 @@ let _validationTimer: ReturnType<typeof setTimeout> | null = null;
 // Track dirty-line decorations (module-level so the callback closure can access it)
 let _dirtyDecorationIds: string[] = [];
 
-export function EditorModal({ target, onClose, onToast, onValidate, onCompile, onRename: _onRename, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
+export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, onRename: _onRename, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
   void _onRename; // kept in Props interface for API compatibility
   const isOpen = target !== null;
   const [content, setContent] = useState('');
@@ -462,6 +467,7 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
       savedContentRef.current = value;
       if (editorRef.current) updateDirtyDecorations(editorRef.current).catch(() => {});
       onToast('Saved ' + target, 'success');
+      onSaved?.(target);
       onClose();
     } catch (err) {
       onToast('Save failed: ' + (err as Error).message, 'error');
@@ -475,6 +481,7 @@ export function EditorModal({ target, onClose, onToast, onValidate, onCompile, o
       await saveTargetContent(target, value);
       savedContentRef.current = value;
       onToast('Saved ' + target, 'success');
+      onSaved?.(target);
       onCompile?.(target);
       onClose();
     } catch (err) {

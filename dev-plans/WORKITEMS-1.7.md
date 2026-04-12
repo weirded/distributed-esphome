@@ -6,8 +6,15 @@ Theme: **ESPHome dashboard parity.** Every feature the stock ESPHome UI has, thi
 
 ## Web Serial Flashing
 
-- [ ] **3.2a Web Serial flashing** — esp-web-tools integration, manifest endpoint
-- [ ] **3.2b Server serial flashing** — list ports on HA host, esptool.py flash endpoint
+The right integration target is **[`esphome/esp-web-tools`](https://github.com/esphome/esp-web-tools)** (the same package `web.esphome.io` is built on), **not** `espressif/esptool-js` directly. `esp-web-tools` wraps `esptool-js: ^0.5.7` in a drop-in `<esp-web-install-button>` custom element that takes a `manifest` attribute pointing at a JSON manifest describing the firmware binaries and offsets. We get the Chrome Web Serial flashing + progress UI + error handling for free; our job is just the manifest endpoint.
+
+**Prerequisite:** 1.4's firmware download work (CD section / 3.1a-c equivalents in 1.4) must land first — it's what produces the `.bin` files the manifest points at. Without it, there's nothing to flash.
+
+- [ ] **3.2a.1 Firmware manifest endpoint** — `GET /ui/api/targets/{f}/manifest.json` returns an `esp-web-tools`-shaped manifest: `{name, version, home_assistant_domain, new_install_prompt_erase, builds: [{chipFamily, parts: [{path, offset}]}]}`. `path` points at the existing firmware download endpoint from 1.4. Chip family is read from the target's YAML (`esphome.platform` + board → chip family mapping). Document the manifest format version we target in a module-level constant.
+- [ ] **3.2a.2 `<esp-web-install-button>` integration** — install `esp-web-tools` as a frontend dep. Drop the custom element into a new "Install via USB" modal (or the existing device row hamburger menu → "Flash via USB"). Wire its `manifest` attribute to the manifest endpoint from 3.2a.1. Handle the `state-changed` events it emits to surface progress in our own toast/log UI instead of its default rendering. Check bundle size impact — `esptool-js` + deps aren't tiny.
+- [ ] **3.2a.3 Chrome/Edge detection + graceful fallback** — Web Serial is Chromium-only. If `navigator.serial` is undefined, disable the button and show a tooltip explaining why (matches the **Disable, don't fail** design judgment rule). Playwright e2e test asserts the button is disabled on Firefox/WebKit.
+- [ ] **3.2a.4 E2E mocked test** — at minimum verify the button appears on device rows, opens the modal, and the manifest endpoint returns the correct shape. Actual flashing can't be e2e-tested without a real device — document this as a manual verification step in the release checklist.
+- [ ] **3.2b Server serial flashing** — list ports on HA host, esptool.py flash endpoint. Alternative to Web Serial for the HA host itself (where Chrome isn't an option). Keep this separate from 3.2a — different code path, different security model.
 
 ## Web Serial Logs
 

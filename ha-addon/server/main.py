@@ -305,32 +305,37 @@ async def ha_entity_poller(app: web.Application) -> None:
                         "Template API call failed", exc_info=True,
                     )
 
-                # 1b. Get MAC + device_id for ESPHome devices via template API.
+                # 1b. Get MAC + device_id + entity_id for ESPHome devices via template API.
                 # ESPHome devices store MACs in device connections (not identifiers):
                 #   connections = [["mac", "50:02:91:3c:11:43"]]
                 # #35: we also grab the HA device_id so the UI can build a
                 # deep-link to /config/devices/device/<id>.
+                # #41: returns one row per entity so we can build
+                # entity_id→device_id AND name→device_id fallbacks for
+                # offline devices where the poller may not have a MAC.
                 ha_mac_set: set[str] = set()
                 ha_mac_to_device_id: dict[str, str] = {}
+                entity_to_device_id: dict[str, str] = {}
                 if esphome_entity_ids:
                     try:
                         tmpl = (
-                            "{%- set ns = namespace(pairs=[], seen=[]) -%}"
+                            "{%- set ns = namespace(rows=[]) -%}"
                             "{%- for eid in integration_entities('esphome') -%}"
                             "  {%- set did = device_id(eid) -%}"
-                            "  {%- if did and did not in ns.seen -%}"
-                            "    {%- set ns.seen = ns.seen + [did] -%}"
+                            "  {%- if did -%}"
                             "    {%- set conns = device_attr(did, 'connections') -%}"
+                            "    {%- set mac = none -%}"
                             "    {%- if conns -%}"
                             "      {%- for conn in conns -%}"
                             "        {%- if conn[0] == 'mac' -%}"
-                            "          {%- set ns.pairs = ns.pairs + [[conn[1], did]] -%}"
+                            "          {%- set mac = conn[1] -%}"
                             "        {%- endif -%}"
                             "      {%- endfor -%}"
                             "    {%- endif -%}"
+                            "    {%- set ns.rows = ns.rows + [[eid, did, mac]] -%}"
                             "  {%- endif -%}"
                             "{%- endfor -%}"
-                            "{{ ns.pairs | tojson }}"
+                            "{{ ns.rows | tojson }}"
                         )
                         async with session.post(
                             "http://supervisor/core/api/template",
@@ -344,10 +349,15 @@ async def ha_entity_poller(app: web.Application) -> None:
                                     parsed = _json.loads(raw_pairs)
                                     if isinstance(parsed, list):
                                         for item in parsed:
-                                            if isinstance(item, list) and len(item) == 2:
-                                                mac_lc = str(item[0]).lower()
+                                            if not isinstance(item, list) or len(item) != 3:
+                                                continue
+                                            eid, did, mac = item
+                                            did_str = str(did)
+                                            entity_to_device_id[str(eid)] = did_str
+                                            if mac:
+                                                mac_lc = str(mac).lower()
                                                 ha_mac_set.add(mac_lc)
-                                                ha_mac_to_device_id[mac_lc] = str(item[1])
+                                                ha_mac_to_device_id[mac_lc] = did_str
                                 except (_json.JSONDecodeError, TypeError):
                                     pass
                     except Exception:
@@ -387,22 +397,32 @@ async def ha_entity_poller(app: web.Application) -> None:
             # ESPHome entities follow the pattern: <domain>.<device_name>_<entity_suffix>
             # We collect all unique prefixes by stripping the domain and finding the
             # longest prefix that matches a connectivity key, or the full local part.
+            # #41: also build a norm_name → device_id map so offline devices
+            # (which may not have a MAC in the poller) can still get a deep link.
             esphome_device_names: set[str] = set()
+            ha_name_to_device_id: dict[str, str] = {}
             for eid in esphome_entity_ids:
                 if "." not in eid:
                     continue
                 local = eid.split(".", 1)[1]  # e.g. "nespresso_machine_temperature"
                 # Check if any connectivity key is a prefix of this entity
+                matched_name: str | None = None
                 for conn_name in connectivity:
                     if local == conn_name or local.startswith(conn_name + "_"):
                         esphome_device_names.add(conn_name)
+                        matched_name = conn_name
                         break
-                else:
+                if matched_name is None:
                     # No connectivity match — try to derive device name from entity ID.
                     # The _status entity would be the definitive prefix, but it may not
                     # exist. Store the full local as a candidate; _ha_status_for_target
                     # will match by prefix.
                     esphome_device_names.add(local)
+                    matched_name = local
+                # Record device_id keyed by the name prefix we'll use for matching.
+                did = entity_to_device_id.get(eid)
+                if did and matched_name not in ha_name_to_device_id:
+                    ha_name_to_device_id[matched_name] = did
 
             # All connectivity-matched devices get configured=True + connected state
             for name in connectivity:
@@ -417,6 +437,7 @@ async def ha_entity_poller(app: web.Application) -> None:
             app["ha_entity_status"].update(ha_status)
             app["ha_mac_set"] = ha_mac_set
             app["ha_mac_to_device_id"] = ha_mac_to_device_id
+            app["ha_name_to_device_id"] = ha_name_to_device_id
 
             # A full successful poll resets the suppression state so the next
             # transient failure gets its warning re-promoted.

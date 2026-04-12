@@ -715,3 +715,45 @@ def test_duplicate_device_no_esphome_block(tmp_path):
     data = yaml.safe_load(result)
     assert data["esphome"]["name"] == "new-device"
     assert data["wifi"]["ssid"] == "home"
+
+
+def test_duplicate_device_preserves_include_tags(tmp_path):
+    """#43: !include / !secret / custom ESPHome tags survive the round-trip."""
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "esphome:\n  name: device\n"
+        "packages:\n"
+        "  common: !include .common.yaml\n"
+        "  athom: !include .athom-plug.yaml\n"
+        "wifi:\n"
+        "  ap:\n"
+        "    password: !secret ap_password\n"
+    )
+
+    result = duplicate_device(str(tmp_path), "src.yaml", "new-device")
+    # name was rewritten
+    assert "name: new-device" in result
+    # All three custom tags preserved (we can't use yaml.safe_load to verify
+    # because that's exactly what used to choke — string-match the output).
+    assert "!include '.common.yaml'" in result or "!include .common.yaml" in result
+    assert "!include '.athom-plug.yaml'" in result or "!include .athom-plug.yaml" in result
+    assert "!secret 'ap_password'" in result or "!secret ap_password" in result
+
+
+def test_duplicate_device_preserves_includes_with_substitution_rewrite(tmp_path):
+    """Combined: substitution rewrite + !include preservation."""
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "substitutions:\n  name: old\n"
+        "packages:\n"
+        "  common: !include .common.yaml\n"
+        "esphome:\n  name: ${name}\n"
+    )
+
+    result = duplicate_device(str(tmp_path), "src.yaml", "fresh")
+    # substitution rewritten
+    assert "name: fresh" in result
+    # esphome.name still references the substitution
+    assert "name: ${name}" in result
+    # include preserved
+    assert "!include" in result

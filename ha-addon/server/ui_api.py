@@ -162,6 +162,7 @@ def _ha_status_for_target(
     device_mac: str | None = None,
     ha_mac_set: set[str] | None = None,
     ha_mac_to_device_id: dict[str, str] | None = None,
+    ha_name_to_device_id: dict[str, str] | None = None,
 ) -> tuple[bool, bool | None, str | None]:
     """Return (ha_configured, ha_connected, ha_device_id) for a compile target.
 
@@ -172,9 +173,10 @@ def _ha_status_for_target(
 
     Returns (False, None, None) when no match is found.
 
-    #35: ha_device_id is resolved when a MAC match succeeds, so the UI can
-    deep-link to /config/devices/device/<id>. Non-MAC matches don't yield an
-    id because we only build the mac→id map from HA's device registry.
+    #35: ha_device_id is resolved via MAC match (most reliable).
+    #41: falls back to the ha_name_to_device_id map (built from HA entity IDs)
+    when no MAC is available — e.g. offline devices that the local mDNS/API
+    poller can't reach right now.
     """
     # 1. MAC address match (authoritative — doesn't depend on naming)
     #    HA connections store MACs as "aa:bb:cc:dd:ee:ff" (lowercase with colons).
@@ -201,18 +203,28 @@ def _ha_status_for_target(
         candidates.append(_normalize_for_ha(raw_name))
     candidates.append(_normalize_for_ha(target.replace(".yaml", "")))
 
+    # Helper: fall back to name-based device_id lookup when we don't have
+    # one from the MAC path. Offline devices commonly land here because the
+    # local poller has no MAC for them right now.
+    def _resolve_id(match_name: str) -> str | None:
+        if ha_device_id:
+            return ha_device_id
+        if ha_name_to_device_id:
+            return ha_name_to_device_id.get(match_name)
+        return None
+
     # Direct lookup
     for norm_name in candidates:
         entry = ha_entity_status.get(norm_name)
         if entry:
-            return True, entry.get("connected"), ha_device_id
+            return True, entry.get("connected"), _resolve_id(norm_name)
 
     # Prefix match
     for norm_name in candidates:
         prefix = norm_name + "_"
         for key, entry in ha_entity_status.items():
             if key.startswith(prefix) or key == norm_name:
-                return True, entry.get("connected"), ha_device_id
+                return True, entry.get("connected"), _resolve_id(key)
 
     # 3. MAC fragment match — some devices register with HA using internal names
     #    that include MAC fragments (e.g. screek_humen_sensor_1u_c76926 contains
@@ -222,7 +234,7 @@ def _ha_status_for_target(
         if mac_suffix and len(mac_suffix) == 6:
             for key, entry in ha_entity_status.items():
                 if mac_suffix in key:
-                    return True, entry.get("connected"), ha_device_id
+                    return True, entry.get("connected"), _resolve_id(key)
 
     # 4. If MAC confirmed via HA device identifiers but name didn't match
     if mac_confirmed:
@@ -240,6 +252,7 @@ async def get_targets(request: web.Request) -> web.Response:
     ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
     ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
     ha_mac_to_device_id: dict[str, str] = request.app.get("ha_mac_to_device_id", {})
+    ha_name_to_device_id: dict[str, str] = request.app.get("ha_name_to_device_id", {})
 
     targets = scan_configs(cfg.config_dir)
 
@@ -279,6 +292,7 @@ async def get_targets(request: web.Request) -> web.Response:
         ha_configured, ha_connected, ha_device_id = _ha_status_for_target(
             ha_entity_status, target, meta, device_mac=device_mac,
             ha_mac_set=ha_mac_set, ha_mac_to_device_id=ha_mac_to_device_id,
+            ha_name_to_device_id=ha_name_to_device_id,
         )
 
         # 4.2c: Use HA connected state as additional online signal.
@@ -539,6 +553,7 @@ async def get_devices(request: web.Request) -> web.Response:
     ha_entity_status: dict[str, dict] = request.app.get("ha_entity_status", {})
     ha_mac_set: set[str] = request.app.get("ha_mac_set", set())
     ha_mac_to_device_id: dict[str, str] = request.app.get("ha_mac_to_device_id", {})
+    ha_name_to_device_id: dict[str, str] = request.app.get("ha_name_to_device_id", {})
 
     if not device_poller:
         return web.json_response([])
@@ -564,6 +579,7 @@ async def get_devices(request: web.Request) -> web.Response:
             device_mac=dev.mac_address,
             ha_mac_set=ha_mac_set,
             ha_mac_to_device_id=ha_mac_to_device_id,
+            ha_name_to_device_id=ha_name_to_device_id,
         )
         d["ha_configured"] = ha_configured
         d["ha_connected"] = ha_connected

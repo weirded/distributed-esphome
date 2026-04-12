@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import {
   cancelJobs,
@@ -176,6 +176,12 @@ export default function App() {
   // CD.4-CD.6: shared "create / duplicate" modal state. null = closed, object = open.
   // sourceTarget is set when duplicating an existing device.
   const [newDeviceModal, setNewDeviceModal] = useState<{ mode: 'new' | 'duplicate'; sourceTarget?: string } | null>(null);
+  // #42: targets that were just created via the NewDeviceModal and haven't
+  // been saved yet. If the editor closes without a successful save, the
+  // stub/duplicated file is deleted so cancelled-out creates don't leave
+  // orphan YAMLs behind. Use a ref so synchronous onClose callbacks in the
+  // editor see the latest value.
+  const unsavedNewTargetsRef = useRef<Set<string>>(new Set());
 
   // Apply theme to <html> element on mount and on change
   useEffect(() => {
@@ -599,7 +605,24 @@ export default function App() {
       {editorTarget && (
         <EditorModal
           target={editorTarget}
-          onClose={() => { setEditorTarget(null); mutateDevices(); }}
+          // #42: on close, if this target was a just-created (unsaved) new
+          // device, delete the stub file so cancelling out doesn't leave
+          // an orphan YAML behind. onSaved fires first for successful saves
+          // and removes the target from the unsaved set, so a saved close
+          // won't trip the delete.
+          onClose={() => {
+            const closed = editorTarget;
+            setEditorTarget(null);
+            if (closed && unsavedNewTargetsRef.current.has(closed)) {
+              unsavedNewTargetsRef.current.delete(closed);
+              deleteTarget(closed, false).catch((err: Error) => {
+                addToast('Cleanup of unsaved new device failed: ' + err.message, 'error');
+              }).finally(() => mutateDevices());
+            } else {
+              mutateDevices();
+            }
+          }}
+          onSaved={(target) => { unsavedNewTargetsRef.current.delete(target); }}
           onToast={addToast}
           onValidate={handleValidate}
           // #18: Save & Upgrade now goes through the same UpgradeModal as
@@ -697,6 +720,9 @@ export default function App() {
           onCreate={(target) => {
             setNewDeviceModal(null);
             mutateDevices();
+            // #42: remember this target is unsaved — if the editor closes
+            // without a successful save we'll delete the file.
+            unsavedNewTargetsRef.current.add(target);
             // Open the editor on the new target so the user can add content.
             setEditorTarget(target);
           }}

@@ -100,7 +100,62 @@ _config_cache: dict[str, tuple[float, dict]] = {}  # target → (mtime, resolved
 
 # ---------------------------------------------------------------------------
 # Create / duplicate device helpers (CD.1 / CD.2)
+#
+# #43: ESPHome YAMLs use custom tags like ``!include``, ``!secret``, ``!extend``,
+# ``!remove``, and ``!lambda`` that stdlib ``yaml.safe_load`` refuses to parse
+# ("could not determine a constructor for the tag '!include'"). For duplicate
+# we want a plain round-trip that preserves these tags, so we build a custom
+# SafeLoader + SafeDumper pair that represents any ``!tag`` as a ``_Tagged``
+# opaque wrapper and re-emits it on dump.
 # ---------------------------------------------------------------------------
+
+
+class _Tagged:
+    """Opaque wrapper that preserves a YAML tag (e.g. ``!include``) on round-trip."""
+
+    __slots__ = ("tag", "value")
+
+    def __init__(self, tag: str, value: object) -> None:
+        self.tag = tag
+        self.value = value
+
+    def __repr__(self) -> str:
+        return f"_Tagged({self.tag!r}, {self.value!r})"
+
+
+def _build_tag_preserving_yaml():
+    """Return a (Loader, Dumper) pair that preserves arbitrary ``!tag`` markers.
+
+    Lazy import + closure so we only pay the yaml import cost on create/dup.
+    """
+    import yaml  # noqa: PLC0415
+
+    class _TagPreservingLoader(yaml.SafeLoader):
+        pass
+
+    class _TagPreservingDumper(yaml.SafeDumper):
+        pass
+
+    def _construct_tagged(loader, tag_suffix, node):
+        tag = node.tag
+        if isinstance(node, yaml.ScalarNode):
+            return _Tagged(tag, loader.construct_scalar(node))
+        if isinstance(node, yaml.SequenceNode):
+            return _Tagged(tag, loader.construct_sequence(node, deep=True))
+        return _Tagged(tag, loader.construct_mapping(node, deep=True))
+
+    def _represent_tagged(dumper, data):
+        if isinstance(data.value, list):
+            return dumper.represent_sequence(data.tag, data.value)
+        if isinstance(data.value, dict):
+            return dumper.represent_mapping(data.tag, data.value)
+        return dumper.represent_scalar(data.tag, str(data.value))
+
+    # Multi-constructor with prefix "!" catches !include, !secret, !lambda, etc.
+    _TagPreservingLoader.add_multi_constructor("!", _construct_tagged)
+    _TagPreservingDumper.add_representer(_Tagged, _represent_tagged)
+
+    return _TagPreservingLoader, _TagPreservingDumper
 
 
 def create_stub_yaml(name: str) -> str:
@@ -126,6 +181,9 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
     source, we rewrite the substitution instead so the indirection is
     preserved. Raises FileNotFoundError if the source doesn't exist or
     ValueError if the source is not a parseable YAML mapping.
+
+    #43: custom ``!include``/``!secret``/... tags are preserved on
+    round-trip via a tag-preserving Loader/Dumper pair.
     """
     import yaml  # noqa: PLC0415
 
@@ -133,9 +191,11 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
     if not src_path.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
 
+    Loader, Dumper = _build_tag_preserving_yaml()
+
     content = src_path.read_text(encoding="utf-8")
     try:
-        data = yaml.safe_load(content)
+        data = yaml.load(content, Loader=Loader)  # noqa: S506 — custom SafeLoader subclass
     except yaml.YAMLError as e:
         raise ValueError(f"Source YAML is not parseable: {e}") from e
 
@@ -160,7 +220,7 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
     else:
         data["esphome"] = {"name": new_name}
 
-    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    return yaml.dump(data, Dumper=Dumper, sort_keys=False, default_flow_style=False)
 
 
 # ---------------------------------------------------------------------------

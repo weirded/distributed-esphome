@@ -9,7 +9,7 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import type { Target, Worker } from '../types';
-import { stripYaml, timeAgo } from '../utils';
+import { stripYaml, timeAgo, formatCronHuman } from '../utils';
 import { Button } from './ui/button';
 import { deleteTargetSchedule } from '../api/client';
 
@@ -106,10 +106,20 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
       header: ({ column }) => <SortHeader label="Schedule" column={column} />,
       cell: ({ row: { original: t } }) => {
         const enabled = t.schedule_enabled !== false;
-        const humanSchedule = t.schedule || (t.schedule_once ? `Once: ${new Date(t.schedule_once).toLocaleString()}` : '—');
+        // #40: use humanized cron for recurring schedules and a local-time
+        // format for one-time. Render in the default (proportional) table
+        // font to match the other columns — previously forced monospace.
+        let label: string;
+        if (t.schedule_once && !t.schedule) {
+          label = `Once: ${new Date(t.schedule_once).toLocaleString()}`;
+        } else if (t.schedule) {
+          label = formatCronHuman(t.schedule) ?? t.schedule;
+        } else {
+          label = '—';
+        }
         return (
-          <span style={{ fontFamily: 'monospace', opacity: enabled ? 1 : 0.5 }}>
-            {humanSchedule}
+          <span style={{ opacity: enabled ? 1 : 0.5 }} title={t.schedule ?? undefined}>
+            {label}
             {!enabled && t.schedule && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>(paused)</span>}
           </span>
         );

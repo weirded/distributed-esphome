@@ -6,6 +6,42 @@ export function timeAgo(isoString: string): string {
 }
 
 /**
+ * Format a 5-field cron expression as a human-readable string.
+ *
+ * Recognises the preset patterns produced by the UpgradeModal's cron builder:
+ * "every Nh", "Daily HH:MM", "<Weekday> HH:MM", "<N>th HH:MM". Falls back to
+ * the raw cron string for anything more exotic. Used by the Schedule column
+ * in both DevicesTab and SchedulesTab (#40) so both tabs display schedules
+ * identically.
+ */
+export function formatCronHuman(cron: string | null | undefined): string | null {
+  if (!cron) return null;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return cron;
+  const [min, hour, dom, _mon, dow] = parts;
+  void _mon;
+
+  if (min === '0' && hour.startsWith('*/')) {
+    const n = parseInt(hour.slice(2), 10);
+    return n === 1 ? 'Hourly' : `Every ${n}h`;
+  }
+  if (dom === '*' && dow === '*' && !hour.includes('/') && !min.includes('/')) {
+    return `Daily ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  }
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (dom === '*' && dow !== '*' && !hour.includes('/')) {
+    const dayNum = parseInt(dow, 10);
+    const day = dayNames[dayNum] ?? dow;
+    return `${day} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  }
+  if (dom !== '*' && dow === '*' && !hour.includes('/')) {
+    const suffix = dom === '1' ? 'st' : dom === '2' ? 'nd' : dom === '3' ? 'rd' : 'th';
+    return `${dom}${suffix} ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+  }
+  return cron;
+}
+
+/**
  * Build an absolute URL for a Home Assistant deep-link (#35).
  *
  * When the add-on is loaded via HA Ingress (the primary deployment), the
