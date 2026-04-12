@@ -42,6 +42,30 @@ The existing `tags` field landed in 1.4.0-dev.2 as a simple list of strings — 
 - [ ] **DO.7 Bulk tag operations** — extend multi-select on the Devices tab: "Set tag…" (prompts for key+value, applies to all selected via `Promise.all`), "Remove tag…" (prompts for key, removes from all selected). Single summary toast per bulk action.
 - [ ] **DO.8 Bulk delete + bulk validate** *(formerly 6.6)* — extend multi-select: bulk delete and bulk validate alongside the existing bulk upgrade.
 
+## Create Device
+
+Minimal "new" + "duplicate" flow. Deliberately simple: no platform/board/WiFi wizard (that can come later in 1.7 if it earns its keep). The whole interaction is one shared modal + the existing editor.
+
+**Shared modal:** single text input "Device filename" with `.yaml` auto-appended, Save/Cancel buttons. Used by both entry points. Validates: non-empty, no path separators, no collision with existing file, matches `^[a-z0-9][a-z0-9-]*$` (ESPHome name constraint).
+
+**New device flow:**
+1. "+ New Device" button at the top of the Devices tab (next to the bulk action dropdowns)
+2. Opens the shared modal
+3. On save: server writes a minimal stub YAML with `esphome: { name: <filename-without-extension> }` pre-filled, then UI opens the editor on the new file
+
+**Duplicate device flow:**
+1. "Duplicate…" item in the per-row hamburger menu
+2. Opens the shared modal pre-filled with `<source>-copy` as the default name
+3. On save: server reads the source file, rewrites the top-level `esphome.name` to match the new filename, writes to the new path, then UI opens the editor on the new file
+
+- [x] **CD.1 Minimal stub generator** *(1.4.0-dev.22)* — `scanner.create_stub_yaml(name)` uses `yaml.safe_dump` (PY-1) and appends a `# Add board, platform, and components here.` guidance comment. Three unit tests: name round-trips through `safe_load`, the output parses cleanly, and the guidance comment is present.
+- [x] **CD.2 Duplicate helper** *(1.4.0-dev.22)* — `scanner.duplicate_device(config_dir, source, new_name)` reads source, rewrites `esphome.name`, and when `name` is a `${substitution}` reference it rewrites the substitution entry instead — so files that indirect through `substitutions.name` keep the indirection intact. Raises `FileNotFoundError`/`ValueError` on bad input. Documented that `safe_dump` drops comments (deliberate). Six unit tests covering: simple name rewrite, field preservation, substitution rewrite, missing source, invalid YAML, source without esphome block.
+- [x] **CD.3 Create endpoint** *(1.4.0-dev.22)* — `POST /ui/api/targets` body `{filename, source?}`. Strips optional `.yaml` suffix, validates slug regex `^[a-z0-9][a-z0-9-]*$` + max-64-char length, uses `safe_resolve` to block path traversal, rejects collision, dispatches to `create_stub_yaml` or `duplicate_device`, writes the file, and returns `{target: "<name>.yaml", ok: true}`. Seven server-side integration tests (stub, .yaml normalization, collision, path traversal, invalid slug, duplicate, missing source).
+- [x] **CD.4 NewDeviceModal** *(1.4.0-dev.22)* — new `src/components/NewDeviceModal.tsx`. Props: `mode: 'new' | 'duplicate'`, `sourceTarget?`, `existingTargets`, `onCreate`, `onClose`, `onToast`. Client-side slug validation matches the server regex + checks for collision against the known target list, with inline error. Enter key submits when valid. Button label dynamic: `Create` vs `Duplicate`.
+- [x] **CD.5 "+ New Device" button** *(1.4.0-dev.22)* — placed in the Devices tab toolbar `.actions` div next to the Upgrade dropdown. Opens the modal in `mode="new"`.
+- [x] **CD.6 "Duplicate…" hamburger item** *(1.4.0-dev.22)* — added to the per-row device context menu under the Config section, next to Rename. Opens the modal in `mode="duplicate"` with the source target name pre-filled as `<source>-copy`.
+- [x] **CD.7 E2E coverage** *(1.4.0-dev.22)* — `ha-addon/ui/e2e/create-device.spec.ts` adds six mocked tests: toolbar button opens modal; new-device flow creates + opens editor; slug validation blocks uppercase/underscores; collision with an existing target disables the Create button; hamburger Duplicate item opens the modal with pre-filled `<source>-copy`; duplicate flow creates + opens editor. Full mocked suite now runs 43 tests (was 37). Fixture mock for `POST /ui/api/targets` echoes the requested filename back so the editor opens on the correct target.
+
 ## Scheduled Upgrades ([#30](https://github.com/weirded/distributed-esphome/issues/30))
 
 Per-device cron scheduler for automatic compile+OTA. Schedule is stored in the device's `# distributed-esphome:` comment block (`schedule: 0 2 * * 0`, `schedule_enabled: true`), not a separate file. The server's `schedule_checker()` background task fires every 60s, computes next run via `croniter`, and enqueues jobs when due. Respects version pinning.
@@ -57,6 +81,14 @@ Per-device cron scheduler for automatic compile+OTA. Schedule is stored in the d
 - [x] **SU.5 Schedule create modal** *(1.4.0-dev.2)* — `ScheduleModal.tsx`: preset dropdown (Daily 2am, Weekly Sunday 2am, Monthly 1st 2am, Every 6h, Every 12h) + "Custom" raw cron input + enabled toggle + Save/Remove/Cancel. Opened from the device hamburger menu ("Schedule Upgrade...").
 - [x] **SU.4 Schedules overview** *(1.4.0-dev.9)* — new "Schedules" tab next to Devices/Queue/Workers. Shows a table of all scheduled devices with columns: Device, Schedule (cron or one-time datetime), Status (Active/Paused/One-time), Next/Last Run, Version (with 📌 for pinned), Worker. Clicking a row opens the ScheduleModal for that device. Empty state explains how to set up a schedule. Tab badge shows count of devices with any schedule.
 - [ ] **SU.6 History** — last N runs per schedule with success/fail counts linking back to queue entries. (Currently the job's `scheduled: true` flag identifies scheduler runs in the queue, but there's no aggregated history view.)
+- [ ] **SU.7 Harden the scheduler loop** — replace the 60s fixed-tick `schedule_checker()` with a next-fire-driven loop. Reviewed APScheduler and aiocron as alternatives; decided against both. APScheduler would introduce a second source of truth alongside the YAML comment (its job registry), defeating the point of storing schedules in the config itself; its misfire tracking and next-fire cache would reset every time we rebuilt jobs from YAML on scan. aiocron is a thin wrapper around `croniter` that buys us nothing we don't already have. Keeping DIY preserves the single source of truth and matches the 1.3.1 hardening ethos (harden with tests rather than library substitution). Concrete changes:
+  - **Next-fire-driven sleep** — on each wake, compute next fire time for every enabled schedule, sleep until the earliest one (capped at 60s so config changes land promptly). Eliminates the up-to-60s delay between when a schedule is due and when it fires.
+  - **Sub-minute resolution** — naturally falls out of the next-fire sleep. Tests that advance a frozen clock to verify a `*/1 * * * *` schedule fires at 60s intervals exactly.
+  - **Jitter** — optional `schedule_jitter_seconds: 120` per-device meta that offsets the fire time by a random ±N seconds. When 50 devices are all `0 2 * * *`, this spreads them across 2 minutes instead of thundering-herd enqueueing in one tick.
+  - **Misfire grace window** — explicit `schedule_misfire_grace_seconds` (default 300). If the server was down and `now > next_fire + grace`, log it and skip (don't fire late); if within grace, fire once and skip the intermediate missed fires (matches current behavior, made explicit).
+  - **In-memory next-fire cache** — dict `{target: next_fire_datetime}` rebuilt on config scan and on any `/ui/api/targets/{f}/schedule` mutation. O(1) lookup for the Schedules tab "next run" column instead of recomputing on every `/ui/api/targets` request.
+  - **History ring buffer** — in-memory `{target: [(fired_at, job_id, outcome)] * N}` populated by the scheduler on enqueue and by a job completion listener. Powers SU.6 without adding persistence (history survives until server restart, which is acceptable for a "did Sunday 2am fire?" debugging view).
+  - **Tests** — `tests/test_scheduler.py`: frozen-clock advances through cron ticks and asserts correct fire times; misfire grace boundaries; jitter is within bounds; next-fire cache stays consistent with YAML edits; history ring buffer caps at N. Follows the B.3 `test_check_timeouts_behavior_is_purely_deadline_based` pattern — pure deadline-vs-clock assertions, no sleep.
 
 ## Build Operations
 

@@ -296,6 +296,29 @@ export async function deleteArchivedConfig(filename: string): Promise<void> {
   }
 }
 
+/**
+ * Create a new YAML target (CD.3). Without ``source``, creates a minimal
+ * stub YAML. With ``source``, duplicates the source file and rewrites
+ * ``esphome.name`` to the new filename. Returns the created target name
+ * (e.g. "kitchen.yaml").
+ */
+export async function createTarget(
+  filename: string,
+  source?: string,
+): Promise<string> {
+  const body: Record<string, string> = { filename };
+  if (source) body.source = source;
+  const r = await apiFetch('./ui/api/targets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({})) as { target?: string; error?: string };
+  if (!r.ok) throw new Error(data.error || String(r.status));
+  if (!data.target) throw new Error('Server did not return a target name');
+  return data.target;
+}
+
 export async function deleteTarget(filename: string, archive = true): Promise<void> {
   const r = await apiFetch(
     `./ui/api/targets/${encodeURIComponent(filename)}?archive=${archive}`,

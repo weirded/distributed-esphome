@@ -1,11 +1,8 @@
 # Work Items — 1.7.0
 
-Theme: **ESPHome dashboard parity.** Every feature the stock ESPHome UI has, this has too. Create devices, flash over serial, tail logs after OTA, adopt discovered devices. Also: remote compilation for cloud-based build workers.
+Theme: **ESPHome dashboard parity.** Every feature the stock ESPHome UI has, this has too. Serial flashing, tail logs after OTA, adopt discovered devices. Also: remote compilation for cloud-based build workers.
 
-## Create Device
-
-- [ ] **2.1a Create device: empty template** — wizard modal with name, platform, board, WiFi from secrets
-- [ ] **2.1b Create device: clone existing** — duplicate a config with new name
+(Minimal "new device" + "duplicate device" landed in 1.4.0 — see `WORKITEMS-1.4.md`. The full wizard with platform/board/WiFi selection remains here if we decide it adds value over the minimal stub + editor flow.)
 
 ## Web Serial Flashing
 

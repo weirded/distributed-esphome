@@ -674,3 +674,111 @@ async def test_worker_clean_cache_sets_pending_flag(tmp_path):
         assert ta.registry.get(client_id).pending_clean is True
     finally:
         await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# POST /ui/api/targets — CD.3 (create + duplicate device)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_target_stub(tmp_path):
+    """POST /ui/api/targets with no source creates a stub YAML."""
+    import yaml
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.post("/ui/api/targets", json={"filename": "kitchen"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["target"] == "kitchen.yaml"
+        # File on disk has the expected content
+        created = ta.config_dir / "kitchen.yaml"
+        assert created.exists()
+        parsed = yaml.safe_load(created.read_text())
+        assert parsed["esphome"]["name"] == "kitchen"
+    finally:
+        await ta.close()
+
+
+async def test_create_target_accepts_yaml_extension(tmp_path):
+    """filename='kitchen.yaml' is normalised and accepted."""
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.post("/ui/api/targets", json={"filename": "kitchen.yaml"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["target"] == "kitchen.yaml"
+    finally:
+        await ta.close()
+
+
+async def test_create_target_rejects_collision(tmp_path):
+    """Creating a filename that already exists returns 400."""
+    ta = await _make_ui_app(tmp_path)
+    try:
+        (ta.config_dir / "existing.yaml").write_text("esphome:\n  name: existing\n")
+        resp = await ta.post("/ui/api/targets", json={"filename": "existing"})
+        assert resp.status == 400
+        body = await resp.json()
+        assert "already exists" in body["error"]
+    finally:
+        await ta.close()
+
+
+async def test_create_target_rejects_path_traversal(tmp_path):
+    """A filename containing slashes is rejected by the slug regex."""
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.post("/ui/api/targets", json={"filename": "../etc/passwd"})
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+async def test_create_target_rejects_invalid_slug(tmp_path):
+    """Underscores, uppercase, spaces all rejected by the slug regex."""
+    ta = await _make_ui_app(tmp_path)
+    try:
+        for bad in ("Kitchen", "my_device", "device 1", "-leading-hyphen", ""):
+            resp = await ta.post("/ui/api/targets", json={"filename": bad})
+            assert resp.status == 400, f"expected 400 for {bad!r}"
+    finally:
+        await ta.close()
+
+
+async def test_create_target_duplicate(tmp_path):
+    """POST /ui/api/targets with source duplicates and rewrites esphome.name."""
+    import yaml
+    ta = await _make_ui_app(tmp_path)
+    try:
+        (ta.config_dir / "source.yaml").write_text(
+            "esphome:\n  name: original\n  comment: Hello\n"
+            "wifi:\n  ssid: home\n"
+        )
+        resp = await ta.post(
+            "/ui/api/targets",
+            json={"filename": "copy", "source": "source.yaml"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["target"] == "copy.yaml"
+
+        created = ta.config_dir / "copy.yaml"
+        parsed = yaml.safe_load(created.read_text())
+        assert parsed["esphome"]["name"] == "copy"
+        assert parsed["esphome"]["comment"] == "Hello"
+        assert parsed["wifi"]["ssid"] == "home"
+    finally:
+        await ta.close()
+
+
+async def test_create_target_duplicate_missing_source(tmp_path):
+    """Duplicating from a non-existent source returns 404."""
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.post(
+            "/ui/api/targets",
+            json={"filename": "new", "source": "nonexistent.yaml"},
+        )
+        assert resp.status == 404
+    finally:
+        await ta.close()

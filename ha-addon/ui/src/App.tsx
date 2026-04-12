@@ -31,6 +31,7 @@ import {
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
 import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
+import { NewDeviceModal } from './components/NewDeviceModal';
 import { UpgradeModal } from './components/UpgradeModal';
 // ScheduleModal retired in #22 — absorbed into the unified UpgradeModal.
 import { SchedulesTab } from './components/SchedulesTab';
@@ -172,6 +173,9 @@ export default function App() {
   // #22: unified Upgrade modal. Stores target + display name + which mode to open in.
   const [upgradeModalTarget, setUpgradeModalTarget] = useState<{ target: string; displayName: string; defaultMode: 'now' | 'schedule' } | null>(null);
   const [renameModalTarget, setRenameModalTarget] = useState<string | null>(null);
+  // CD.4-CD.6: shared "create / duplicate" modal state. null = closed, object = open.
+  // sourceTarget is set when duplicating an existing device.
+  const [newDeviceModal, setNewDeviceModal] = useState<{ mode: 'new' | 'duplicate'; sourceTarget?: string } | null>(null);
 
   // Apply theme to <html> element on mount and on change
   useEffect(() => {
@@ -529,6 +533,8 @@ export default function App() {
             onDelete={handleDeleteDevice}
             onRename={handleRenameDevice}
             onSchedule={(t) => handleOpenUpgradeModal(t, 'schedule')}
+            onNewDevice={() => setNewDeviceModal({ mode: 'new' })}
+            onDuplicate={(sourceTarget) => setNewDeviceModal({ mode: 'duplicate', sourceTarget })}
             onRefresh={() => mutateDevices()}
           />
         )}
@@ -680,6 +686,22 @@ export default function App() {
             handleRenameDevice(t, newName);
           }}
           onClose={() => setRenameModalTarget(null)}
+        />
+      )}
+
+      {newDeviceModal && (
+        <NewDeviceModal
+          mode={newDeviceModal.mode}
+          sourceTarget={newDeviceModal.sourceTarget}
+          existingTargets={targets.map(t => t.target)}
+          onCreate={(target) => {
+            setNewDeviceModal(null);
+            mutateDevices();
+            // Open the editor on the new target so the user can add content.
+            setEditorTarget(target);
+          }}
+          onClose={() => setNewDeviceModal(null)}
+          onToast={addToast}
         />
       )}
     </>

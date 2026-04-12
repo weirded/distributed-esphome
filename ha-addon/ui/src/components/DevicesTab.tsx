@@ -100,6 +100,10 @@ interface Props {
   onDelete: (target: string, archive: boolean) => void;
   onRename: (oldTarget: string, newName: string) => void;
   onSchedule: (target: string) => void;
+  /** CD.5: open the NewDeviceModal in "new" mode (called from toolbar button). */
+  onNewDevice: () => void;
+  /** CD.6: open the NewDeviceModal in "duplicate" mode, pre-filling the source. */
+  onDuplicate: (sourceTarget: string) => void;
   /** Trigger an immediate SWR revalidation of the devices/targets data. */
   onRefresh: () => void;
 }
@@ -267,7 +271,7 @@ function DeleteModal({ target, onConfirm, onClose }: {
   );
 }
 
-export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename, onSchedule, onRefresh }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename, onSchedule, onNewDevice, onDuplicate, onRefresh }: Props) {
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
@@ -818,6 +822,10 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
             )}
           </div>
           <div className="actions">
+            {/* CD.5: "+ New Device" button */}
+            <Button variant="secondary" size="sm" onClick={onNewDevice} title="Create a new device YAML">
+              + New Device
+            </Button>
             {/* Upgrade dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
@@ -1013,6 +1021,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           onToast={onToast}
           onDelete={(t) => { setMenuTarget(null); setMenuPos(null); setDeleteTarget(t); }}
           onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
+          onDuplicate={(t) => { setMenuTarget(null); setMenuPos(null); onDuplicate(t.target); }}
           onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
           onSchedule={(t) => { setMenuTarget(null); setMenuPos(null); onSchedule(t); }}
           onPin={(t) => { setMenuTarget(null); setMenuPos(null); handlePin(t); }}
@@ -1046,6 +1055,7 @@ function DeviceMenu({
   onToast,
   onDelete,
   onRename,
+  onDuplicate,
   onLogs,
   onSchedule,
   onPin,
@@ -1057,6 +1067,7 @@ function DeviceMenu({
   onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   onDelete: (target: string) => void;
   onRename: (target: string) => void;
+  onDuplicate: (target: Target) => void;
   onLogs: (target: string) => void;
   onSchedule: (target: string) => void;
   onPin: (target: string) => void;
@@ -1134,6 +1145,8 @@ function DeviceMenu({
           : <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onPin(t.target)}>Pin to current version</button>
         }
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
+        {/* CD.6: duplicate this device into a new file */}
+        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onDuplicate(t)}>Duplicate…</button>
         <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
 
         {/*

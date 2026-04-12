@@ -180,9 +180,23 @@ export async function mockApi(page: Page) {
   await page.route('**/ui/api/esphome-versions', route =>
     route.fulfill({ json: esphomeVersions }),
   );
-  await page.route('**/ui/api/targets', route =>
-    route.fulfill({ json: targets }),
-  );
+  await page.route('**/ui/api/targets', async (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      // CD.3: create/duplicate. Echo the requested filename back as the
+      // canonical target name so the client can open the editor on it.
+      let body: { filename?: string; source?: string } = {};
+      try {
+        body = JSON.parse(route.request().postData() ?? '{}');
+      } catch {
+        /* empty */
+      }
+      const raw = (body.filename ?? '').trim();
+      const slug = raw.toLowerCase().endsWith('.yaml') ? raw.slice(0, -5) : raw;
+      return route.fulfill({ json: { ok: true, target: `${slug}.yaml` } });
+    }
+    return route.fulfill({ json: targets });
+  });
   await page.route('**/ui/api/devices', route =>
     route.fulfill({ json: devices }),
   );

@@ -14,7 +14,16 @@ from app_config import AppConfig
 from helpers import safe_resolve, json_error
 from device_poller import Device
 from job_queue import JobState
-from scanner import scan_configs, get_esphome_version, set_esphome_version, get_device_metadata, read_device_meta, write_device_meta
+from scanner import (
+    create_stub_yaml,
+    duplicate_device,
+    get_device_metadata,
+    get_esphome_version,
+    read_device_meta,
+    scan_configs,
+    set_esphome_version,
+    write_device_meta,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1026,6 +1035,78 @@ async def save_target_content(request: web.Request) -> web.Response:
     _config_cache.pop(filename, None)
     logger.info("Saved %s (%d bytes)", filename, len(content))
     return web.json_response({"ok": True})
+
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+@routes.post("/ui/api/targets")
+async def create_target(request: web.Request) -> web.Response:
+    """Create a new device YAML file (CD.3).
+
+    Body: ``{"filename": "<slug>", "source"?: "<existing.yaml>"}``
+
+    - Without ``source``: creates a minimal stub YAML via ``create_stub_yaml``.
+    - With ``source``: duplicates the source file and rewrites ``esphome.name``
+      to the new filename via ``duplicate_device``.
+
+    Validates the filename (slug format, no path separators, no collision) and
+    resolves the path via ``safe_resolve`` to prevent traversal. Returns
+    ``{"target": "<filename>.yaml"}`` on success.
+    """
+    cfg = _cfg(request)
+    config_dir = Path(cfg.config_dir)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    raw_name = str(body.get("filename", "")).strip()
+    source = body.get("source")
+
+    if not raw_name:
+        return json_error("filename required")
+
+    # Strip a ``.yaml`` extension if the caller included it, then validate
+    # the slug portion.
+    name = raw_name[:-5] if raw_name.lower().endswith(".yaml") else raw_name
+    if not _SLUG_RE.match(name):
+        return json_error(
+            "filename must be lowercase, start with a letter or digit, and "
+            "contain only letters, digits, and hyphens",
+        )
+    if len(name) > 64:
+        return json_error("filename too long (max 64 characters)")
+
+    new_filename = f"{name}.yaml"
+    dest = safe_resolve(config_dir, new_filename)
+    if dest is None:
+        return json_error("Invalid filename")
+    if dest.exists():
+        return json_error(f"{new_filename} already exists")
+
+    if source:
+        src_name = str(source).strip()
+        src_path = safe_resolve(config_dir, src_name)
+        if src_path is None or not src_path.exists():
+            return json_error("Source file not found", 404)
+        try:
+            yaml_text = duplicate_device(str(config_dir), src_name, name)
+        except FileNotFoundError:
+            return json_error("Source file not found", 404)
+        except ValueError as e:
+            return json_error(f"Source invalid: {e}")
+    else:
+        yaml_text = create_stub_yaml(name)
+
+    try:
+        dest.write_text(yaml_text, encoding="utf-8")
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+
+    logger.info("Created target %s (source=%s, %d bytes)", new_filename, source or "stub", len(yaml_text))
+    return web.json_response({"target": new_filename, "ok": True})
 
 
 @routes.delete("/ui/api/targets/{filename}")

@@ -99,6 +99,71 @@ def create_bundle(config_dir: str) -> bytes:
 _config_cache: dict[str, tuple[float, dict]] = {}  # target → (mtime, resolved_config)
 
 # ---------------------------------------------------------------------------
+# Create / duplicate device helpers (CD.1 / CD.2)
+# ---------------------------------------------------------------------------
+
+
+def create_stub_yaml(name: str) -> str:
+    """Return a minimal ESPHome YAML stub with the given device name.
+
+    The stub contains only the ``esphome.name`` field so the new device shows
+    up in the Devices tab immediately. The user is expected to add board,
+    platform, and components via the editor. Routed through ``yaml.safe_dump``
+    per PY-1 — never hand-rolled string concatenation for YAML content.
+    """
+    import yaml  # noqa: PLC0415
+
+    body = yaml.safe_dump({"esphome": {"name": name}}, sort_keys=False, default_flow_style=False)
+    return body + "\n# Add board, platform, and components here.\n"
+
+
+def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
+    """Read ``source`` YAML, rewrite ``esphome.name`` to ``new_name``, return YAML.
+
+    NOTE: ``yaml.safe_dump`` drops comments. That's deliberate for duplicate
+    — the user is starting from a template, not maintaining a shared file.
+    If ``esphome.name`` is resolved via ``${substitutions.name}`` in the
+    source, we rewrite the substitution instead so the indirection is
+    preserved. Raises FileNotFoundError if the source doesn't exist or
+    ValueError if the source is not a parseable YAML mapping.
+    """
+    import yaml  # noqa: PLC0415
+
+    src_path = Path(config_dir) / source
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source file not found: {source}")
+
+    content = src_path.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Source YAML is not parseable: {e}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError("Source YAML is not a mapping at the top level")
+
+    esphome_block = data.get("esphome")
+    if isinstance(esphome_block, dict):
+        existing_name = esphome_block.get("name")
+        # If name is a ``${substitutions.foo}`` reference, rewrite the
+        # substitution value (preserving the indirection) rather than
+        # clobbering the esphome.name field itself.
+        if isinstance(existing_name, str) and existing_name.startswith("${") and existing_name.endswith("}"):
+            sub_key = existing_name[2:-1]
+            subs = data.get("substitutions")
+            if isinstance(subs, dict) and sub_key in subs:
+                subs[sub_key] = new_name
+            else:
+                esphome_block["name"] = new_name
+        else:
+            esphome_block["name"] = new_name
+    else:
+        data["esphome"] = {"name": new_name}
+
+    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+
+
+# ---------------------------------------------------------------------------
 # Per-device metadata stored as a YAML comment block at the top of each file.
 # Format:
 #   # distributed-esphome:

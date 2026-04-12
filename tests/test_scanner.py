@@ -12,6 +12,8 @@ from scanner import (
     _extract_metadata,
     build_name_to_target_map,
     create_bundle,
+    create_stub_yaml,
+    duplicate_device,
     get_device_address,
     get_device_metadata,
     get_esphome_version,
@@ -597,3 +599,119 @@ def test_roundtrip_read_write(tmp_path):
     write_device_meta(str(tmp_path), "device.yaml", meta)
     result = read_device_meta(str(tmp_path), "device.yaml")
     assert result == meta
+
+
+
+# ---------------------------------------------------------------------------
+# create_stub_yaml (CD.1)
+# ---------------------------------------------------------------------------
+
+
+def test_create_stub_yaml_has_name():
+    """Stub YAML should contain esphome.name set to the provided name."""
+    import yaml
+    result = create_stub_yaml("kitchen-sensor")
+    data = yaml.safe_load(result)
+    assert data == {"esphome": {"name": "kitchen-sensor"}}
+
+
+def test_create_stub_yaml_round_trips():
+    """Stub YAML must parse via yaml.safe_load without errors (PY-1)."""
+    import yaml
+    result = create_stub_yaml("test-device")
+    # Should not raise
+    parsed = yaml.safe_load(result)
+    assert isinstance(parsed, dict)
+    assert parsed["esphome"]["name"] == "test-device"
+
+
+def test_create_stub_yaml_contains_guidance_comment():
+    """Stub should include a hint comment so the user knows where to add content."""
+    result = create_stub_yaml("foo")
+    assert "Add board" in result
+
+
+# ---------------------------------------------------------------------------
+# duplicate_device (CD.2)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_device_rewrites_name(tmp_path):
+    """Duplicated YAML has esphome.name set to new_name."""
+    import yaml
+    src = tmp_path / "source.yaml"
+    src.write_text("esphome:\n  name: original\n  comment: Hello\n")
+
+    result = duplicate_device(str(tmp_path), "source.yaml", "duplicated")
+    data = yaml.safe_load(result)
+    assert data["esphome"]["name"] == "duplicated"
+    # Other fields preserved
+    assert data["esphome"]["comment"] == "Hello"
+
+
+def test_duplicate_device_preserves_other_fields(tmp_path):
+    """Duplicated YAML keeps substitutions, packages, sensors, etc."""
+    import yaml
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "esphome:\n"
+        "  name: my-device\n"
+        "wifi:\n"
+        "  ssid: home\n"
+        "sensor:\n"
+        "  - platform: dht\n"
+        "    pin: GPIO4\n"
+    )
+
+    result = duplicate_device(str(tmp_path), "src.yaml", "my-device-2")
+    data = yaml.safe_load(result)
+    assert data["esphome"]["name"] == "my-device-2"
+    assert data["wifi"]["ssid"] == "home"
+    assert data["sensor"][0]["platform"] == "dht"
+
+
+def test_duplicate_device_rewrites_substitution(tmp_path):
+    """When esphome.name is ${substitutions.name}, rewrite the substitution."""
+    import yaml
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "substitutions:\n"
+        "  name: old-name\n"
+        "  display_name: Old\n"
+        "esphome:\n"
+        "  name: ${name}\n"
+    )
+
+    result = duplicate_device(str(tmp_path), "src.yaml", "new-name")
+    data = yaml.safe_load(result)
+    # substitution is rewritten, esphome.name keeps the indirection
+    assert data["substitutions"]["name"] == "new-name"
+    assert data["esphome"]["name"] == "${name}"
+    # Other substitutions untouched
+    assert data["substitutions"]["display_name"] == "Old"
+
+
+def test_duplicate_device_missing_source(tmp_path):
+    """Missing source file raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        duplicate_device(str(tmp_path), "nonexistent.yaml", "new")
+
+
+def test_duplicate_device_invalid_yaml(tmp_path):
+    """Non-parseable source raises ValueError."""
+    src = tmp_path / "bad.yaml"
+    src.write_text("{{{invalid yaml")
+    with pytest.raises(ValueError):
+        duplicate_device(str(tmp_path), "bad.yaml", "new")
+
+
+def test_duplicate_device_no_esphome_block(tmp_path):
+    """Source YAML without esphome block gets one added with the new name."""
+    import yaml
+    src = tmp_path / "src.yaml"
+    src.write_text("wifi:\n  ssid: home\n")
+
+    result = duplicate_device(str(tmp_path), "src.yaml", "new-device")
+    data = yaml.safe_load(result)
+    assert data["esphome"]["name"] == "new-device"
+    assert data["wifi"]["ssid"] == "home"
