@@ -43,7 +43,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.4.0-dev.26"
+CLIENT_VERSION = "1.4.0-dev.27"
 
 
 def _read_image_version() -> Optional[str]:
@@ -712,6 +712,13 @@ def _sync_cache_into_slot(target_stem: str, slot_dir: str) -> None:
     need_pio = os.path.isdir(cache_pio) and not os.path.isdir(slot_pio)
     need_esphome = os.path.isdir(cache_esphome) and not os.path.isdir(slot_esphome)
     if not (need_pio or need_esphome):
+        has_local = os.path.isdir(slot_pio) or os.path.isdir(slot_esphome)
+        logger.info(
+            "Slot cache sync-in skipped for %s (local=%s, shared=%s)",
+            target_stem,
+            "has .pio" if has_local else "empty",
+            "present" if os.path.isdir(cache_dir) else "absent",
+        )
         return
 
     with _target_cache_lock(target_stem):

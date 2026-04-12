@@ -328,15 +328,15 @@ input[type="checkbox"] {
 .ip-link:hover { text-decoration: underline; }
 
 /* Dialog size variants.
-   #44: dialog-lg (log viewer) and dialog-xl (editor) should take most of
-   the visible viewport with a small margin. Previously capped at 960px/
-   1200px wide — on a wide monitor that left most of the page unused.
-   Both variants now scale to viewport-minus-2rem-margin on each side. */
+   #44/#50: dialog-lg (log viewer) and dialog-xl (editor) fill most of the
+   viewport with a comfortable margin. 3rem on each side → 6rem total →
+   the editor header (filename + Save/Validate) stays fully visible even
+   inside HA Ingress which has its own ~60px header above the iframe. */
 [data-slot="dialog-content"].dialog-lg,
 [data-slot="dialog-content"].dialog-xl {
-  max-width: calc(100vw - 4rem);
-  width: calc(100vw - 4rem);
-  height: calc(100vh - 4rem);
+  max-width: calc(100vw - 6rem);
+  width: calc(100vw - 6rem);
+  height: calc(100vh - 6rem);
 }
 
 @theme inline {

@@ -40,7 +40,8 @@ const STATE_ORDER: Record<string, number> = {
   pending: 1,
   timed_out: 2,
   failed: 3,
-  success: 4,
+  cancelled: 4,
+  success: 5,
 };
 
 // Custom sorting function: sort by STATE_ORDER, break ties by created_at descending.

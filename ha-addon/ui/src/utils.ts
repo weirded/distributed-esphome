@@ -94,9 +94,14 @@ export function isJobInProgress(job: { state: string; ota_result?: string }): bo
   return false;
 }
 
-/** Job is in a terminal failed state (not running, not successful) */
+/** Job is in a terminal failed state (not running, not successful, not cancelled) */
 export function isJobFailed(job: { state: string; ota_result?: string }): boolean {
+  if (job.state === 'cancelled') return false;
   return !isJobInProgress(job) && !isJobSuccessful(job);
+}
+
+export function isJobCancelled(job: { state: string }): boolean {
+  return job.state === 'cancelled';
 }
 
 /** Job is in a terminal state (not running) */
@@ -116,6 +121,7 @@ const BADGE_VARIANTS: Record<string, string> = {
   success:   `${BADGE_BASE} bg-[#14532d] text-[#4ade80]`,
   failed:    `${BADGE_BASE} bg-[#450a0a] text-[#f87171]`,
   timed_out: `${BADGE_BASE} bg-[#431407] text-[#fb923c]`,
+  cancelled: `${BADGE_BASE} bg-[#374151] text-[#9ca3af]`,
 };
 
 export function getJobBadge(job: {
@@ -149,6 +155,8 @@ export function getJobBadge(job: {
     }
   } else if (job.state === 'timed_out') {
     return { label: 'Timed Out', cls: BADGE_VARIANTS.timed_out };
+  } else if (job.state === 'cancelled') {
+    return { label: 'Cancelled', cls: BADGE_VARIANTS.cancelled };
   } else {
     return { label: job.state, cls: BADGE_VARIANTS[job.state] || BADGE_VARIANTS.pending };
   }

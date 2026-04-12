@@ -27,6 +27,7 @@ class JobState(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
 
 
 def _utcnow() -> datetime:
@@ -207,7 +208,7 @@ class JobQueue:
                 job.assigned_client_id = None
                 job.assigned_at = None
             # Prune terminal jobs older than 1 hour on startup
-            if job.state in (JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT):
+            if job.state in (JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED):
                 try:
                     created = job.created_at
                     if created.tzinfo is None:
@@ -312,7 +313,7 @@ class JobQueue:
             stale = [
                 jid for jid, j in self._jobs.items()
                 if j.target == target and j.state in (
-                    JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT
+                    JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED
                 )
             ]
             for jid in stale:
@@ -443,15 +444,15 @@ class JobQueue:
             return True
 
     async def cancel(self, job_ids: list[str]) -> int:
-        """Cancel jobs by id; transitions any non-terminal job to FAILED."""
+        """Cancel jobs by id; transitions any non-terminal job to CANCELLED."""
         async with self._lock:
             cancelled = 0
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
                 if job is None:
                     continue
-                if job.state not in (JobState.SUCCESS, JobState.FAILED):
-                    job.state = JobState.FAILED
+                if job.state not in (JobState.SUCCESS, JobState.FAILED, JobState.CANCELLED):
+                    job.state = JobState.CANCELLED
                     job.finished_at = _utcnow()
                     job.log = (job.log or "") + "\nCancelled by user."
                     cancelled += 1
@@ -534,7 +535,7 @@ class JobQueue:
                 stale = [
                     jid for jid, j in self._jobs.items()
                     if j.target == target and j.state in (
-                        JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT
+                        JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED
                     )
                 ]
                 for jid in stale:
@@ -615,7 +616,7 @@ class JobQueue:
 
     async def prune_old_terminal(self, max_age_seconds: int = 3600) -> int:
         """Remove terminal jobs older than *max_age_seconds*. Returns count removed."""
-        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT}
+        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         cutoff = datetime.now(timezone.utc)
         async with self._lock:
             to_remove = []
@@ -639,7 +640,7 @@ class JobQueue:
 
     async def remove_jobs(self, job_ids: list[str]) -> int:
         """Remove terminal jobs by ID. Returns count removed."""
-        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT}
+        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         async with self._lock:
             removed = 0
             for job_id in job_ids:
@@ -657,7 +658,7 @@ class JobQueue:
         If *require_ota_success* is True, jobs with ota_result == 'failed' are
         kept even if their state matches (so "Clear Succeeded" leaves OTA-failed jobs).
         """
-        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT}
+        terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         target_states = {JobState(s) for s in states if JobState(s) in terminal}
         async with self._lock:
             to_remove = []
