@@ -682,19 +682,22 @@ async def test_worker_clean_cache_sets_pending_flag(tmp_path):
 
 
 async def test_create_target_stub(tmp_path):
-    """POST /ui/api/targets with no source creates a stub YAML."""
+    """POST /ui/api/targets with no source creates a staged dotfile."""
     import yaml
     ta = await _make_ui_app(tmp_path)
     try:
         resp = await ta.post("/ui/api/targets", json={"filename": "kitchen"})
         assert resp.status == 200
         data = await resp.json()
-        assert data["target"] == "kitchen.yaml"
-        # File on disk has the expected content
-        created = ta.config_dir / "kitchen.yaml"
-        assert created.exists()
-        parsed = yaml.safe_load(created.read_text())
+        # #62: create returns a .pending. prefixed filename
+        assert data["target"] == ".pending.kitchen.yaml"
+        # File is staged as a dotfile at the config root (not the final name)
+        staged = ta.config_dir / ".pending.kitchen.yaml"
+        assert staged.exists()
+        parsed = yaml.safe_load(staged.read_text())
         assert parsed["esphome"]["name"] == "kitchen"
+        # Final name does NOT exist yet (not written until first save)
+        assert not (ta.config_dir / "kitchen.yaml").exists()
     finally:
         await ta.close()
 
@@ -706,7 +709,7 @@ async def test_create_target_accepts_yaml_extension(tmp_path):
         resp = await ta.post("/ui/api/targets", json={"filename": "kitchen.yaml"})
         assert resp.status == 200
         data = await resp.json()
-        assert data["target"] == "kitchen.yaml"
+        assert data["target"] == ".pending.kitchen.yaml"
     finally:
         await ta.close()
 
@@ -760,9 +763,9 @@ async def test_create_target_duplicate(tmp_path):
         )
         assert resp.status == 200
         data = await resp.json()
-        assert data["target"] == "copy.yaml"
+        assert data["target"] == ".pending.copy.yaml"
 
-        created = ta.config_dir / "copy.yaml"
+        created = ta.config_dir / ".pending.copy.yaml"
         parsed = yaml.safe_load(created.read_text())
         assert parsed["esphome"]["name"] == "copy"
         assert parsed["esphome"]["comment"] == "Hello"

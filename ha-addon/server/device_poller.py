@@ -502,14 +502,14 @@ class DevicePoller:
 
         # #59: remove stale proactive entries — devices that were pre-created
         # for a YAML target that no longer exists and have never been seen
-        # online (no mDNS discovery, no MAC, no firmware version). These ghost
-        # entries show up as unchecked/undeletable rows in the Devices tab.
+        # on the network. A proactive entry has last_seen=None (never
+        # discovered via mDNS/API), vs a real device which got a timestamp
+        # when the poller first connected.
         stale_keys = [
             key for key, dev in self._devices.items()
             if dev.compile_target is None
+            and dev.last_seen is None
             and not dev.online
-            and not dev.mac_address
-            and not dev.running_version
         ]
         for key in stale_keys:
             del self._devices[key]

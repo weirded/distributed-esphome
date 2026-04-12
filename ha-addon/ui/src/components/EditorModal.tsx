@@ -502,7 +502,7 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
     }}>
       <DialogContent className="dialog-xl" style={{ background: monacoTheme === 'vs' ? '#ffffff' : '#1e1e1e', border: monacoTheme === 'vs' ? '1px solid var(--border)' : '1px solid #3c3c3c' }}>
         <div className="editor-header">
-          <h3>{(target || '').replace(/^\.staging\//, '')}</h3>
+          <h3>{(target || '').replace(/^\.pending\./, '')}</h3>
           <Button size="sm" onClick={handleSave}>Save</Button>
           {onCompile && target && target !== 'secrets.yaml' && (
             <Button

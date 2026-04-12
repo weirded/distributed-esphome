@@ -1032,10 +1032,10 @@ async def get_target_content(request: web.Request) -> web.Response:
 async def save_target_content(request: web.Request) -> web.Response:
     """Write raw YAML content back to a config file.
 
-    #53: if the filename starts with ``.staging/``, the file is a staged
-    new-device. On first save, write the content AND move the file from
-    ``.staging/<name>.yaml`` to the config root ``<name>.yaml`` so the scanner
-    picks it up. Returns ``{"ok": true, "renamed_to": "<name>.yaml"}``.
+    #53/#62: if the filename starts with ``.pending.``, the file is a staged
+    new-device. On first save, write the content to the final ``<name>.yaml``
+    (stripping the prefix) and delete the pending file. Returns
+    ``{"ok": true, "renamed_to": "<name>.yaml"}``.
     """
     filename = request.match_info["filename"]
     cfg = _cfg(request)
@@ -1049,9 +1049,9 @@ async def save_target_content(request: web.Request) -> web.Response:
         return json_error("Invalid JSON")
     content = body.get("content", "")
 
-    is_staged = filename.startswith(f"{_STAGING_DIR}/")
+    is_staged = filename.startswith(_PENDING_PREFIX)
     if is_staged:
-        final_name = filename[len(f"{_STAGING_DIR}/"):]
+        final_name = filename[len(_PENDING_PREFIX):]
         final_path = safe_resolve(config_dir, final_name)
         if final_path is None:
             return json_error("Invalid filename")
@@ -1079,7 +1079,7 @@ async def save_target_content(request: web.Request) -> web.Response:
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-_STAGING_DIR = ".staging"
+_PENDING_PREFIX = ".pending."
 
 
 @routes.post("/ui/api/targets")
@@ -1092,13 +1092,12 @@ async def create_target(request: web.Request) -> web.Response:
     - With ``source``: duplicates the source file and rewrites ``esphome.name``
       to the new filename via ``duplicate_device``.
 
-    #53: the file is written to ``.staging/<name>.yaml`` (not the config root)
-    so the scanner doesn't pick it up until the user saves in the editor. When
-    the user saves, the save endpoint detects the ``.staging/`` prefix and
-    moves the file to the config root. If the user cancels (closes editor
-    without saving), the cleanup handler (#42) deletes the staged file.
+    #53/#62: the file is written as ``.pending.<name>.yaml`` (a dotfile at the
+    config root, invisible to the scanner which skips dotfiles). On first save,
+    the save endpoint detects the ``.pending.`` prefix and renames to the final
+    ``<name>.yaml``. If the user cancels, the #42 cleanup deletes the dotfile.
 
-    Returns ``{"target": ".staging/<name>.yaml"}`` on success.
+    Returns ``{"target": ".pending.<name>.yaml"}`` on success.
     """
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
@@ -1147,16 +1146,15 @@ async def create_target(request: web.Request) -> web.Response:
     else:
         yaml_text = create_stub_yaml(name)
 
-    # Write to .staging/ so the scanner doesn't pick it up
-    staging_dir = config_dir / _STAGING_DIR
-    staging_dir.mkdir(exist_ok=True)
-    staged_path = staging_dir / new_filename
+    # Write as a dotfile so the scanner doesn't pick it up
+    pending_filename = f"{_PENDING_PREFIX}{new_filename}"
+    staged_path = config_dir / pending_filename
     try:
         staged_path.write_text(yaml_text, encoding="utf-8")
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
 
-    staged_target = f"{_STAGING_DIR}/{new_filename}"
+    staged_target = pending_filename
     logger.info("Created staged target %s (source=%s, %d bytes)", staged_target, source or "stub", len(yaml_text))
     return web.json_response({"target": staged_target, "ok": True})
 

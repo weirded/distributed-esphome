@@ -193,7 +193,8 @@ export async function mockApi(page: Page) {
       }
       const raw = (body.filename ?? '').trim();
       const slug = raw.toLowerCase().endsWith('.yaml') ? raw.slice(0, -5) : raw;
-      return route.fulfill({ json: { ok: true, target: `${slug}.yaml` } });
+      // #62: server returns .pending. prefix; editor strips it for display
+      return route.fulfill({ json: { ok: true, target: `.pending.${slug}.yaml` } });
     }
     return route.fulfill({ json: targets });
   });

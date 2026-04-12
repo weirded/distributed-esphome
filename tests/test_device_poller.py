@@ -151,8 +151,9 @@ def test_update_targets_with_new_set(poller):
     new_targets = ["new_device.yaml"]
     poller.update_compile_targets(new_targets)
 
-    # Old device should now have no compile target (not in new set)
-    assert poller._devices["old"].compile_target is None
+    # #59: old device (never seen online, no last_seen) is purged as a stale
+    # proactive entry when its YAML target is deleted.
+    assert "old" not in poller._devices
 
 
 # ---------------------------------------------------------------------------

@@ -246,11 +246,16 @@ export function QueueTab({
     columnHelper.accessor(row => row.esphome_version || '', {
       id: 'esphome_version',
       header: ({ column }) => <SortHeader label="Version" column={column} />,
-      cell: ({ row: { original: job } }) => (
-        <span style={{ fontSize: 12, fontFamily: 'monospace' }}>
-          {job.esphome_version || <span style={{ color: 'var(--text-muted)' }}>—</span>}
-        </span>
-      ),
+      cell: ({ row: { original: job } }) => {
+        const target = targets.find(t => t.target === job.target);
+        const isPinned = target?.pinned_version && target.pinned_version === job.esphome_version;
+        return (
+          <span style={{ fontSize: 12, fontFamily: 'monospace' }}>
+            {job.esphome_version || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+            {isPinned && <span title={`Pinned to ${target.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
+          </span>
+        );
+      },
       sortingFn: 'alphanumeric',
     }),
     // #21: triggered-by column — schedule vs user.
