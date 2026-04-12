@@ -580,15 +580,19 @@ async def schedule_checker(app: web.Application) -> None:
                     if not cron_expr or not enabled:
                         continue
 
-                    # Determine last_run. If absent, use epoch so the first
-                    # cron tick after the schedule is set fires immediately.
+                    # #67: determine last_run. If absent, use NOW so the first
+                    # cron tick fires at the NEXT scheduled time — not
+                    # immediately. The old epoch default (2000-01-01) caused
+                    # every new schedule to fire on the first tick regardless
+                    # of the cron expression, because croniter would compute a
+                    # next-fire-time far in the past.
                     last_run_str = meta.get("schedule_last_run")
                     if last_run_str:
                         last_run = datetime.fromisoformat(last_run_str)
                         if last_run.tzinfo is None:
                             last_run = last_run.replace(tzinfo=timezone.utc)
                     else:
-                        last_run = datetime(2000, 1, 1, tzinfo=timezone.utc)
+                        last_run = now
 
                     cron = croniter(cron_expr, last_run)
                     next_run = cron.get_next(datetime)

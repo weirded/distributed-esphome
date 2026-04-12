@@ -810,7 +810,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
             </Button>
             {/* Upgrade dropdown */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
                 Upgrade &#9662;
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[180px]">

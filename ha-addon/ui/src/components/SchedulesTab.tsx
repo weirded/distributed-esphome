@@ -147,9 +147,9 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
       cell: ({ row: { original: t } }) => {
         const version = t.pinned_version || t.server_version || '—';
         return (
-          <span style={{ fontFamily: 'monospace' }}>
+          <span style={{ fontSize: 12 }}>
             {version}
-            {t.pinned_version && <span style={{ marginLeft: 4 }}>📌</span>}
+            {t.pinned_version && <span title={`Pinned to ${t.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
           </span>
         );
       },

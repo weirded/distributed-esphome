@@ -250,7 +250,7 @@ export function QueueTab({
         const target = targets.find(t => t.target === job.target);
         const isPinned = target?.pinned_version && target.pinned_version === job.esphome_version;
         return (
-          <span style={{ fontSize: 12, fontFamily: 'monospace' }}>
+          <span style={{ fontSize: 12 }}>
             {job.esphome_version || <span style={{ color: 'var(--text-muted)' }}>—</span>}
             {isPinned && <span title={`Pinned to ${target.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
           </span>
@@ -400,7 +400,7 @@ export function QueueTab({
           <div className="actions">
             {/* Retry dropdown */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg bg-[#78350f] px-2.5 h-7 text-[0.8rem] font-medium text-[#fcd34d] hover:bg-[#92400e] cursor-pointer">
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-[#78350f] px-2.5 h-7 text-[0.8rem] font-medium text-[#fcd34d] hover:bg-[#92400e] cursor-pointer">
                 Retry &#9662;
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">

@@ -152,12 +152,15 @@ async def test_schedule_survives_invalid_cron(tmp_path, tmp_queue):
     assert "bad-cron.yaml" not in targets
 
 
-async def test_schedule_first_run_fires_immediately(tmp_path, tmp_queue):
-    """A schedule with no last_run should fire on the first check."""
+async def test_schedule_first_run_waits_for_next_occurrence(tmp_path, tmp_queue):
+    """#67: A schedule with no last_run should NOT fire immediately.
+
+    It should wait until the NEXT scheduled time. The old epoch default
+    (2000-01-01) caused every new schedule to fire on the first tick.
+    """
     _write_scheduled_device(tmp_path, cron="0 2 * * *", last_run=None)
 
     await _run_one_schedule_tick(tmp_path, tmp_queue)
 
     jobs = tmp_queue.get_all()
-    assert len(jobs) == 1
-    assert jobs[0].target == "test-device.yaml"
+    assert len(jobs) == 0, "Should not fire — 2am hasn't arrived yet"
