@@ -161,6 +161,18 @@ td {
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface2); }
 
+/* #58: sticky action column — last th/td in each row sticks to the right
+   edge when the table scrolls horizontally on narrow viewports. Needs an
+   opaque background so scrolled content doesn't show through. */
+th:last-child,
+td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+}
+th:last-child { background: var(--surface2); }
+td:last-child { background: var(--surface); }
+
 .empty-row td {
   text-align: center;
   color: var(--text-muted);
