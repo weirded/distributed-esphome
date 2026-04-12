@@ -245,7 +245,7 @@ async def test_delete_target_cancels_pending_jobs(tmp_path):
         assert resp.status == 200
 
         stored = ta.queue.get(job.id)
-        assert stored.state == JobState.FAILED  # cancel marks as FAILED
+        assert stored.state == JobState.CANCELLED  # #49: cancel marks as CANCELLED
     finally:
         await ta.close()
 
@@ -541,7 +541,7 @@ async def test_cancel_jobs(tmp_path):
         assert resp.status == 200
         data = await resp.json()
         assert data["cancelled"] == 1
-        assert ta.queue.get(job.id).state == JobState.FAILED
+        assert ta.queue.get(job.id).state == JobState.CANCELLED
     finally:
         await ta.close()
 

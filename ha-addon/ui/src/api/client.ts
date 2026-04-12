@@ -172,16 +172,25 @@ export async function getTargetContent(filename: string): Promise<string> {
   return data.content || '';
 }
 
-export async function saveTargetContent(filename: string, content: string): Promise<void> {
+/**
+ * Save YAML content to a target file. Returns the final target name,
+ * which may differ from *filename* when saving a staged new device
+ * (#53 — ``.staging/name.yaml`` → ``name.yaml`` on first save).
+ */
+export async function saveTargetContent(
+  filename: string,
+  content: string,
+): Promise<{ renamedTo: string | null }> {
   const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),
   });
+  const data = await r.json().catch(() => ({})) as { error?: string; renamed_to?: string };
   if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
     throw new Error(data.error || String(r.status));
   }
+  return { renamedTo: data.renamed_to ?? null };
 }
 
 export async function disableWorker(id: string, disabled: boolean): Promise<void> {

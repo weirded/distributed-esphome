@@ -31,6 +31,7 @@ interface Props {
   onRetryAllFailed: () => void;
   onClearSucceeded: () => void;
   onClearFinished: () => void;
+  onClearAll: () => void;
   onOpenLog: (jobId: string) => void;
   onEdit: (target: string) => void;
 }
@@ -85,6 +86,7 @@ export function QueueTab({
   onRetryAllFailed,
   onClearSucceeded,
   onClearFinished,
+  onClearAll,
   onOpenLog,
   onEdit,
 }: Props) {
@@ -424,6 +426,10 @@ export function QueueTab({
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={onClearFinished} disabled={!hasFinishedJobs}>
                     Clear All Finished
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onClearAll} disabled={queue.length === 0}>
+                    Clear Entire Queue
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>

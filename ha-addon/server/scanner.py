@@ -210,13 +210,6 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
     if isinstance(subs, dict) and "name" in subs:
         subs["name"] = new_name
 
-    # #47: strip ``wifi.use_address`` from the clone so the device poller
-    # doesn't match the new (uncompiled) device to the original's IP. The
-    # user can add a new address after flashing the clone.
-    wifi = data.get("wifi")
-    if isinstance(wifi, dict):
-        wifi.pop("use_address", None)
-
     esphome_block = data.get("esphome")
     if isinstance(esphome_block, dict):
         existing_name = esphome_block.get("name")

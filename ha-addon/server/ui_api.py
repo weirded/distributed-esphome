@@ -1030,7 +1030,13 @@ async def get_target_content(request: web.Request) -> web.Response:
 
 @routes.post("/ui/api/targets/{filename}/content")
 async def save_target_content(request: web.Request) -> web.Response:
-    """Write raw YAML content back to a config file."""
+    """Write raw YAML content back to a config file.
+
+    #53: if the filename starts with ``.staging/``, the file is a staged
+    new-device. On first save, write the content AND move the file from
+    ``.staging/<name>.yaml`` to the config root ``<name>.yaml`` so the scanner
+    picks it up. Returns ``{"ok": true, "renamed_to": "<name>.yaml"}``.
+    """
     filename = request.match_info["filename"]
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
@@ -1042,6 +1048,23 @@ async def save_target_content(request: web.Request) -> web.Response:
     except Exception:
         return json_error("Invalid JSON")
     content = body.get("content", "")
+
+    is_staged = filename.startswith(f"{_STAGING_DIR}/")
+    if is_staged:
+        final_name = filename[len(f"{_STAGING_DIR}/"):]
+        final_path = safe_resolve(config_dir, final_name)
+        if final_path is None:
+            return json_error("Invalid filename")
+        if final_path.exists():
+            return json_error(f"{final_name} already exists")
+        try:
+            final_path.write_text(content, encoding="utf-8")
+            path.unlink(missing_ok=True)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        logger.info("Saved staged %s → %s (%d bytes)", filename, final_name, len(content))
+        return web.json_response({"ok": True, "renamed_to": final_name})
+
     try:
         path.write_text(content, encoding="utf-8")
     except Exception as exc:
@@ -1056,6 +1079,9 @@ async def save_target_content(request: web.Request) -> web.Response:
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
+_STAGING_DIR = ".staging"
+
+
 @routes.post("/ui/api/targets")
 async def create_target(request: web.Request) -> web.Response:
     """Create a new device YAML file (CD.3).
@@ -1066,9 +1092,13 @@ async def create_target(request: web.Request) -> web.Response:
     - With ``source``: duplicates the source file and rewrites ``esphome.name``
       to the new filename via ``duplicate_device``.
 
-    Validates the filename (slug format, no path separators, no collision) and
-    resolves the path via ``safe_resolve`` to prevent traversal. Returns
-    ``{"target": "<filename>.yaml"}`` on success.
+    #53: the file is written to ``.staging/<name>.yaml`` (not the config root)
+    so the scanner doesn't pick it up until the user saves in the editor. When
+    the user saves, the save endpoint detects the ``.staging/`` prefix and
+    moves the file to the config root. If the user cancels (closes editor
+    without saving), the cleanup handler (#42) deletes the staged file.
+
+    Returns ``{"target": ".staging/<name>.yaml"}`` on success.
     """
     cfg = _cfg(request)
     config_dir = Path(cfg.config_dir)
@@ -1096,10 +1126,11 @@ async def create_target(request: web.Request) -> web.Response:
         return json_error("filename too long (max 64 characters)")
 
     new_filename = f"{name}.yaml"
-    dest = safe_resolve(config_dir, new_filename)
-    if dest is None:
+    # Check for collision with the FINAL name (not the staging name)
+    final_dest = safe_resolve(config_dir, new_filename)
+    if final_dest is None:
         return json_error("Invalid filename")
-    if dest.exists():
+    if final_dest.exists():
         return json_error(f"{new_filename} already exists")
 
     if source:
@@ -1116,13 +1147,18 @@ async def create_target(request: web.Request) -> web.Response:
     else:
         yaml_text = create_stub_yaml(name)
 
+    # Write to .staging/ so the scanner doesn't pick it up
+    staging_dir = config_dir / _STAGING_DIR
+    staging_dir.mkdir(exist_ok=True)
+    staged_path = staging_dir / new_filename
     try:
-        dest.write_text(yaml_text, encoding="utf-8")
+        staged_path.write_text(yaml_text, encoding="utf-8")
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
 
-    logger.info("Created target %s (source=%s, %d bytes)", new_filename, source or "stub", len(yaml_text))
-    return web.json_response({"target": new_filename, "ok": True})
+    staged_target = f"{_STAGING_DIR}/{new_filename}"
+    logger.info("Created staged target %s (source=%s, %d bytes)", staged_target, source or "stub", len(yaml_text))
+    return web.json_response({"target": staged_target, "ok": True})
 
 
 @routes.delete("/ui/api/targets/{filename}")
@@ -1544,7 +1580,23 @@ async def retry_jobs(request: web.Request) -> web.Response:
     else:
         return web.json_response({"error": "job_ids must be a list or 'all_failed'"}, status=400)
 
-    new_jobs = await queue.retry(job_ids, server_version, str(uuid.uuid4()), cfg.job_timeout)
+    # #51: build a per-target version map that respects device pins.
+    # If a device is pinned to a specific ESPHome version, the retry should
+    # use that version — not blindly use the server default.
+    target_versions: dict[str, str] = {}
+    for jid in job_ids:
+        job = queue._jobs.get(jid)
+        if job is None:
+            continue
+        if job.target not in target_versions:
+            meta = read_device_meta(cfg.config_dir, job.target)
+            pinned = meta.get("pin_version")
+            target_versions[job.target] = pinned if pinned else server_version
+
+    new_jobs = await queue.retry(
+        job_ids, server_version, str(uuid.uuid4()), cfg.job_timeout,
+        target_versions=target_versions,
+    )
     return web.json_response({"retried": len(new_jobs)})
 
 

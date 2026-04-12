@@ -352,11 +352,28 @@ export default function App() {
 
   async function handleClearFinished() {
     try {
-      const data = await clearQueue(['success', 'failed', 'timed_out']);
+      const data = await clearQueue(['success', 'failed', 'timed_out', 'cancelled']);
       if (data.cleared > 0) {
         const msg = data.cleared === 1 ? 'Cleared 1 finished job' : `Cleared ${data.cleared} finished jobs`;
         addToast(msg, 'success');
       }
+      mutateQueue();
+    } catch {
+      addToast('Clear failed', 'error');
+    }
+  }
+
+  // #54: cancel all active + clear all terminal in one action
+  async function handleClearAll() {
+    try {
+      const activeIds = displayQueue
+        .filter(j => j.state === 'pending' || j.state === 'working')
+        .map(j => j.id);
+      if (activeIds.length > 0) {
+        await cancelJobs(activeIds);
+      }
+      await clearQueue(['success', 'failed', 'timed_out', 'cancelled']);
+      addToast('Queue cleared', 'success');
       mutateQueue();
     } catch {
       addToast('Clear failed', 'error');
@@ -555,6 +572,7 @@ export default function App() {
             onRetryAllFailed={handleRetryAllFailed}
             onClearSucceeded={handleClearSucceeded}
             onClearFinished={handleClearFinished}
+            onClearAll={handleClearAll}
             onOpenLog={setLogJobId}
             onEdit={(target) => setEditorTarget(target)}
           />

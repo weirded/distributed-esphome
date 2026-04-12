@@ -170,6 +170,84 @@ After a successful compile, extract the firmware binary and make it downloadable
 - [x] **48** *(1.4.0-dev.27 — believed fixed by #45)* — The compile cache reuse tested by the user was likely run against pre-#45 code (before auto-update propagated). The per-slot implementation correctly: (a) keeps `.pio/` and `.esphome/` in each slot dir across compiles of the same target, (b) syncs to shared cache on success, (c) seeds from shared cache on first compile per slot+target. Added visible "Slot cache sync-in skipped" INFO log in dev.27 so the next test run will show whether the cache reuse path was actually hit. If still broken, the INFO log will pinpoint where the cache was expected but not found.
 - [x] **49** *(1.4.0-dev.27)* — Added `CANCELLED` to `JobState` enum. `queue.cancel()` now transitions to `CANCELLED` (was `FAILED`). UI: new grey "Cancelled" badge in QueueTab; `isJobFailed()` excludes cancelled; "Retry All Failed" doesn't touch cancelled jobs. `CANCELLED` is added to all terminal-state checks (clear/remove/followup-dedup/timeout). Sort order: cancelled sorts between failed and success.
 - [x] **50** *(1.4.0-dev.27)* — Editor + Logs dialog margin increased from 4rem (2rem each side) to 6rem (3rem each side). The extra margin ensures the editor header row (filename + Save/Validate) stays fully visible when the add-on is loaded inside HA Ingress, which has its own ~60px header above the iframe eating into the inner 100vh.
-- [ ] 51 I believe there is a bug with pinned versions. When I have a job in the queue that I think is cancelled or failed, and I retry it, it doesn't honor the pinned version and it goes back to the default version. Let's make sure it always honors the pinned version. 
+## Pre-release Playwright Coverage
+
+Automated tests for 1.4.0 features not yet covered by the existing 43 mocked + 6 prod Playwright tests. Split into mocked (fast, no real server) and prod hass-4 (real server, real devices).
+
+### Mocked tests (`ha-addon/ui/e2e/`)
+
+- [ ] **PT.1 `pin-unpin.spec.ts`** — Version Pinning UI:
+  - Pin via hamburger → 📌 appears in version column, tooltip shows pinned version
+  - Unpin via hamburger → 📌 disappears
+  - Upgrade modal on pinned device → amber warning banner visible, explains pin vs compile version
+  - Bulk "Upgrade All" request intercepted → assert the `POST /ui/api/compile` request doesn't send an explicit `esphome_version` (server-side pin resolution handles it)
+- [ ] **PT.2 `schedule-modal.spec.ts`** — Schedule creation + editing:
+  - Hamburger → "Schedule Upgrade..." opens modal in Scheduled mode (radio pre-selected)
+  - Row Upgrade button opens modal in Now mode by default
+  - Switch between Now ↔ Scheduled → fields update, no stale state
+  - Create recurring schedule → mock API returns updated target with `schedule` field → 🕐 icon + schedule column update within 1s
+  - Pause schedule → schedule column shows "(paused)"
+  - Schedules tab Edit button → modal opens with schedule pre-filled in friendly picker (assert interval/unit/time dropdowns match the fixture cron)
+  - One-time schedule → mock API, verify `schedule_once` field in request
+- [ ] **PT.3 `schedules-tab.spec.ts`** — Schedules tab layout + interactions:
+  - Tab renders table with columns: Device, Schedule, Status, Next Run, Last Run, Version, Worker, Edit
+  - Search/filter narrows rows
+  - Checkbox select-all + "Remove Selected" button appears when selection > 0
+  - Bulk remove → mock delete API called for each selected, rows disappear, single toast
+  - Empty state renders when no devices have schedules
+- [ ] **PT.4 `bulk-schedule.spec.ts`** — Bulk schedule operations:
+  - Select 2+ devices → Actions ▾ → "Schedule Selected..." → modal opens → Save → mock API called for each target
+  - Select 2+ devices → Actions ▾ → "Remove Schedule from Selected" → mock delete API called → single summary toast
+- [ ] **PT.5 `queue-extras.spec.ts`** — Queue tab 1.4 additions:
+  - Triggered column: fixture with `scheduled: true` job shows "🕐" text; `scheduled: false` shows "👤"
+  - Rerun vs Retry labels: successful job row has green "Rerun" button; failed has amber "Retry"; cancelled has "Retry"
+  - Cancelled job badge renders as grey "Cancelled" (not red "Failed")
+  - Clear actions don't touch cancelled jobs (verify cancelled row persists after "Clear All Finished")
+- [ ] **PT.6 `modal-sizing.spec.ts`** — Editor/Log modal viewport:
+  - Open editor modal → measure `dialog` bounding box → width ≥ `viewport.width - 8rem`, height ≥ `viewport.height - 8rem`
+  - Assert Save/Validate buttons row is fully visible (bottom of button row `y + height` < viewport height)
+  - Open log modal → same dimension checks
+  - Repeat at 1024×768 and 1920×1080 viewports
+- [ ] **PT.7 `button-consistency.spec.ts`** — Toolbar button heights:
+  - On Devices tab: measure heights of Upgrade trigger, Actions trigger, + New Device, ⚙ gear → assert all equal
+  - On Queue tab: measure heights of Retry trigger, Clear trigger → assert equal to Devices buttons
+  - On Workers tab: measure heights of Clean All Caches, + Connect Worker → assert equal
+- [ ] **PT.8 `cancel-new-device.spec.ts`** — Cancel without saving deletes stub:
+  - "+ New Device" → Create → editor opens → press Escape (close without saving) → intercept `DELETE /ui/api/targets/...` → assert it was called
+
+### Prod tests (`ha-addon/ui/e2e-hass-4/`)
+
+- [ ] **PT.9 `schedule-fires.spec.ts`** — Schedule fires on real server:
+  - Set a one-time schedule for ~90s from now on `cyd-office-info` (or test device) via API
+  - Poll `/ui/api/queue` until a job with `scheduled: true` for that target appears (budget: 3 min)
+  - Assert job state reaches terminal (success or fail)
+  - Poll `/ui/api/targets` → assert `schedule_once` is cleared (auto-clear worked)
+- [ ] **PT.10 `incremental-build.spec.ts`** — Build cache reuse:
+  - Compile `cyd-office-info` via API, record `duration` from the queue's `finished_at - assigned_at`
+  - Edit the YAML comment (trivial change), compile again, record second duration
+  - Assert second duration < first duration × 0.5 (incremental should be ≥50% faster)
+  - Verify worker's `system_info.cached_targets > 0` via `/ui/api/workers`
+- [ ] **PT.11 `pinned-bulk-compile.spec.ts`** — Pinned version honored in bulk compile:
+  - Pin `garage-door-big` to a specific version via `POST /ui/api/targets/{f}/pin`
+  - Trigger "Upgrade All" via API
+  - Poll queue for the `garage-door-big` job → assert `esphome_version` matches the pinned version (not the global default)
+  - Clean up: unpin the device
+
+### Fixture updates
+
+- [ ] **PT.12 Update `e2e/fixtures.ts`** — add to the existing fixture data:
+  - A device with `pinned_version: "2024.11.1"` (for pin tests)
+  - A device with `schedule: "0 2 * * 0"`, `schedule_enabled: true`, `schedule_last_run: "..."` (for schedule tests)
+  - A device with `schedule_once: "2025-01-15T14:00:00Z"` (for one-time schedule tests)
+  - A queue job with `scheduled: true` (for triggered column test)
+  - A queue job with `state: "cancelled"` (for cancelled badge test)
+
+- [x] **51** *(1.4.0-dev.28)* — Retry now honors device pinned version. The retry endpoint was hardcoding `server_version` for all retried jobs. Now reads each target's `pin_version` from YAML metadata and passes a per-target `target_versions` map to `queue.retry()`.
 - [ ] 52 Button heights once again don't match each other. Please add a playwright test that ensures that the button heights and shapes on all of the tables are always the same. 
-- [ ] 53 Back the change that makes a clone automatically wipe out the Wi-Fi data. That is not the intent. I think the problem is that the new configuration gets saved before the user initially hits save on the editor. We should not write the file so that the scanner doesn't pick it up until after the user saves it. 
+- [x] **53** *(1.4.0-dev.28)* — Reverted #47 wifi.use_address strip. Instead, new/duplicated files are now written to `.staging/` subdirectory (scanner ignores subdirs). On first save, the save endpoint detects `.staging/` prefix, writes to the final location, and removes the staged file. Cancelling deletes only the staged file (#42). Cloned devices no longer appear online/in-HA before the user commits.
+- [x] **54** *(1.4.0-dev.28)* — Added "Clear Entire Queue" to the Queue tab's Clear dropdown. Cancels all active jobs, then clears all terminal jobs (including cancelled).
+- [x] **55** *(1.4.0-dev.28)* — Cancelled jobs are now retryable. Server `queue.retry()` accepts CANCELLED in eligibility check.
+- [x] **56** *(1.4.0-dev.28)* — Worker log text: "Installing ESPHome X..." → "Ensuring ESPHome X is available...".
+- [ ] 57 And logins are still a little too tall. They still hang out of the viewport. Please fix this once and for all. I want to be able to see the entire modal window. 
+- [ ] 58 All the tables with the buttons on the right, can we make the scaling behavior so that those buttons never get hidden even when the window is narrower than what the horizontal space required is? 
+- [ ] 59 When deleting a freshly cloned device that was never flashed, it leaves behind a row in the devices table that has no file attached, cannot be checked or deleted, but is also persistently there. That row should not exist. 

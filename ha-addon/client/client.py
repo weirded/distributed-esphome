@@ -43,7 +43,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.4.0-dev.27"
+CLIENT_VERSION = "1.4.0-dev.28"
 
 
 def _read_image_version() -> Optional[str]:
@@ -804,8 +804,8 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         esphome_bin = ESPHOME_BIN
         logger.info("Using esphome binary override: %s", esphome_bin)
     else:
-        _report_status(job_id, f"Downloading ESPHome {esphome_version}")
-        _flush_log_text(job_id, f"Installing ESPHome {esphome_version}...\n")
+        _report_status(job_id, f"Preparing ESPHome {esphome_version}")
+        _flush_log_text(job_id, f"Ensuring ESPHome {esphome_version} is available...\n")
         try:
             esphome_bin = version_manager.ensure_version(esphome_version)
             logger.info("Using esphome binary: %s", esphome_bin)

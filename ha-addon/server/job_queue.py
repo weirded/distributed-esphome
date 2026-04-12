@@ -510,11 +510,16 @@ class JobQueue:
         esphome_version: str,
         run_id: str,
         timeout_seconds: int,
+        target_versions: dict[str, str] | None = None,
     ) -> list["Job"]:
-        """Re-enqueue failed/timed_out/success jobs as new PENDING jobs. Returns new jobs.
+        """Re-enqueue failed/timed_out/cancelled/success jobs as new PENDING jobs.
 
         The old job being retried is removed; any other terminal jobs for the
         same target are also cleared (same semantics as enqueue).
+
+        *target_versions* maps target filenames to per-device ESPHome versions
+        (#51). When a device is pinned to a specific version, the retry should
+        use that version instead of the *esphome_version* default.
         """
         async with self._lock:
             new_jobs: list[Job] = []
@@ -522,7 +527,7 @@ class JobQueue:
                 job = self._jobs.get(job_id)
                 if job is None:
                     continue
-                is_failed = job.state in (JobState.FAILED, JobState.TIMED_OUT)
+                is_failed = job.state in (JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED)
                 is_ota_failed = job.state == JobState.SUCCESS and job.ota_result == "failed"
                 is_success = job.state == JobState.SUCCESS
                 if not (is_failed or is_ota_failed or is_success):
@@ -540,10 +545,11 @@ class JobQueue:
                 ]
                 for jid in stale:
                     del self._jobs[jid]
+                version_for_target = (target_versions or {}).get(target, esphome_version)
                 new_job = Job(
                     id=str(uuid.uuid4()),
                     target=target,
-                    esphome_version=esphome_version,
+                    esphome_version=version_for_target,
                     state=JobState.PENDING,
                     run_id=run_id,
                     timeout_seconds=timeout_seconds,
