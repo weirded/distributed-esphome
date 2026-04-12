@@ -757,3 +757,38 @@ def test_duplicate_device_preserves_includes_with_substitution_rewrite(tmp_path)
     assert "name: ${name}" in result
     # include preserved
     assert "!include" in result
+
+
+def test_duplicate_device_rewrites_substitutions_name_with_implicit_esphome_name(tmp_path):
+    """#43 follow-up: source has substitutions.name AND top-level esphome block
+    without a name field (the actual device name comes from an included
+    package that uses ${name}). Duplicate should rewrite substitutions.name
+    so the rename propagates into the includes, and leave the top-level
+    esphome block alone (no redundant literal name)."""
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "substitutions:\n"
+        "  name: athom-plug-1\n"
+        "  display_name: Office Speakers\n"
+        "esphome:\n"
+        "  area: Office\n"
+        "packages:\n"
+        "  common: !include .common.yaml\n"
+        "  athom: !include .athom-plug.yaml\n"
+    )
+
+    result = duplicate_device(str(tmp_path), "src.yaml", "athom-plug-1-copy")
+    # substitutions.name rewritten — this is the key fix
+    assert "name: athom-plug-1-copy" in result
+    assert "athom-plug-1" not in result.replace("athom-plug-1-copy", "")
+    # No literal esphome.name injected (the includes will pull it from ${name})
+    # Rough check: esphome block doesn't gain an explicit name line.
+    # The resulting esphome block should still be just "area: Office".
+    import yaml as _yaml
+    class _Loader(_yaml.SafeLoader):
+        pass
+    _Loader.add_multi_constructor("!", lambda loader, suf, node: None)
+    parsed = _yaml.load(result, Loader=_Loader)
+    assert "name" not in parsed["esphome"]
+    # Other substitutions preserved
+    assert parsed["substitutions"]["display_name"] == "Office Speakers"

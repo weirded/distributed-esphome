@@ -202,21 +202,42 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
     if not isinstance(data, dict):
         raise ValueError("Source YAML is not a mapping at the top level")
 
+    # ESPHome convention: ``substitutions.name`` is almost always the device
+    # name, used by included packages as ``${name}``. If it exists, rewrite
+    # it — even if top-level ``esphome.name`` is a literal — so the rename
+    # propagates into every include that uses ${name}.
+    subs = data.get("substitutions")
+    if isinstance(subs, dict) and "name" in subs:
+        subs["name"] = new_name
+
     esphome_block = data.get("esphome")
     if isinstance(esphome_block, dict):
         existing_name = esphome_block.get("name")
-        # If name is a ``${substitutions.foo}`` reference, rewrite the
-        # substitution value (preserving the indirection) rather than
-        # clobbering the esphome.name field itself.
         if isinstance(existing_name, str) and existing_name.startswith("${") and existing_name.endswith("}"):
+            # Top-level esphome.name is a ``${substitutions.foo}`` reference.
+            # If the reference target exists in substitutions, rewrite *that*
+            # entry (preserving the indirection). Otherwise clobber
+            # esphome.name directly so the file still names the device.
             sub_key = existing_name[2:-1]
-            subs = data.get("substitutions")
             if isinstance(subs, dict) and sub_key in subs:
                 subs[sub_key] = new_name
             else:
                 esphome_block["name"] = new_name
-        else:
+        elif isinstance(existing_name, str):
+            # Literal name at top level — rewrite it.
             esphome_block["name"] = new_name
+        # If esphome.name is absent we leave the top-level block alone: the
+        # real name probably lives in an included package under ${name},
+        # which we've already rewritten via substitutions.name above. Only
+        # inject a literal esphome.name when there's also no substitutions
+        # fallback to carry the rename.
+        elif not (isinstance(subs, dict) and "name" in subs):
+            esphome_block["name"] = new_name
+    elif isinstance(subs, dict) and "name" in subs:
+        # No esphome block at all but we did rewrite substitutions.name — the
+        # include pipeline will fill esphome.name from ${name}, so don't add
+        # a redundant top-level block.
+        pass
     else:
         data["esphome"] = {"name": new_name}
 
