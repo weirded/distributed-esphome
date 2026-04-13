@@ -94,11 +94,12 @@ jobs:
           pip-audit --requirement ha-addon/server/requirements.lock \
             --ignore-vuln CVE-2026-34073 \
             --ignore-vuln CVE-2026-39892 \
-            --ignore-vuln CVE-2026-25645
+            --ignore-vuln CVE-2026-25645 \
+            --ignore-vuln CVE-2026-40192
           # ^^^ Pinned by ESPHome's transitive dep bounds — can't upgrade
           # until ESPHome releases with relaxed constraints.
           #
-          # Applicability assessment (2026-04-10):
+          # Applicability assessment (2026-04-13):
           #   CVE-2026-34073 (cryptography — DNS name constraint bypass):
           #     NOT APPLICABLE. Transitive dep only; server↔worker comms
           #     use HTTP, not HTTPS. Certificate validation never runs.
@@ -109,6 +110,12 @@ jobs:
           #   CVE-2026-25645 (requests — predictable temp file in extract_zipped_paths):
           #     NOT APPLICABLE. We never call extract_zipped_paths(); only
           #     standard requests.get()/post() usage in client.py.
+          #   CVE-2026-40192 (pillow — image decoder issues, fix in 12.2.0):
+          #     NOT APPLICABLE. Pillow is a transitive dep of esphome, used
+          #     internally during YAML compilation for font/glyph rendering
+          #     (icon embedding, display layouts). The server/worker NEVER
+          #     accept user-uploaded images — only YAML configs. Pinned by
+          #     esphome==2026.3.3 to ==12.1.1; track upstream for relaxed bound.
 
       - name: pip-audit (client lockfile)
         run: pip-audit --requirement ha-addon/client/requirements.lock
