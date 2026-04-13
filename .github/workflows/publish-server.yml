@@ -24,7 +24,7 @@ jobs:
       id-token: write  # E.10: required for cosign keyless signing via OIDC
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Read version
         id: version
