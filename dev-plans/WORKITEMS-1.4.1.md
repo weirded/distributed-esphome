@@ -106,5 +106,11 @@ Custom integration that makes Distributed ESPHome a first-class HA citizen: nati
 - [ ] **HI.11 Device registry** — each managed device registered as an HA device with name, model (board/platform), sw_version, via_device (last worker).
 - [ ] **HI.12 Tests** — service call verification, update entity state, config flow mDNS + manual URL, auto-install script.
 
+## Server Performance
+
+- [ ] **SP.1 Enable gzip compression** — add `aiohttp-compress` middleware (or manual `Content-Encoding: gzip`) to the aiohttp app. Currently all JSON responses and static assets are sent uncompressed. A typical 50-device `/ui/api/targets` response (~40-50KB) would compress to ~5-10KB. Apply to all `/ui/api/*` responses and static file serving.
+- [ ] **SP.2 Strip job logs from queue list endpoint** — `/ui/api/queue` currently strips `log` from pending/working jobs but includes full logs (up to 512KB each) for finished jobs. 10 finished jobs = ~5MB polled every second. Fix: strip `log` from *all* jobs in the list response. The log modal already fetches logs individually via the existing `/ui/api/jobs/{id}/log` endpoint.
+- [ ] **SP.3 Fix version-changed log spam** — `pypi_version_refresher` in `main.py` writes to `app["_rt"]["esphome_detected_version"]` but reads from `app.get("esphome_detected_version")` — key mismatch. Every 30s poll thinks the version "changed" from None → 2026.3.3, logging 3 lines ("changed", "set", "auto-selected") every cycle. Fix the read path to match the write path. Demote steady-state unchanged checks to DEBUG.
+
 ## Open Bugs & Tweaks
 

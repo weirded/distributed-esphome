@@ -11,6 +11,13 @@ import {
 import type { Target, Worker } from '../types';
 import { stripYaml, timeAgo, formatCronHuman } from '../utils';
 import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+} from './ui/dropdown-menu';
 import { deleteTargetSchedule, getScheduleHistory, type ScheduleHistoryEntry } from '../api/client';
 
 function SortHeader({ label, column }: {
@@ -195,7 +202,7 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
     columnHelper.display({
       id: 'actions',
       cell: ({ row }) => (
-        <Button variant="secondary" size="xs" onClick={() => onSchedule(row.original.target)}>
+        <Button variant="secondary" size="sm" onClick={() => onSchedule(row.original.target)}>
           Edit
         </Button>
       ),
@@ -228,24 +235,6 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
     }
   }
 
-  if (scheduled.length === 0) {
-    return (
-      <div className="block" id="tab-schedules">
-        <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
-          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] bg-[var(--surface2)] px-4 py-3">
-            <h2 className="text-[13px] font-semibold uppercase tracking-wide text-[var(--text-muted)] mr-1">Schedules</h2>
-          </div>
-          <div className="p-8 text-center text-[var(--text-muted)]">
-            <p style={{ fontSize: 14 }}>No devices have a schedule configured.</p>
-            <p style={{ fontSize: 12, marginTop: 8 }}>
-              Open a device's hamburger menu and choose "Schedule Upgrade..." to set one up.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="block" id="tab-schedules">
       <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
@@ -267,11 +256,19 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
             )}
           </div>
           <div className="actions">
-            {selectedTargets.length > 0 && (
-              <Button variant="destructive" size="sm" onClick={handleRemoveSelected}>
-                Remove Selected ({selectedTargets.length})
-              </Button>
-            )}
+            {/* #88: Actions dropdown — always visible, items disabled when nothing selected */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer">
+                Actions <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={handleRemoveSelected} disabled={selectedTargets.length === 0}>
+                    Remove Selected{selectedTargets.length > 0 ? ` (${selectedTargets.length})` : ''}
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         <div className="table-wrap">
@@ -291,7 +288,11 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
             </thead>
             <tbody>
               {table.getRowModel().rows.length === 0 ? (
-                <tr className="empty-row"><td colSpan={7}>No schedules match filter</td></tr>
+                <tr className="empty-row"><td colSpan={7}>
+                  {scheduled.length === 0
+                    ? 'No devices have a schedule configured — open a device\'s menu and choose "Schedule Upgrade..."'
+                    : 'No schedules match filter'}
+                </td></tr>
               ) : (
                 table.getRowModel().rows.map(row => (
                   <tr key={row.id}>

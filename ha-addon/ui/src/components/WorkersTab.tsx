@@ -9,6 +9,13 @@ import {
 } from '@tanstack/react-table';
 import type { Job, SystemInfo, Worker } from '../types';
 import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+} from './ui/dropdown-menu';
 import { stripYaml, timeAgo } from '../utils';
 import { StatusDot } from './StatusDot';
 
@@ -218,8 +225,6 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
   const [filter, setFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'hostname', desc: false }]);
 
-  const online = workers.filter(c => c.online).length;
-  const countText = online + '/' + workers.length + ' online';
 
   // Filter before handing to TanStack — keeps filter state local, same as DevicesTab pattern
   const filteredWorkers = useMemo(() => {
@@ -428,9 +433,20 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             )}
           </div>
           <div className="actions">
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{countText}</span>
-            <Button variant="outline" size="sm" onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>Clean All Caches</Button>
+            {/* #88: standardized layout — primary "add new" action FIRST, Actions dropdown LAST */}
             <Button size="sm" onClick={() => onConnectWorker()}>+ Connect Worker</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer">
+                Actions <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>
+                    Clean All Caches
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         <div className="table-wrap">
