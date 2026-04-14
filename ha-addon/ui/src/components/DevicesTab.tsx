@@ -4,7 +4,6 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   flexRender,
-  createColumnHelper,
   type SortingState,
   type VisibilityState,
   type RowSelectionState,
@@ -12,12 +11,12 @@ import {
 import { pinTargetVersion, unpinTargetVersion, setTargetSchedule } from '../api/client';
 import { UpgradeModal } from './UpgradeModal';
 import type { Device, Job, Target, Worker } from '../types';
-import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../utils';
+import { stripYaml, haDeepLink } from '../utils';
 import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
-import { SortHeader, getAriaSort } from './ui/sort-header';
+import { getAriaSort } from './ui/sort-header';
 import { DeleteModal, RenameModal } from './devices/DeviceTableModals';
-import { DeviceContextMenu } from './devices/DeviceContextMenu';
+import { useDeviceColumns } from './devices/useDeviceColumns';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -120,19 +119,6 @@ function matchesFilter(filter: string, ...fields: (string | null | undefined)[])
  * Returns null when the YAML didn't declare any of wifi/ethernet/openthread —
  * the column shows a dash in that case.
  */
-/**
- * Convert a 5-field cron expression to a short human-readable string.
- * Covers common presets; falls back to the raw expression for complex ones.
- */
-function formatNetworkType(t: 'wifi' | 'ethernet' | 'thread' | null | undefined): string | null {
-  switch (t) {
-    case 'wifi': return 'WiFi';
-    case 'ethernet': return 'Eth';
-    case 'thread': return 'Thread';
-    default: return null;
-  }
-}
-
 function formatAddressSource(source: string | null | undefined): string | null {
   switch (source) {
     case 'mdns': return 'via mDNS';
@@ -256,377 +242,21 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
     );
   }, [unmanaged, filter]);
 
-  const columnHelper = createColumnHelper<Target>();
+  const columns = useDeviceColumns({
+    activeJobsByTarget,
+    streamerMode,
+    onUpgradeOne,
+    onEdit,
+    onLogs,
+    onToast,
+    onSchedule,
+    onDuplicate,
+    onRequestRename: setRenameTarget,
+    onRequestDelete: setDeleteTarget,
+    onPin: handlePin,
+    onUnpin: handleUnpin,
+  });
 
-  const columns = useMemo(() => [
-    columnHelper.display({
-      id: 'select',
-      enableHiding: false,
-      header: ({ table }) => (
-        <input
-          type="checkbox"
-          checked={table.getIsAllRowsSelected()}
-          ref={el => {
-            if (el) el.indeterminate = table.getIsSomeRowsSelected();
-          }}
-          onChange={table.getToggleAllRowsSelectedHandler()}
-        />
-      ),
-      cell: ({ row }) => (
-        <input
-          type="checkbox"
-          className="target-cb"
-          value={row.original.target}
-          checked={row.getIsSelected()}
-          onChange={row.getToggleSelectedHandler()}
-        />
-      ),
-    }),
-    columnHelper.accessor(
-      row => row.friendly_name || row.device_name || stripYaml(row.target),
-      {
-        id: 'device',
-        enableHiding: false,
-        header: ({ column }) => (
-          <SortHeader label="Device" column={column} />
-        ),
-        cell: ({ row: { original: t } }) => (
-          <>
-            <span className="device-name">
-              {t.friendly_name || t.device_name || stripYaml(t.target)}
-              {t.schedule && t.schedule_enabled && (
-                <span title={`Recurring schedule: ${t.schedule}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>🕐</span>
-              )}
-              {t.schedule_once && (
-                <span title={`One-time schedule: ${t.schedule_once}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>📅</span>
-              )}
-            </span>
-            <div className="device-filename">{stripYaml(t.target)}</div>
-          </>
-        ),
-        sortingFn: 'alphanumeric',
-      }
-    ),
-    columnHelper.accessor(
-      row => {
-        // Active job sorts first so a "currently upgrading" group sticks to
-        // the top of an ascending sort.
-        if (activeJobsByTarget.has(row.target)) return 'a-upgrading';
-        if (row.online == null) return 'b-unknown';
-        return row.online ? 'c-online' : 'd-offline';
-      },
-      {
-        id: 'status',
-        header: ({ column }) => <SortHeader label="Status" column={column} />,
-        cell: ({ row: { original: t } }) => {
-          const lastSeenEl = t.last_seen
-            ? <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>
-            : null;
-          // Active job takes priority over the device's online state — even
-          // an offline device can have a job in flight (the worker compiles
-          // first, OTA happens later).
-          const activeJob = activeJobsByTarget.get(t.target);
-          if (activeJob) {
-            const statusText = activeJob.status_text || (activeJob.state === 'pending' ? 'Pending…' : 'Compiling…');
-            return (
-              <span title={statusText}>
-                <StatusDot status="upgrading" label={statusText} />
-              </span>
-            );
-          }
-          if (t.online == null) return <StatusDot status="checking" />;
-          if (t.online) return <><StatusDot status="online" />{lastSeenEl}</>;
-          return <><StatusDot status="offline" />{lastSeenEl}</>;
-        },
-        sortingFn: 'alphanumeric',
-      }
-    ),
-    columnHelper.accessor(
-      row => row.ha_configured ? 'yes' : '',
-      {
-        id: 'ha',
-        header: ({ column }) => <SortHeader label="HA" column={column} />,
-        cell: ({ row: { original: t } }) => {
-          if (!t.ha_configured) {
-            return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>;
-          }
-          // #35: when we have a device_id (matched via MAC), make "Yes" a
-          // clickable deep-link to the HA device page. If we don't have a
-          // device_id (matched only via name), just show the text.
-          if (t.ha_device_id) {
-            const href = haDeepLink(`/config/devices/device/${t.ha_device_id}`);
-            if (href) {
-              return (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener"
-                  title="Open device in Home Assistant"
-                  style={{ fontSize: 12, color: 'var(--success)', textDecoration: 'none' }}
-                  className="hover:underline"
-                >
-                  Yes ↗
-                </a>
-              );
-            }
-          }
-          return <span style={{ fontSize: 12, color: 'var(--success)' }}>Yes</span>;
-        },
-        sortingFn: 'alphanumeric',
-      }
-    ),
-    columnHelper.accessor(row => row.ip_address || '', {
-      id: 'ip',
-      header: ({ column }) => <SortHeader label="IP" column={column} />,
-      cell: ({ row: { original: t } }) => {
-        // In streamer mode: still blur via .sensitive CSS, but disable the
-        // link so screenshots can't be click-through targets.
-        const showIpLink = !streamerMode && t.has_web_server && t.online && t.ip_address;
-        const sourceLabel = formatAddressSource(t.address_source);
-        return (
-          <span style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
-            {showIpLink
-              ? (
-                <a
-                  href={`http://${t.ip_address}`}
-                  target="_blank"
-                  rel="noopener"
-                  className="ip-link"
-                >
-                  {t.ip_address}<span style={{ fontSize: 10 }}>&#8599;</span>
-                </a>
-              )
-              : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
-            {sourceLabel && (
-              <div
-                style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
-                title={`Address source: ${t.address_source}`}
-              >
-                {sourceLabel}
-              </div>
-            )}
-          </span>
-        );
-      },
-      sortingFn: 'alphanumeric',
-    }),
-    // #10 — network type (default-visible). Sorts by primary network then
-    // by ip mode (static before dhcp), so an ascending sort groups
-    // "WiFi · Static" together followed by "WiFi · DHCP", then Ethernet,
-    // then Thread. Tooltip shows all five facts in one line. The "·M"
-    // suffix marks Matter devices (#13).
-    columnHelper.accessor(
-      row => `${row.network_type ?? 'zzz'}-${row.network_static_ip ? '0' : '1'}-${row.network_matter ? '0' : '1'}`,
-      {
-        id: 'net',
-        header: ({ column }) => <SortHeader label="Net" column={column} />,
-        cell: ({ row: { original: t } }) => {
-          const label = formatNetworkType(t.network_type);
-          if (!label) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-          const ipMode = t.network_static_ip ? 'Static' : 'DHCP';
-          const facts: string[] = [label, ipMode];
-          if (t.network_ipv6) facts.push('IPv6');
-          if (t.network_ap_fallback) facts.push('AP fallback');
-          if (t.network_matter) facts.push('Matter');
-          const tooltip = facts.join(' · ');
-          return (
-            <span
-              style={{
-                fontSize: 11,
-                color: 'var(--text)',
-                whiteSpace: 'nowrap',
-              }}
-              title={tooltip}
-            >
-              {label}
-              {t.network_static_ip && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 3 }} title="Static IP">·S</span>
-              )}
-              {t.network_matter && (
-                <span style={{ color: 'var(--accent)', fontSize: 10, marginLeft: 3 }} title="Matter">·M</span>
-              )}
-            </span>
-          );
-        },
-        sortingFn: 'alphanumeric',
-      },
-    ),
-    // #19: combined IP Mode + IPv6 column. Sorts by mode then by ipv6 so an
-    // ascending sort groups all "Static + IPv6" together. Renders as e.g.
-    // "Static · IPv6" or just "DHCP" or "—" for unmanaged-network targets.
-    columnHelper.accessor(
-      row => {
-        if (!row.network_type) return '';
-        const mode = row.network_static_ip ? 'static' : 'dhcp';
-        return `${mode}-${row.network_ipv6 ? '6' : '4'}`;
-      },
-      {
-        id: 'ipconfig',
-        header: ({ column }) => <SortHeader label="IP Config" column={column} />,
-        cell: ({ row: { original: t } }) => {
-          if (!t.network_type) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-          const mode = t.network_static_ip ? 'Static' : 'DHCP';
-          return (
-            <span style={{ fontSize: 12 }} title={`${mode}${t.network_ipv6 ? ' · IPv6' : ''}`}>
-              {mode}
-              {t.network_ipv6 && (
-                <span style={{ color: 'var(--success)', marginLeft: 4 }}>· IPv6</span>
-              )}
-            </span>
-          );
-        },
-        sortingFn: 'alphanumeric',
-      },
-    ),
-    columnHelper.accessor(row => row.network_ap_fallback ? 'yes' : '', {
-      id: 'ap',
-      header: ({ column }) => <SortHeader label="AP" column={column} />,
-      cell: ({ row: { original: t } }) => (
-        <span
-          style={{ fontSize: 12 }}
-          title={t.network_ap_fallback ? 'Fallback access point configured (wifi.ap)' : undefined}
-        >
-          {t.network_ap_fallback
-            ? <span style={{ color: 'var(--success)' }}>Yes</span>
-            : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-        </span>
-      ),
-      sortingFn: 'alphanumeric',
-    }),
-    // #5/#40/#92: human-readable schedule column. Renders BOTH the recurring
-    // cron and any one-time schedule when both are set, stacked. Toggleable
-    // (default off).
-    columnHelper.accessor(row => row.schedule || row.schedule_once || '', {
-      id: 'schedule',
-      header: ({ column }) => <SortHeader label="Schedule" column={column} />,
-      cell: ({ row: { original: t } }) => {
-        // #72: schedule values are clickable → open upgrade modal in schedule mode
-        const handleClick = () => onSchedule(t.target);
-        if (!t.schedule && !t.schedule_once) {
-          return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-        }
-        const enabled = t.schedule_enabled !== false;
-        const tzLabel = ` (${t.schedule_tz || 'UTC'})`;
-        const cronHuman = t.schedule ? formatCronHuman(t.schedule) : null;
-        const onceWhen = t.schedule_once ? new Date(t.schedule_once).toLocaleString() : null;
-        const titleParts: string[] = [];
-        if (t.schedule) titleParts.push(`${t.schedule}${tzLabel}${enabled ? '' : ' (paused)'}`);
-        if (t.schedule_once) titleParts.push(`One-time: ${t.schedule_once}`);
-        return (
-          <span
-            style={{ cursor: 'pointer', color: 'var(--accent)' }}
-            title={`${titleParts.join(' • ')} — click to edit`}
-            onClick={handleClick}
-          >
-            {cronHuman && (
-              <span style={{ opacity: enabled ? 1 : 0.5 }}>
-                🕐 {cronHuman}
-                {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>(paused)</span>}
-              </span>
-            )}
-            {cronHuman && onceWhen && <br />}
-            {onceWhen && <span>📅 Once: {onceWhen}</span>}
-          </span>
-        );
-      },
-      sortingFn: 'alphanumeric',
-    }),
-    columnHelper.accessor(row => row.running_version || '', {
-      id: 'running',
-      header: ({ column }) => <SortHeader label="Version" column={column} />,
-      cell: ({ row: { original: t } }) => (
-        <span style={{ fontSize: 12 }}>
-          {t.running_version || '—'}
-          {t.pinned_version && (
-            <span title={`Pinned to ${t.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>
-          )}
-          {t.config_modified && <div className="config-modified">config changed</div>}
-        </span>
-      ),
-      sortingFn: 'alphanumeric',
-    }),
-    columnHelper.accessor(row => row.area || '', {
-      id: 'area',
-      header: ({ column }) => <SortHeader label="Area" column={column} />,
-      cell: ({ row: { original: t } }) => (
-        <span style={{ fontSize: 12 }}>
-          {t.area || <span style={{ color: 'var(--text-muted)' }}>—</span>}
-        </span>
-      ),
-      sortingFn: 'alphanumeric',
-    }),
-    columnHelper.accessor(row => row.comment || '', {
-      id: 'comment',
-      header: ({ column }) => <SortHeader label="Comment" column={column} />,
-      cell: ({ row: { original: t } }) => (
-        <span style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-          {t.comment || <span style={{ color: 'var(--text-muted)' }}>—</span>}
-        </span>
-      ),
-      sortingFn: 'alphanumeric',
-    }),
-    columnHelper.accessor(
-      row => row.project_name ? (row.project_version ? `${row.project_name} ${row.project_version}` : row.project_name) : '',
-      {
-        id: 'project',
-        header: ({ column }) => <SortHeader label="Project" column={column} />,
-        cell: ({ row: { original: t } }) => {
-          const projectStr = t.project_name
-            ? (t.project_version ? `${t.project_name} ${t.project_version}` : t.project_name)
-            : '—';
-          return (
-            <span style={{ fontSize: 12 }}>
-              {projectStr === '—' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : projectStr}
-            </span>
-          );
-        },
-        sortingFn: 'alphanumeric',
-      }
-    ),
-    columnHelper.display({
-      id: 'actions',
-      enableHiding: false,
-      cell: ({ row: { original: t } }) => {
-        const upgradeVariant = t.needs_update ? 'success' : 'secondary';
-        // #23 revision: the Upgrade button stays enabled even while a job
-        // is running for this target. Clicking it re-opens the UpgradeModal
-        // and the server-side coalescing rules (#23) take care of the rest:
-        // the second click creates a single "Queued" follow-up; a third
-        // click updates that follow-up in place. This matches the
-        // CLAUDE.md "Disable, don't fail" guideline's explicit Upgrade
-        // exception — compiling for a target is always meaningful, even
-        // if one is already running, because the latest YAML will be used.
-        const inFlight = activeJobsByTarget.has(t.target);
-        const upgradeTitle = inFlight
-          ? `A build is already running. Click to queue the next compile (will use the latest YAML at the time it starts).`
-          : undefined;
-        return (
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <Button
-              variant={upgradeVariant as 'success' | 'secondary'}
-              size="sm"
-              title={upgradeTitle}
-              onClick={() => onUpgradeOne(t.target)}
-            >
-              Upgrade
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
-            <DeviceContextMenu
-              target={t}
-              onToast={onToast}
-              onRename={setRenameTarget}
-              onDuplicate={(tg) => onDuplicate(tg.target)}
-              onDelete={setDeleteTarget}
-              onLogs={onLogs}
-              onPin={handlePin}
-              onUnpin={handleUnpin}
-            />
-          </div>
-        );
-      },
-    }),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onSchedule]);
 
   const table = useReactTable({
     data: filteredTargets,
