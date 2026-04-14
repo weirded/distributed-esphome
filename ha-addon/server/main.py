@@ -93,31 +93,32 @@ _SECURITY_HEADERS = {
 
 @web.middleware
 async def compression_middleware(request: web.Request, handler):
-    """SP.1: opportunistic gzip on responses.
+    """SP.1: opportunistic gzip on JSON responses.
 
-    A typical /ui/api/targets response on a 50-device fleet is ~40-50 KB of
-    JSON; gzip cuts it to ~5-10 KB. The /ui/api/queue list (after SP.2's
-    log strip) is also a frequent 1 Hz poll target. Static JS/CSS in
-    /static benefits even more.
+    Scope: plain `web.Response` objects (which is what `web.json_response()`
+    returns). A typical /ui/api/targets response on a 50-device fleet is
+    ~40-50 KB of JSON; gzip cuts it to ~5-10 KB. Adds up across 1 Hz polls
+    for devices/queue/workers over slow uplinks (HA Ingress over mobile,
+    VPN, etc.).
 
-    aiohttp's `enable_compression()` honors the request's Accept-Encoding,
-    skips compression if the client doesn't advertise gzip, and is a no-op
-    if the response already has Content-Encoding set. WebSocket upgrade
-    responses are explicitly excluded.
+    Deliberately excluded:
+      - WebSocketResponse (no body to compress, and prepare() has run).
+      - FileResponse (aiohttp's static handler runs its own Range/cache/
+        compression logic that conflicts with enable_compression's
+        `assert self._payload_writer is not None` in _start_compression).
+        Static JS/CSS are already minified + SWR-cached; the ~300 KB JS
+        bundle is served once per page load so compression there is nice
+        but not critical.
     """
     response = await handler(request)
-    if (
-        isinstance(response, web.StreamResponse)
-        and not isinstance(response, web.WebSocketResponse)
-        and not response.headers.get("Content-Encoding")
-    ):
+    # Note: `web.Response` is a subclass of StreamResponse; isinstance here
+    # matches ONLY plain Response (what json_response/Response returns),
+    # not FileResponse / WebSocketResponse / custom StreamResponse subclasses.
+    if type(response) is web.Response and not response.headers.get("Content-Encoding"):
         try:
             response.enable_compression()
         except Exception:
-            # enable_compression can raise on already-prepared responses
-            # (e.g. mid-stream WebSocket-like flows); compression is an
-            # optimization, not a correctness requirement.
-            pass
+            logger.debug("enable_compression failed; sending uncompressed", exc_info=True)
     return response
 
 

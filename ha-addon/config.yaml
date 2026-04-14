@@ -1,5 +1,5 @@
 name: "ESPHome Distributed Build Server"
-version: "1.4.1-dev.7"
+version: "1.4.1-dev.8"
 slug: "esphome_dist_server"
 description: "Manage large fleets of ESPHome devices with distributed compilation, per-device version pinning, and scheduled OTA upgrades"
 url: "https://github.com/weirded/distributed-esphome"
