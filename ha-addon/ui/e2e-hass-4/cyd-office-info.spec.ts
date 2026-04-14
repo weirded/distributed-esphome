@@ -259,8 +259,8 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
     await expect(menuTrigger).toBeVisible();
     await menuTrigger.click();
 
-    // Click "Live Logs"
-    await page.getByRole('button', { name: /^live logs$/i }).click();
+    // Click "Live Logs" — Radix DropdownMenuItem (post-QS.16) is role="menuitem"
+    await page.getByRole('menuitem', { name: /^live logs$/i }).click();
 
     // The DeviceLogModal also uses xterm — wait for it to render
     const terminal = page.locator('.xterm-screen').first();

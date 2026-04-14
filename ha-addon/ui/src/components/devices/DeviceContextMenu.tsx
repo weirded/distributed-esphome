@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -18,13 +19,20 @@ import type { Target } from '../../types';
  * pixel-coordinate tracking, a custom viewport-flip calculation, and a
  * backdrop click-catcher. shadcn's DropdownMenu (Radix-based) handles all
  * of that natively: placement, click-outside, Escape-to-close, focus trap,
- * and keyboard navigation. This removes ~60 lines of manual DOM math and
- * fixes the CLAUDE.md "default to shadcn/ui" violation.
+ * and keyboard navigation.
  *
  * Menu items preserve their previous ordering, disabled-with-tooltip
  * behaviors (Restart when no `has_restart_button`, Copy API Key when no
  * `has_api_key`), and click-through actions. The trigger remains the ⋮
  * glyph so the row visual is unchanged.
+ *
+ * #2/#3: wrapped in React.memo with a custom equality check. SWR hands us
+ * a fresh `target` object every poll (new reference, same values), which
+ * would otherwise re-render the DropdownMenu and cause a visible flash in
+ * the overlay's CSS transitions. The compare below treats function props
+ * as always-equal (identity changes don't matter for behavior) and
+ * compares the target fields we actually read. Open state lives in the
+ * parent, so it's still authoritative across re-renders.
  */
 
 interface Props {
@@ -36,18 +44,11 @@ interface Props {
   onLogs: (target: string) => void;
   onPin: (target: string) => void;
   onUnpin: (target: string) => void;
-  /**
-   * #2: open state is controlled by the parent so it survives the row
-   * re-mounts that follow every SWR poll. If we let Radix manage `open`
-   * internally, the menu would close on every 1Hz refresh because the
-   * column-cell (and its DropdownMenu instance) is torn down when the
-   * useDeviceColumns memo invalidates.
-   */
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function DeviceContextMenu({
+function DeviceContextMenuImpl({
   target: t,
   onToast,
   onRename,
@@ -133,3 +134,24 @@ export function DeviceContextMenu({
     </DropdownMenu>
   );
 }
+
+/**
+ * Custom equality: compare only the Target fields we actually use in render,
+ * plus `open`. Function props are treated as always-equal — the cell inlines
+ * fresh arrows every render (closing over the current `setMenuOpenTarget`),
+ * but their behavior is identical as long as they eventually call the same
+ * underlying handlers.
+ */
+function propsEqual(prev: Props, next: Props): boolean {
+  if (prev.open !== next.open) return false;
+  const a = prev.target;
+  const b = next.target;
+  return (
+    a.target === b.target &&
+    a.has_restart_button === b.has_restart_button &&
+    a.has_api_key === b.has_api_key &&
+    a.pinned_version === b.pinned_version
+  );
+}
+
+export const DeviceContextMenu = memo(DeviceContextMenuImpl, propsEqual);
