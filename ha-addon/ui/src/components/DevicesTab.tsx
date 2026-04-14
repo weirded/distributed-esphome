@@ -601,9 +601,9 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           );
         }
         if (!t.schedule) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-        const human = formatCronHuman(t.schedule, t.schedule_tz);
+        const human = formatCronHuman(t.schedule);
         const enabled = t.schedule_enabled !== false;
-        const tzLabel = t.schedule_tz ? ` (${t.schedule_tz})` : '';
+        const tzLabel = ` (${t.schedule_tz || 'UTC'})`;
         return (
           <span
             style={{ cursor: 'pointer', color: 'var(--accent)', opacity: enabled ? 1 : 0.5 }}

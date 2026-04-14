@@ -9,7 +9,6 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import type { Worker } from '../types';
-import { utcCronToLocal } from '../utils';
 
 const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -177,13 +176,14 @@ export function UpgradeModal({
   const [mode, setMode] = useState<'now' | 'schedule'>(scheduleOnly ? 'schedule' : defaultMode);
 
   // --- Schedule state ---
-  // #90: cron is interpreted in `currentScheduleTz` server-side. If the existing
-  // schedule has no tz (legacy, pre-#90), it's stored as UTC — convert once for
-  // editing display so the user sees their local time, and we'll write the new
-  // browser tz on save.
-  const seedCron = currentSchedule
-    ? (currentScheduleTz ? currentSchedule : utcCronToLocal(currentSchedule).cron)
-    : '';
+  // #90/#91: cron is shown literally in the picker — no client-side hour
+  // conversion. For schedules with `currentScheduleTz` set, the literal
+  // cron is what fires in that tz. For legacy schedules without a tz
+  // (interpreted as UTC server-side), we still show the literal cron — the
+  // user re-saves to claim it for their browser tz, which is honest about
+  // what's stored.
+  void currentScheduleTz;
+  const seedCron = currentSchedule ?? '';
   const parsed = seedCron ? parseCron(seedCron) : null;
   const [scheduleType, setScheduleType] = useState<'recurring' | 'once'>(currentOnce ? 'once' : 'recurring');
   const [interval, setInterval] = useState(parsed?.interval ?? 'days');
