@@ -9,7 +9,7 @@ import {
   type VisibilityState,
   type RowSelectionState,
 } from '@tanstack/react-table';
-import { getApiKey, restartDevice, pinTargetVersion, unpinTargetVersion, setTargetSchedule } from '../api/client';
+import { pinTargetVersion, unpinTargetVersion, setTargetSchedule } from '../api/client';
 import { UpgradeModal } from './UpgradeModal';
 import type { Device, Job, Target, Worker } from '../types';
 import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../utils';
@@ -17,6 +17,7 @@ import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
 import { DeleteModal, RenameModal } from './devices/DeviceTableModals';
+import { DeviceContextMenu } from './devices/DeviceContextMenu';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -154,8 +155,6 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadColumnVisibility);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [menuTarget, setMenuTarget] = useState<Target | null>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
@@ -612,16 +611,16 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
               Upgrade
             </Button>
             <Button variant="secondary" size="sm" onClick={() => onEdit(t.target)}>Edit</Button>
-            <span
-              className="action-menu-trigger"
-              title="More actions"
-              onClick={(e) => {
-                if (menuTarget?.target === t.target) { setMenuTarget(null); setMenuPos(null); return; }
-                const rect = e.currentTarget.getBoundingClientRect();
-                setMenuPos({ top: rect.bottom + 4, left: rect.right });
-                setMenuTarget(t);
-              }}
-            >&#8942;</span>
+            <DeviceContextMenu
+              target={t}
+              onToast={onToast}
+              onRename={setRenameTarget}
+              onDuplicate={(tg) => onDuplicate(tg.target)}
+              onDelete={setDeleteTarget}
+              onLogs={onLogs}
+              onPin={handlePin}
+              onUnpin={handleUnpin}
+            />
           </div>
         );
       },
@@ -918,137 +917,10 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
         />
       )}
 
-      {menuTarget && menuPos && (
-        <DeviceMenu
-          target={menuTarget}
-          position={menuPos}
-          onToast={onToast}
-          onDelete={(t) => { setMenuTarget(null); setMenuPos(null); setDeleteTarget(t); }}
-          onRename={(t) => { setMenuTarget(null); setMenuPos(null); setRenameTarget(t); }}
-          onDuplicate={(t) => { setMenuTarget(null); setMenuPos(null); onDuplicate(t.target); }}
-          onLogs={(t) => { setMenuTarget(null); setMenuPos(null); onLogs(t); }}
-          onPin={(t) => { setMenuTarget(null); setMenuPos(null); handlePin(t); }}
-          onUnpin={(t) => { setMenuTarget(null); setMenuPos(null); handleUnpin(t); }}
-          onClose={() => { setMenuTarget(null); setMenuPos(null); }}
-        />
-      )}
     </div>
   );
 }
 
-// Inline sort header used in column defs — renders ▲/▼ indicators
-
-function DeviceMenu({
-  target: t,
-  position,
-  onToast,
-  onDelete,
-  onRename,
-  onDuplicate,
-  onLogs,
-  onPin,
-  onUnpin,
-  onClose,
-}: {
-  target: Target;
-  position: { top: number; left: number };
-  onToast: (msg: string, type?: 'info' | 'success' | 'error') => void;
-  onDelete: (target: string) => void;
-  onRename: (target: string) => void;
-  onDuplicate: (target: Target) => void;
-  onLogs: (target: string) => void;
-  onPin: (target: string) => void;
-  onUnpin: (target: string) => void;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
-
-  async function handleCopyApiKey() {
-    try {
-      const key = await getApiKey(t.target);
-      await navigator.clipboard.writeText(key);
-      onToast('API key copied!', 'success');
-    } catch {
-      onToast('No API key found', 'info');
-    }
-  }
-
-  async function handleRestart() {
-    try {
-      await restartDevice(t.target);
-      onToast(`Restarting ${stripYaml(t.target)}...`, 'success');
-    } catch (err) {
-      onToast('Restart failed: ' + (err as Error).message, 'error');
-    }
-  }
-
-  return (
-    <>
-      {/* Backdrop to close on outside click */}
-      <div className="fixed inset-0 z-50" onClick={onClose} />
-      <div
-        className="fixed z-50 min-w-[200px] w-max max-w-[320px] rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-md ring-1 ring-[var(--foreground)]/10"
-        ref={(el) => {
-          if (!el) return;
-          const rect = el.getBoundingClientRect();
-          // If menu extends below viewport, flip it upward
-          if (rect.bottom > window.innerHeight) {
-            el.style.top = `${Math.max(4, position.top - rect.height - 4)}px`;
-          }
-          // If menu extends beyond left edge after translateX(-100%), nudge right
-          if (rect.left < 0) {
-            el.style.left = `${position.left}px`;
-            el.style.transform = 'none';
-          }
-        }}
-        style={{ top: position.top, left: position.left, transform: 'translateX(-100%)' }}
-      >
-        <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Device</div>
-        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onLogs(t.target)}>Live Logs</button>
-        {/* #14: gray out Restart when the YAML doesn't expose a restart button.
-            We follow the same disabled-with-tooltip pattern as the API Key
-            button below — disabled rather than hidden so the user knows the
-            option exists and what they need to do (add `button: - platform:
-            restart` to the YAML). */}
-        <button
-          className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_restart_button ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`}
-          onClick={handleRestart}
-          title={t.has_restart_button ? undefined : 'No restart button in this device\'s YAML — add `button: [{platform: restart}]` to enable.'}
-        >
-          Restart
-        </button>
-        <button className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm ${t.has_api_key ? 'cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]' : 'opacity-50 pointer-events-none'}`} onClick={handleCopyApiKey}>Copy API Key</button>
-
-        <div className="-mx-1 my-1 h-px bg-[var(--border)]" />
-
-        <div className="px-1.5 py-1 text-xs font-medium text-[var(--text-muted)]">Config</div>
-        {/* #93: "Schedule Upgrade…" removed — accessible via the Upgrade
-            button by switching to "Scheduled" mode. */}
-        {t.pinned_version
-          ? <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onUnpin(t.target)}>Unpin version ({t.pinned_version})</button>
-          : <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onPin(t.target)}>Pin to current version</button>
-        }
-        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onRename(t.target)}>Rename</button>
-        {/* CD.6: duplicate this device into a new file */}
-        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]" onClick={() => onDuplicate(t)}>Duplicate…</button>
-        <button className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-sm cursor-pointer text-[var(--destructive)] hover:bg-[var(--destructive)]/10" onClick={() => onDelete(t.target)}>Delete</button>
-
-        {/*
-          #16: the "Upgrade on..." submenu was removed from the per-row
-          context menu. Worker selection now lives in the UpgradeModal that
-          opens from the row's Upgrade button itself, which also lets the
-          user pick the ESPHome version. The hover-bridge / width work from
-          #31 was on this submenu — that fix lives on in the historical
-          1.3.1 dev cycle but the affected element no longer exists.
-        */}
-      </div>
-    </>
-  );
-}
 
 function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (col: OptionalColumnId) => boolean }) {
   const statusEl = d.online
