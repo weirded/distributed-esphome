@@ -9,6 +9,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import type { Worker } from '../types';
+import { localCronToUtc, utcCronToLocal } from '../utils';
 
 /**
  * Unified Upgrade modal (#22).
@@ -202,8 +203,12 @@ export function UpgradeModal({
   const [every, setEvery] = useState(parsed?.every ?? 1);
   const [time, setTime] = useState(parsed?.time ?? '02:00');
   const [dow, setDow] = useState(parsed?.dow ?? '0');
-  const [rawCron, setRawCron] = useState(currentSchedule ?? '');
+  // #89: raw cron is shown to and entered by the user in *local* time; we
+  // convert to UTC at submit. Pre-fill the existing UTC cron (if any) by
+  // converting back to local first.
+  const [rawCron, setRawCron] = useState(currentSchedule ? utcCronToLocal(currentSchedule).cron : '');
   const [cronMode, setCronMode] = useState<'friendly' | 'cron'>(parsed || !currentSchedule ? 'friendly' : 'cron');
+  const rawCronShift = cronMode === 'cron' && rawCron.trim() ? localCronToUtc(rawCron.trim()) : null;
   // #33: datetime-local expects a *local* wall-clock value (no timezone). Using
   // `toISOString()` returns UTC, so east-of-UTC users would see a time in the
   // past and west-of-UTC users (e.g. the author) would see a time many hours
@@ -215,7 +220,9 @@ export function UpgradeModal({
     return toLocalInput(currentOnce ? new Date(currentOnce) : new Date());
   });
 
-  const effectiveCron = cronMode === 'cron' ? rawCron.trim() : buildCron(interval, every, time, dow);
+  const effectiveCron = cronMode === 'cron'
+    ? (rawCronShift?.cron ?? rawCron.trim())
+    : buildCron(interval, every, time, dow);
   const hasExistingSchedule = !!(currentSchedule || currentOnce);
 
   // --- Pin warning ---
@@ -382,7 +389,12 @@ export function UpgradeModal({
                 ) : (
                   <div>
                     <Input type="text" value={rawCron} placeholder="0 2 * * *" onChange={e => setRawCron(e.target.value)} />
-                    <div className="mt-1 text-[10px] text-[var(--text-muted)]">minute hour day-of-month month day-of-week</div>
+                    <div className="mt-1 text-[10px] text-[var(--text-muted)]">minute hour day-of-month month day-of-week — entered in your local time</div>
+                    {rawCronShift?.complex && (
+                      <div className="mt-1 text-[10px]" style={{ color: 'var(--accent)' }}>
+                        Complex expression — stored as-is and interpreted as UTC by the scheduler.
+                      </div>
+                    )}
                   </div>
                 )
               ) : (
@@ -394,7 +406,7 @@ export function UpgradeModal({
 
               {scheduleType === 'recurring' && cronMode === 'friendly' && (
                 <div className="text-[10px] text-[var(--text-muted)]">
-                  Cron: <code className="bg-[var(--surface)] px-1 rounded">{effectiveCron}</code>
+                  Cron: <code className="bg-[var(--surface)] px-1 rounded">{utcCronToLocal(effectiveCron).cron}</code> <span className="opacity-70">(local time)</span>
                 </div>
               )}
 

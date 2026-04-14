@@ -29,6 +29,71 @@ function _cronUtcToLocal(utcHour: number, utcMinute: number, utcDow?: number): {
   return { hour: d.getHours(), minute: d.getMinutes(), dow: d.getDay() };
 }
 
+/**
+ * #89: convert a cron expression's hour (and possibly day-of-week) field
+ * between local time and UTC. Cron is stored in UTC server-side; the user
+ * thinks in local time.
+ *
+ * Handles the common case: simple integer hour and (optional) integer dow.
+ * Other fields (minute, dom, month) are timezone-agnostic and pass through.
+ * If the hour or dow field is anything more exotic (range, list, step,
+ * wildcard), `cronTimeShift()` returns the cron unchanged and `complex: true`
+ * — those expressions are stored verbatim and the user is shown a note.
+ */
+function _shiftCron(cron: string, mode: 'localToUtc' | 'utcToLocal'): { cron: string; complex: boolean } {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return { cron, complex: false };
+  const [min, hour, dom, mon, dow] = parts;
+  const minNum = parseInt(min, 10);
+  const hourNum = parseInt(hour, 10);
+  // Min must be a simple integer; hour must be a simple integer.
+  if (isNaN(minNum) || String(minNum) !== min) return { cron, complex: true };
+  if (isNaN(hourNum) || String(hourNum) !== hour) return { cron, complex: true };
+
+  // Build a reference Date with the source-side hour/minute, then read it
+  // back in the target timezone to learn how the day shifted.
+  const ref = new Date();
+  ref.setHours(0, 0, 0, 0);
+  if (mode === 'localToUtc') {
+    ref.setHours(hourNum, minNum);
+    const newHour = ref.getUTCHours();
+    const newMin = ref.getUTCMinutes();
+    const dayShift = ref.getUTCDate() - ref.getDate();
+    return _withShift(newMin, newHour, dom, mon, dow, dayShift, 'localToUtc');
+  } else {
+    ref.setUTCHours(hourNum, minNum);
+    const newHour = ref.getHours();
+    const newMin = ref.getMinutes();
+    const dayShift = ref.getDate() - ref.getUTCDate();
+    return _withShift(newMin, newHour, dom, mon, dow, dayShift, 'utcToLocal');
+  }
+}
+
+function _withShift(
+  newMin: number, newHour: number, dom: string, mon: string, dow: string,
+  dayShift: number, mode: 'localToUtc' | 'utcToLocal',
+): { cron: string; complex: boolean } {
+  if (dow === '*' || dayShift === 0) {
+    return { cron: `${newMin} ${newHour} ${dom} ${mon} ${dow}`, complex: false };
+  }
+  const dowNum = parseInt(dow, 10);
+  if (isNaN(dowNum) || String(dowNum) !== dow) {
+    // Day-shifted but dow is complex (range/list) — can't safely rewrite.
+    void mode;
+    return { cron: `${newMin} ${newHour} ${dom} ${mon} ${dow}`, complex: true };
+  }
+  const newDow = ((dowNum + dayShift) % 7 + 7) % 7;
+  return { cron: `${newMin} ${newHour} ${dom} ${mon} ${newDow}`, complex: false };
+}
+
+export function localCronToUtc(cron: string): { cron: string; complex: boolean } {
+  return _shiftCron(cron, 'localToUtc');
+}
+
+export function utcCronToLocal(cron: string): { cron: string; complex: boolean } {
+  return _shiftCron(cron, 'utcToLocal');
+}
+
 export function formatCronHuman(cron: string | null | undefined): string | null {
   if (!cron) return null;
   const parts = cron.trim().split(/\s+/);
