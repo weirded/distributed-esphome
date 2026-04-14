@@ -19,9 +19,9 @@ Theme: **UI quality + HA native integration.** Harden the frontend (split the De
 
 ## API Layer Cleanup
 
-- [ ] **QS.8 Extract `parseResponse<T>` helper** — every POST endpoint in `api/client.ts` repeats the same ~3-line error-handling pattern. Extract into a shared helper. Reduces ~150 lines of boilerplate.
-- [ ] **QS.9 Define response types at module top** — replace inline `as { enqueued: number }` casts with named interfaces (`CompileResponse`, `CancelResponse`, etc.). Self-documents the wire contract.
-- [ ] **QS.10 Propagate server error details in getX() functions** — `getTargets`, `getDevices`, `getWorkers`, `getQueue` currently throw generic `"Failed to fetch X"`, losing server-provided error text.
+- [x] **QS.8** *(1.4.1-dev.12)* — Added `parseResponse<T>(response, errorTag)` and `expectOk(response, errorTag)` helpers at the top of `api/client.ts`. Both delegate to a shared `_readError` that tries `response.json().error` first, then falls back to `<errorTag> (HTTP <status>)`. ~30 boilerplate blocks (`if (!r.ok) { const data = await r.json().catch(...); throw new Error(...); }`) collapsed into single helper calls. File size unchanged in lines but the redundant pattern is gone — one place to fix the error path if it changes.
+- [x] **QS.9** *(1.4.1-dev.12)* — Named response interfaces at the top of `api/client.ts`: `CompileResponse`, `CancelResponse`, `RetryResponse`, `RemoveResponse`, `ClearResponse`, `ScheduleResponse`, `SaveTargetResponse`, `CreateTargetResponse`, `RenameTargetResponse`, `ApiKeyResponse`, `JobLogResponse`, `ValidateResponse`, `SecretKeysResponse`, `EsphomeSchemaResponse`. Replaced inline `as { enqueued: number }` and similar casts. Wire contract is now self-documenting and exported types can be imported by tests/components.
+- [x] **QS.10** *(1.4.1-dev.12)* — `getTargets`, `getDevices`, `getWorkers`, `getQueue`, `getServerInfo`, `getEsphomeVersions`, `getTargetContent`, `getJobLog`, `getArchivedConfigs` all now route through `parseResponse<T>` so server-provided `error` strings propagate up instead of being swallowed by a generic `"Failed to fetch X"`. Stretch goal (top-of-page error banner on serverInfo SWR error) deferred — `logSwrError` from QS.7 already lands the error in the console.
 
 ## Component Hygiene
 
