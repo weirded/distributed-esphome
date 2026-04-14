@@ -125,7 +125,7 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
         if (t.schedule_once) titleParts.push(`One-time: ${t.schedule_once}`);
         return (
           <span
-            style={{ cursor: 'pointer', color: 'var(--accent)' }}
+            className="cursor-pointer text-[var(--accent)]"
             title={`${titleParts.join(' • ')} — click to edit`}
             onClick={() => onSchedule(t.target)}
           >
@@ -133,7 +133,7 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               <span className="inline-flex items-center gap-1" style={{ opacity: enabled ? 1 : 0.5 }}>
                 <Clock className="size-3" aria-hidden="true" />
                 {cronHuman}
-                {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>(paused)</span>}
+                {!enabled && <span className="text-[var(--text-muted)] ml-2">(paused)</span>}
               </span>
             )}
             {cronHuman && onceWhen && <br />}
@@ -143,7 +143,7 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
                 Once: {onceWhen}
               </span>
             )}
-            {!cronHuman && !onceWhen && <span style={{ color: 'var(--text-muted)' }}>—</span>}
+            {!cronHuman && !onceWhen && <span className="text-[var(--text-muted)]">—</span>}
           </span>
         );
       },
@@ -162,12 +162,12 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
         if (t.schedule) {
           labels.push(
             t.schedule_enabled !== false
-              ? <span key="r" style={{ color: 'var(--success)' }}>Active</span>
-              : <span key="r" style={{ color: 'var(--text-muted)' }}>Paused</span>,
+              ? <span key="r" className="text-[var(--success)]">Active</span>
+              : <span key="r" className="text-[var(--text-muted)]">Paused</span>,
           );
         }
         if (t.schedule_once) {
-          labels.push(<span key="o" style={{ color: 'var(--accent)' }}>One-time</span>);
+          labels.push(<span key="o" className="text-[var(--accent)]">One-time</span>);
         }
         return <>{labels.map((l, i) => <span key={i}>{i > 0 && ' + '}{l}</span>)}</>;
       },
@@ -189,16 +189,16 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               ? <>
                   {timeAgo(lastEntry.fired_at)}
                   {lastEntry.outcome === 'enqueued' && (
-                    <Circle className="ml-1 inline size-3 align-text-bottom" fill="currentColor" style={{ color: 'var(--accent)' }} aria-label="enqueued" />
+                    <Circle className="ml-1 inline size-3 align-text-bottom text-[var(--accent)]" fill="currentColor" aria-label="enqueued" />
                   )}
                   {lastEntry.outcome === 'success' && (
-                    <Check className="ml-1 inline size-3 align-text-bottom" style={{ color: 'var(--success)' }} aria-label="success" />
+                    <Check className="ml-1 inline size-3 align-text-bottom text-[var(--success)]" aria-label="success" />
                   )}
                   {lastEntry.outcome === 'failed' && (
-                    <X className="ml-1 inline size-3 align-text-bottom" style={{ color: 'var(--destructive)' }} aria-label="failed" />
+                    <X className="ml-1 inline size-3 align-text-bottom text-[var(--destructive)]" aria-label="failed" />
                   )}
                 </>
-              : <span style={{ color: 'var(--text-muted)' }}>{formatNextRun(t.schedule, t.schedule_last_run, t.schedule_once)}</span>
+              : <span className="text-[var(--text-muted)]">{formatNextRun(t.schedule, t.schedule_last_run, t.schedule_once)}</span>
             }
           </span>
         );
@@ -210,7 +210,7 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
       cell: ({ row: { original: t } }) => {
         const version = t.pinned_version || t.server_version || '—';
         return (
-          <span style={{ fontSize: 12 }}>
+          <span className="text-[12px]">
             {version}
             {t.pinned_version && (
               <span title={`Pinned to ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">

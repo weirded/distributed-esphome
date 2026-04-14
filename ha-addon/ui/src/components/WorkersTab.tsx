@@ -34,24 +34,24 @@ interface Props {
 function workerPlatformHtml(si: SystemInfo): React.ReactNode {
   const lines: React.ReactNode[] = [];
   if (si.os_version) {
-    lines.push(<span key="os" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{si.os_version}</span>);
+    lines.push(<span key="os" className="text-[10px] text-[var(--text-muted)]">{si.os_version}</span>);
   }
   if (si.cpu_model) {
-    lines.push(<span key="cpu" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{si.cpu_model}</span>);
+    lines.push(<span key="cpu" className="text-[10px] text-[var(--text-muted)]">{si.cpu_model}</span>);
   }
   const hwParts: string[] = [];
   if (si.cpu_arch) hwParts.push(si.cpu_arch);
   if (si.cpu_cores) hwParts.push(si.cpu_cores + ' cores');
   if (si.total_memory) hwParts.push(si.total_memory);
   if (hwParts.length) {
-    lines.push(<span key="hw" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{hwParts.join(' · ')}</span>);
+    lines.push(<span key="hw" className="text-[10px] text-[var(--text-muted)]">{hwParts.join(' · ')}</span>);
   }
   const metrics: string[] = [];
   if (si.perf_score != null) metrics.push(`Score: ${si.perf_score}`);
   if (si.cpu_usage != null) metrics.push(`CPU: ${si.cpu_usage}%`);
   if (metrics.length) {
     lines.push(
-      <span key="metrics" style={{ fontSize: 10, color: 'var(--text-muted)' }} title="Perf score (SHA256 benchmark) · CPU utilization">
+      <span key="metrics" className="text-[10px] text-[var(--text-muted)]" title="Perf score (SHA256 benchmark) · CPU utilization">
         {metrics.join(' · ')}
       </span>
     );
@@ -62,7 +62,7 @@ function workerPlatformHtml(si: SystemInfo): React.ReactNode {
     const diskColor = (si.disk_used_pct ?? 0) > 90 ? 'var(--danger)' : (si.disk_used_pct ?? 0) > 80 ? 'var(--warn)' : 'var(--text-muted)';
     const pctStr = pctFree != null ? ` (${pctFree}% free)` : '';
     lines.push(
-      <span key="disk" style={{ fontSize: 10, color: diskColor }} title={`Build volume: ${si.disk_free} free of ${si.disk_total} (${si.disk_used_pct ?? '?'}% used)`}>
+      <span key="disk" className="text-[10px]" style={{ color: diskColor }} title={`Build volume: ${si.disk_free} free of ${si.disk_total} (${si.disk_used_pct ?? '?'}% used)`}>
         Disk: {si.disk_free} / {si.disk_total}{pctStr}
       </span>
     );
@@ -71,7 +71,7 @@ function workerPlatformHtml(si: SystemInfo): React.ReactNode {
   if (si.cached_targets != null) {
     const cacheStr = si.cache_size_mb != null ? ` (${si.cache_size_mb} MB)` : '';
     lines.push(
-      <span key="cache" style={{ fontSize: 10, color: 'var(--text-muted)' }} title={`Build cache: ${si.cached_targets} target(s) cached${cacheStr}`}>
+      <span key="cache" className="text-[10px] text-[var(--text-muted)]" title={`Build cache: ${si.cached_targets} target(s) cached${cacheStr}`}>
         Cache: {si.cached_targets} target{si.cached_targets !== 1 ? 's' : ''}{cacheStr}
       </span>
     );
@@ -100,7 +100,7 @@ function ClientVersionCell({
 
   if (!ver) {
     return (
-      <span style={{ color: 'var(--text-muted)' }}>
+      <span className="text-[var(--text-muted)]">
         —
         {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
       </span>
@@ -112,8 +112,8 @@ function ClientVersionCell({
   const title = isOutdated ? `Source outdated — server: ${scv}` : undefined;
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <code style={{ fontSize: 11, color }} title={title}>
+    <span className="inline-flex items-center gap-1">
+      <code className="text-[11px]" style={{ color }} title={title}>
         {ver}
         {isOutdated && ' ↑'}
       </code>
@@ -181,25 +181,23 @@ function SlotControl({ slots, requested, onSet }: { slots: number; requested: nu
 
   return (
     <span
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+      className="inline-flex items-center gap-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap"
       title="Parallel build slots (0 = paused, accepts no jobs)"
     >
       <Button
         variant="secondary"
         size="sm"
-        className="px-1.5 text-xs min-w-0"
-        style={{ padding: '1px 6px', fontSize: 11, minWidth: 0 }}
+        className="px-1.5 py-px text-[11px] min-w-0"
         disabled={displayed <= 0}
         onClick={() => change(-1)}
       >-</Button>
-      <span style={{ minWidth: 16, textAlign: 'center' }}>
+      <span className="min-w-[16px] text-center">
         {pending != null && pending !== displayed ? `${slots}→${pending}` : String(displayed)}
       </span>
       <Button
         variant="secondary"
         size="sm"
-        className="px-1.5 text-xs min-w-0"
-        style={{ padding: '1px 6px', fontSize: 11, minWidth: 0 }}
+        className="px-1.5 py-px text-[11px] min-w-0"
         onClick={() => change(1)}
       >+</Button>
     </span>
@@ -309,19 +307,19 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
       ) : null;
 
       const slotNameEl = slots > 1
-        ? <>{c.hostname}<span style={{ color: 'var(--text-muted)', fontSize: 11 }}>/{slot}</span></>
+        ? <>{c.hostname}<span className="text-[11px] text-[var(--text-muted)]">/{slot}</span></>
         : <>{c.hostname}</>;
 
       const jobEl = slots === 0
-        ? <span style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>Paused</span>
+        ? <span className="text-[12px] italic text-[var(--text-muted)]">Paused</span>
         : slotJob
           ? <>
-              <code style={{ fontSize: 12 }}>{stripYaml(slotJob.target)}</code>
+              <code className="text-[12px]">{stripYaml(slotJob.target)}</code>
               {slotJob.status_text && (
-                <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{slotJob.status_text}</span></>
+                <><br /><span className="text-[10px] text-[var(--text-muted)]">{slotJob.status_text}</span></>
               )}
             </>
-          : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Idle</span>;
+          : <span className="text-[12px] text-[var(--text-muted)]">Idle</span>;
 
       // When offline, show how long it's been gone instead of stale process uptime.
       // When online, show worker process uptime from the last heartbeat.
@@ -329,11 +327,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
       if (!c.online && c.last_seen) {
         const duration = timeAgo(c.last_seen).replace(/ ago$/, '');
         uptimeEl = (
-          <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }} title={`Last heartbeat: ${new Date(c.last_seen).toLocaleString()}`}>offline for {duration}</span></>
+          <><br /><span className="text-[10px] text-[var(--text-muted)]" title={`Last heartbeat: ${new Date(c.last_seen).toLocaleString()}`}>offline for {duration}</span></>
         );
       } else if (c.online && c.system_info?.uptime) {
         uptimeEl = (
-          <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }} title="Worker process uptime">up {c.system_info.uptime}</span></>
+          <><br /><span className="text-[10px] text-[var(--text-muted)]" title="Worker process uptime">up {c.system_info.uptime}</span></>
         );
       }
 
@@ -342,7 +340,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
           <tr key={`${c.client_id}-1`} style={rowStyle} className={rowClass}>
             <td>
               {slotNameEl}
-              {isLocal && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 6, textTransform: 'uppercase', fontWeight: 600 }}>built-in</span>}
+              {isLocal && <span className="ml-1.5 text-[9px] font-semibold uppercase text-[var(--accent)]">built-in</span>}
             </td>
             <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
             <td>{statusEl}{uptimeEl}</td>

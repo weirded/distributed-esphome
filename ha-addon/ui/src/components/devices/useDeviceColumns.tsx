@@ -166,7 +166,7 @@ export function useDeviceColumns(options: Options) {
         header: ({ column }) => <SortHeader label="Status" column={column} />,
         cell: ({ row: { original: t } }) => {
           const lastSeenEl = t.last_seen
-            ? <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(t.last_seen)}</div>
+            ? <div className="text-[10px] text-[var(--text-muted)]">{timeAgo(t.last_seen)}</div>
             : null;
           const activeJob = activeJobsByTarget.get(t.target);
           if (activeJob) {
@@ -191,7 +191,7 @@ export function useDeviceColumns(options: Options) {
         header: ({ column }) => <SortHeader label="HA" column={column} />,
         cell: ({ row: { original: t } }) => {
           if (!t.ha_configured) {
-            return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>;
+            return <span className="text-[12px] text-[var(--text-muted)]">—</span>;
           }
           if (t.ha_device_id) {
             const href = haDeepLink(`/config/devices/device/${t.ha_device_id}`);
@@ -202,15 +202,14 @@ export function useDeviceColumns(options: Options) {
                   target="_blank"
                   rel="noopener"
                   title="Open device in Home Assistant"
-                  style={{ fontSize: 12, color: 'var(--success)', textDecoration: 'none' }}
-                  className="inline-flex items-center gap-0.5 hover:underline"
+                  className="inline-flex items-center gap-0.5 text-[12px] text-[var(--success)] no-underline hover:underline"
                 >
                   Yes <ExternalLink className="size-3" aria-hidden="true" />
                 </a>
               );
             }
           }
-          return <span style={{ fontSize: 12, color: 'var(--success)' }}>Yes</span>;
+          return <span className="text-[12px] text-[var(--success)]">Yes</span>;
         },
         sortingFn: 'alphanumeric',
       }
@@ -222,7 +221,7 @@ export function useDeviceColumns(options: Options) {
         const showIpLink = !streamerMode && t.has_web_server && t.online && t.ip_address;
         const sourceLabel = formatAddressSource(t.address_source);
         return (
-          <span style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
+          <span className="sensitive font-mono text-[12px]">
             {showIpLink
               ? (
                 <a
@@ -234,10 +233,10 @@ export function useDeviceColumns(options: Options) {
                   {t.ip_address}<ExternalLink className="inline ml-0.5 size-3 align-text-bottom" aria-hidden="true" />
                 </a>
               )
-              : <span style={{ color: 'var(--text-muted)' }}>{t.ip_address || '—'}</span>}
+              : <span className="text-[var(--text-muted)]">{t.ip_address || '—'}</span>}
             {sourceLabel && (
               <div
-                style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
+                className="text-[10px] text-[var(--text-muted)] font-sans"
                 title={`Address source: ${t.address_source}`}
               >
                 {sourceLabel}
@@ -255,7 +254,7 @@ export function useDeviceColumns(options: Options) {
         header: ({ column }) => <SortHeader label="Net" column={column} />,
         cell: ({ row: { original: t } }) => {
           const label = formatNetworkType(t.network_type);
-          if (!label) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          if (!label) return <span className="text-[var(--text-muted)]">—</span>;
           const ipMode = t.network_static_ip ? 'Static' : 'DHCP';
           const facts: string[] = [label, ipMode];
           if (t.network_ipv6) facts.push('IPv6');
@@ -264,15 +263,15 @@ export function useDeviceColumns(options: Options) {
           const tooltip = facts.join(' · ');
           return (
             <span
-              style={{ fontSize: 11, color: 'var(--text)', whiteSpace: 'nowrap' }}
+              className="text-[11px] text-[var(--text)] whitespace-nowrap"
               title={tooltip}
             >
               {label}
               {t.network_static_ip && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 3 }} title="Static IP">·S</span>
+                <span className="ml-[3px] text-[10px] text-[var(--text-muted)]" title="Static IP">·S</span>
               )}
               {t.network_matter && (
-                <span style={{ color: 'var(--accent)', fontSize: 10, marginLeft: 3 }} title="Matter">·M</span>
+                <span className="ml-[3px] text-[10px] text-[var(--accent)]" title="Matter">·M</span>
               )}
             </span>
           );
@@ -290,13 +289,13 @@ export function useDeviceColumns(options: Options) {
         id: 'ipconfig',
         header: ({ column }) => <SortHeader label="IP Config" column={column} />,
         cell: ({ row: { original: t } }) => {
-          if (!t.network_type) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          if (!t.network_type) return <span className="text-[var(--text-muted)]">—</span>;
           const mode = t.network_static_ip ? 'Static' : 'DHCP';
           return (
-            <span style={{ fontSize: 12 }} title={`${mode}${t.network_ipv6 ? ' · IPv6' : ''}`}>
+            <span className="text-[12px]" title={`${mode}${t.network_ipv6 ? ' · IPv6' : ''}`}>
               {mode}
               {t.network_ipv6 && (
-                <span style={{ color: 'var(--success)', marginLeft: 4 }}>· IPv6</span>
+                <span className="ml-1 text-[var(--success)]">· IPv6</span>
               )}
             </span>
           );
@@ -309,12 +308,12 @@ export function useDeviceColumns(options: Options) {
       header: ({ column }) => <SortHeader label="AP" column={column} />,
       cell: ({ row: { original: t } }) => (
         <span
-          style={{ fontSize: 12 }}
+          className="text-[12px]"
           title={t.network_ap_fallback ? 'Fallback access point configured (wifi.ap)' : undefined}
         >
           {t.network_ap_fallback
-            ? <span style={{ color: 'var(--success)' }}>Yes</span>
-            : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+            ? <span className="text-[var(--success)]">Yes</span>
+            : <span className="text-[var(--text-muted)]">—</span>}
         </span>
       ),
       sortingFn: 'alphanumeric',
@@ -325,7 +324,7 @@ export function useDeviceColumns(options: Options) {
       cell: ({ row: { original: t } }) => {
         const handleClick = () => onSchedule(t.target);
         if (!t.schedule && !t.schedule_once) {
-          return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+          return <span className="text-[var(--text-muted)]">—</span>;
         }
         const enabled = t.schedule_enabled !== false;
         const tzLabel = ` (${t.schedule_tz || 'UTC'})`;
@@ -336,15 +335,16 @@ export function useDeviceColumns(options: Options) {
         if (t.schedule_once) titleParts.push(`One-time: ${t.schedule_once}`);
         return (
           <span
-            style={{ cursor: 'pointer', color: 'var(--accent)' }}
+            className="cursor-pointer text-[var(--accent)]"
             title={`${titleParts.join(' • ')} — click to edit`}
             onClick={handleClick}
           >
             {cronHuman && (
+              // opacity stays inline — runtime-conditional on `enabled`.
               <span className="inline-flex items-center gap-1" style={{ opacity: enabled ? 1 : 0.5 }}>
                 <Clock className="size-3" aria-hidden="true" />
                 {cronHuman}
-                {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>(paused)</span>}
+                {!enabled && <span className="ml-1 text-[var(--text-muted)]">(paused)</span>}
               </span>
             )}
             {cronHuman && onceWhen && <br />}
@@ -363,7 +363,7 @@ export function useDeviceColumns(options: Options) {
       id: 'running',
       header: ({ column }) => <SortHeader label="Version" column={column} />,
       cell: ({ row: { original: t } }) => (
-        <span style={{ fontSize: 12 }}>
+        <span className="text-[12px]">
           {t.running_version || '—'}
           {t.pinned_version && (
             <span title={`Pinned to ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
@@ -379,8 +379,8 @@ export function useDeviceColumns(options: Options) {
       id: 'area',
       header: ({ column }) => <SortHeader label="Area" column={column} />,
       cell: ({ row: { original: t } }) => (
-        <span style={{ fontSize: 12 }}>
-          {t.area || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        <span className="text-[12px]">
+          {t.area || <span className="text-[var(--text-muted)]">—</span>}
         </span>
       ),
       sortingFn: 'alphanumeric',
@@ -389,8 +389,8 @@ export function useDeviceColumns(options: Options) {
       id: 'comment',
       header: ({ column }) => <SortHeader label="Comment" column={column} />,
       cell: ({ row: { original: t } }) => (
-        <span style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-          {t.comment || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+        <span className="block max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap text-[12px]">
+          {t.comment || <span className="text-[var(--text-muted)]">—</span>}
         </span>
       ),
       sortingFn: 'alphanumeric',
@@ -405,8 +405,8 @@ export function useDeviceColumns(options: Options) {
             ? (t.project_version ? `${t.project_name} ${t.project_version}` : t.project_name)
             : '—';
           return (
-            <span style={{ fontSize: 12 }}>
-              {projectStr === '—' ? <span style={{ color: 'var(--text-muted)' }}>—</span> : projectStr}
+            <span className="text-[12px]">
+              {projectStr === '—' ? <span className="text-[var(--text-muted)]">—</span> : projectStr}
             </span>
           );
         },

@@ -143,7 +143,7 @@ export function QueueTab({
       cell: ({ row: { original: job } }) => {
         const { label: badgeLabel, cls: badgeCls } = getJobBadge(job);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span className="inline-flex items-center gap-1.5">
             <span className={badgeCls}>{badgeLabel}</span>
             {/* #23: a follow-up job is "queued behind" another running job
                 for the same target. Show a small badge next to the State so
@@ -191,12 +191,11 @@ export function QueueTab({
         // specific worker (UpgradeModal worker selector). Visible on every
         // pinned row regardless of state, so the user can audit history.
         return (
-          <span style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span className="text-[12px] inline-flex items-center gap-1">
             {job.scheduled && (
               <span
                 title={job.schedule_kind === 'once' ? 'Triggered by one-time schedule' : 'Triggered by recurring schedule'}
-                className="inline-flex"
-                style={{ color: 'var(--accent)' }}
+                className="inline-flex text-[var(--accent)]"
               >
                 {job.schedule_kind === 'once'
                   ? <Calendar className="size-3" aria-label="one-time scheduled run" />
@@ -210,8 +209,7 @@ export function QueueTab({
                     ? `Pinned to ${pinnedHostname} via Upgrade modal`
                     : 'Pinned to a specific worker via Upgrade modal'
                 }
-                className="inline-flex"
-                style={{ color: 'var(--accent)' }}
+                className="inline-flex text-[var(--accent)]"
               >
                 <Pin className="size-3" aria-label="pinned to specific worker" />
               </span>
@@ -219,7 +217,7 @@ export function QueueTab({
             <span>
               {clientName}
               {showPinnedHint && !job.assigned_hostname && (
-                <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>→ {pinnedHostname}</span></>
+                <><br /><span className="text-[10px] text-[var(--text-muted)]">→ {pinnedHostname}</span></>
               )}
             </span>
           </span>
@@ -237,8 +235,8 @@ export function QueueTab({
         const target = targets.find(t => t.target === job.target);
         const isPinned = target?.pinned_version && target.pinned_version === job.esphome_version;
         return (
-          <span style={{ fontSize: 12 }}>
-            {job.esphome_version || <span style={{ color: 'var(--text-muted)' }}>—</span>}
+          <span className="text-[12px]">
+            {job.esphome_version || <span className="text-[var(--text-muted)]">—</span>}
             {isPinned && (
               <span title={`Pinned to ${target.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
                 <Pin className="size-3" aria-label="Pinned version" />
@@ -256,21 +254,21 @@ export function QueueTab({
       cell: ({ row: { original: job } }) => {
         if (!job.scheduled) {
           return (
-            <span className="inline-flex items-center gap-1" style={{ fontSize: 12 }} title="Triggered by user action">
+            <span className="inline-flex items-center gap-1 text-[12px]" title="Triggered by user action">
               <User className="size-3" aria-hidden="true" /> User
             </span>
           );
         }
         if (job.schedule_kind === 'once') {
           return (
-            <span className="inline-flex items-center gap-1" style={{ fontSize: 12 }} title="Triggered by one-time schedule">
+            <span className="inline-flex items-center gap-1 text-[12px]" title="Triggered by one-time schedule">
               <Calendar className="size-3" aria-hidden="true" /> One-time
             </span>
           );
         }
         // Default for scheduled (covers 'recurring' and legacy nulls).
         return (
-          <span className="inline-flex items-center gap-1" style={{ fontSize: 12 }} title="Triggered by recurring cron schedule">
+          <span className="inline-flex items-center gap-1 text-[12px]" title="Triggered by recurring cron schedule">
             <Clock className="size-3" aria-hidden="true" /> Recurring
           </span>
         );
@@ -284,9 +282,9 @@ export function QueueTab({
         const d = new Date(job.created_at);
         const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         return (
-          <span style={{ fontSize: 12 }} title={d.toLocaleString()}>
+          <span className="text-[12px]" title={d.toLocaleString()}>
             {time}
-            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(job.created_at)}</div>
+            <div className="text-[10px] text-[var(--text-muted)]">{timeAgo(job.created_at)}</div>
           </span>
         );
       },
@@ -300,18 +298,18 @@ export function QueueTab({
         if (inProgress) {
           // Wall-clock elapsed since enqueue (not since worker pickup)
           const elapsed = fmtDuration((Date.now() - new Date(job.created_at).getTime()) / 1000);
-          return <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>Elapsed {elapsed}</span>;
+          return <span className="text-[12px] text-[var(--text-muted)] italic">Elapsed {elapsed}</span>;
         }
-        if (!job.finished_at) return <span style={{ fontSize: 12 }}>—</span>;
+        if (!job.finished_at) return <span className="text-[12px]">—</span>;
         const finished = new Date(job.finished_at);
         const time = finished.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         // Duration = wall clock from enqueue to finish, not just worker compile time
         const wallSeconds = (finished.getTime() - new Date(job.created_at).getTime()) / 1000;
         const dur = wallSeconds >= 0 ? fmtDuration(wallSeconds) : null;
         return (
-          <span style={{ fontSize: 12 }} title={finished.toLocaleString()}>
+          <span className="text-[12px]" title={finished.toLocaleString()}>
             {time}
-            {dur && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Took {dur}</div>}
+            {dur && <div className="text-[10px] text-[var(--text-muted)]">Took {dur}</div>}
           </span>
         );
       },
@@ -329,7 +327,7 @@ export function QueueTab({
         const canRetry = isJobRetryable(job);
         const canCancel = inProgress;
         return (
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div className="flex gap-1">
             {canCancel && (
               <Button variant="destructive" size="sm" onClick={() => onCancel([job.id])}>Cancel</Button>
             )}

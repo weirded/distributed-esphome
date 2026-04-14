@@ -496,7 +496,7 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
     ? <StatusDot status="online" />
     : <StatusDot status="offline" />;
 
-  const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>;
+  const dash = <span className="text-[var(--text-muted)]">—</span>;
   const sourceLabel = formatAddressSource(d.address_source);
 
   // Unmanaged devices (no config) don't have web_server info — never link their IP.
@@ -508,12 +508,12 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
     <tr>
       <td></td>
       <td>
-        <span className="device-name" style={{ color: 'var(--text-muted)' }}>{stripYaml(d.name)}</span>
-        <div className="device-filename" style={{ color: '#6b7280' }}>No config</div>
+        <span className="device-name text-[var(--text-muted)]">{stripYaml(d.name)}</span>
+        <div className="device-filename text-[#6b7280]">No config</div>
       </td>
       {isVisible('status') && <td>{statusEl}</td>}
       {isVisible('ha') && (
-        <td style={{ fontSize: 12 }}>
+        <td className="text-[12px]">
           {d.ha_configured
             ? (d.ha_device_id
                 ? (() => {
@@ -524,23 +524,22 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
                         target="_blank"
                         rel="noopener"
                         title="Open device in Home Assistant"
-                        style={{ color: 'var(--success)', textDecoration: 'none' }}
-                        className="hover:underline"
+                        className="text-[var(--success)] no-underline hover:underline"
                       >
                         Yes ↗
                       </a>
-                    ) : <span style={{ color: 'var(--success)' }}>Yes</span>;
+                    ) : <span className="text-[var(--success)]">Yes</span>;
                   })()
-                : <span style={{ color: 'var(--success)' }}>Yes</span>)
+                : <span className="text-[var(--success)]">Yes</span>)
             : dash}
         </td>
       )}
       {isVisible('ip') && (
-        <td style={{ fontFamily: 'monospace', fontSize: 12 }} className="sensitive">
-          <span style={{ color: 'var(--text-muted)' }}>{d.ip_address || '—'}</span>
+        <td className="sensitive font-mono text-[12px]">
+          <span className="text-[var(--text-muted)]">{d.ip_address || '—'}</span>
           {(sourceLabel || d.ha_configured) && (
             <div
-              style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}
+              className="text-[10px] text-[var(--text-muted)] font-sans"
               title={
                 d.ha_configured
                   ? `Address source: ${d.address_source ?? 'unknown'} · Home Assistant confirms this device exists`
@@ -556,14 +555,14 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
           so we can't know any of this; render dashes. The cell order MUST
           match the columns array order in the columns memo above:
             status → ha → ip → net → ipconfig → ap → running → area → comment → project */}
-      {isVisible('net') && <td style={{ fontSize: 12 }}>{dash}</td>}
-      {isVisible('ipconfig') && <td style={{ fontSize: 12 }}>{dash}</td>}
-      {isVisible('ap') && <td style={{ fontSize: 12 }}>{dash}</td>}
-      {isVisible('schedule') && <td style={{ fontSize: 12 }}>{dash}</td>}
-      {isVisible('running') && <td style={{ fontSize: 12 }}>{d.running_version || '—'}</td>}
-      {isVisible('area') && <td style={{ fontSize: 12 }}>{dash}</td>}
-      {isVisible('comment') && <td style={{ fontSize: 12 }}>{dash}</td>}
-      {isVisible('project') && <td style={{ fontSize: 12 }}>{dash}</td>}
+      {isVisible('net') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('ipconfig') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('ap') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('schedule') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('running') && <td className="text-[12px]">{d.running_version || '—'}</td>}
+      {isVisible('area') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('comment') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('project') && <td className="text-[12px]">{dash}</td>}
       <td></td>
     </tr>
   );
