@@ -380,7 +380,11 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
 
             {/* Column picker (gear icon) */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer" title="Toggle columns">
+              <DropdownMenuTrigger
+                className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer"
+                aria-label="Toggle columns"
+                title="Toggle columns"
+              >
                 &#9881;
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">

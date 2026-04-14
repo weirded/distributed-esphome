@@ -243,7 +243,11 @@ export async function getApiKey(filename: string): Promise<string> {
   const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/api-key`);
   const data = await r.json() as { key?: string; error?: string };
   if (!r.ok) throw new Error(data.error || String(r.status));
-  return data.key!;
+  // QS.4: replaced `data.key!` non-null assertion with an explicit check so
+  // callers (DeviceContextMenu) get a meaningful error if the server omits
+  // the field instead of crashing on a later `.writeText(undefined)`.
+  if (!data.key) throw new Error('Server did not return an API key');
+  return data.key;
 }
 
 /**

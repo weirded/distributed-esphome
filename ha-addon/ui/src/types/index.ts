@@ -85,12 +85,24 @@ export interface Target {
   tags?: string | null;
 }
 
+/**
+ * An ESPHome device discovered on the network (via mDNS) or reported by
+ * Home Assistant. Distinct from `Target` above: a Target is a YAML config
+ * we manage; a Device is something physically out there.
+ *
+ * `compile_target` links the two when we can match a discovered device to
+ * one of our YAMLs (by name or MAC). Unmanaged devices (real ESPHome
+ * hardware with no local YAML) have `compile_target: null` and still
+ * render on the Devices tab under the "Unmanaged" divider.
+ */
 export interface Device {
   name: string;
   mac_address?: string;
   ip_address?: string;
   running_version?: string;
   online?: boolean;
+  /** YAML filename of the managed Target this device corresponds to, or
+   *  null for unmanaged devices (no matching YAML). */
   compile_target?: string | null;
   last_seen?: string;
   compilation_time?: number;

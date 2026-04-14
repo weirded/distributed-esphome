@@ -4,22 +4,18 @@ Theme: **UI quality + HA native integration.** Harden the frontend (split the De
 
 ## UI Cleanup
 
-- [ ] **QS.1 Delete dead file `src/lib/utils.ts`** — contains only unused `clsx`/`cn` re-exports (grep confirms zero imports). Scaffold leftover from shadcn.
-- [ ] **QS.2 Icon-only buttons: add `aria-label`** — 5 buttons currently read as emoji glyphs or silence to screen readers:
-  - `App.tsx:449` theme toggle (☀/☾)
-  - `App.tsx:464` streamer mode toggle (👁/🔒)
-  - `DevicesTab.tsx:700` row hamburger (⋮)
-  - `DevicesTab.tsx:854` column picker (⚙)
-  - `EsphomeVersionDropdown.tsx:56` refresh (↻)
-- [ ] **QS.3 Convert `<span onClick>` to `<button>`** — 4 violations of the "semantic HTML" design judgment rule:
-  - `App.tsx:437` Secrets button
-  - `App.tsx:449-463` theme toggle
-  - `App.tsx:464-470` streamer mode toggle
-  - `DevicesTab.tsx:408` SortHeader (folded into QS.21 below)
-- [ ] **QS.4 Fix non-null assertion in `getApiKey()`** — `api/client.ts:237` uses `data.key!` without validation. Crashes at call site with a confusing message if the server omits `key`. Replace with explicit null check + thrown `Error`.
-- [ ] **QS.5 Add `compile_target` to `Device` type** — `types/index.ts` Device interface is missing `compile_target?: string | null`, but `DevicesTab.tsx:333` reads it. Document the Device-vs-Target distinction in JSDoc.
-- [ ] **QS.6 Remove SWR `deepCompare` using `JSON.stringify`** — `App.tsx:88` serializes the entire response to a string on every 1Hz poll. Remove the custom `compare`, let SWR's default shallow compare handle it.
-- [ ] **QS.7 SWR `onError` — log at minimum** — `App.tsx:93,98,108,113,120` all silently swallow errors. At minimum, `console.error('SWR', key, err)`. Stretch: top-of-page banner when `serverInfo` SWR has an error set.
+- [x] ~~**QS.1**~~ WONTFIX *(1.4.1-dev.5 audit)* — `src/lib/utils.ts` exports `cn()` (tailwind-merge + clsx), which is imported by 7 shadcn components (`ui/dialog.tsx`, `ui/badge.tsx`, `ui/button.tsx`, `ui/checkbox.tsx`, `ui/dropdown-menu.tsx`, `ui/select.tsx`, `ui/input.tsx`). The original grep in this item missed the `@/lib/utils` alias path. Keeping the file.
+- [x] **QS.2** *(1.4.1-dev.5)* — `aria-label` (+ `aria-pressed` on the toggles) added to the 5 icon-only buttons:
+  - App.tsx theme toggle (☀/☾) — `aria-label` + `aria-pressed={theme==='light'}`
+  - App.tsx streamer mode (👁/🔒) — `aria-label` + `aria-pressed={streamerMode}`
+  - DevicesTab row hamburger (⋮) — already added in QS.16 (`aria-label="More actions"`)
+  - DevicesTab column picker (⚙) — `aria-label="Toggle columns"`
+  - EsphomeVersionDropdown refresh (↻) — already added during PR #54 review
+- [x] **QS.3** *(1.4.1-dev.5)* — Converted `<span onClick>` to `<button type="button">` for Secrets, theme toggle, streamer toggle in App.tsx. SortHeader already landed in QS.21.
+- [x] **QS.4** *(1.4.1-dev.5)* — Replaced `data.key!` non-null assertion in `getApiKey()` with an explicit null-check that throws `Error('Server did not return an API key')`. Callers (DeviceContextMenu) now get a meaningful message instead of crashing downstream on `clipboard.writeText(undefined)`.
+- [x] **QS.5** *(1.4.1-dev.5)* — Device interface already had `compile_target?: string | null` (the referenced line had moved); added the JSDoc block clarifying the Device-vs-Target distinction and what `compile_target: null` means (unmanaged device, no matching YAML).
+- [x] **QS.6** *(1.4.1-dev.5)* — Dropped the custom `JSON.stringify`-based `deepCompare`. SWR's default stable-hash compare already prevents re-renders when polled data is structurally unchanged, and the custom version was O(n) per tick + broke on undefined/circular + hid legitimate key-order differences.
+- [x] **QS.7** *(1.4.1-dev.5)* — Replaced the five `onError: () => {}` silent swallows with a `logSwrError(key)` helper that does `console.error('SWR', key, err)`. Each SWR key (`serverInfo`, `versions`, `workers`, `devices`, `queue`) now bubbles errors to the console with its identity attached. Stretch (top-of-page banner when `serverInfo` SWR has an error) not implemented — deferred to WORKITEMS tbd if we actually see errors in the logs.
 
 ## API Layer Cleanup
 

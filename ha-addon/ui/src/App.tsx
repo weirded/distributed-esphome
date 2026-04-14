@@ -105,18 +105,26 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabName>(
     () => (sessionStorage.getItem('activeTab') as TabName) || 'devices',
   );
-  // Deep compare prevents re-renders when polled data hasn't changed structurally
-  const deepCompare = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  // QS.6: SWR's default compare (stable-hash) already prevents re-renders
+  // when polled data is structurally unchanged. The custom JSON.stringify
+  // compare we used to have was strictly worse — O(n) serialization of the
+  // full response on every tick, breaks on undefined/circular, and hides
+  // legitimate key-order differences.
+  // QS.7: bubble errors to console instead of silently swallowing them —
+  // previously every SWR poll failure disappeared into a `() => {}` sink.
+  const logSwrError = useCallback((key: string) => (err: unknown) => {
+    console.error('SWR', key, err);
+  }, []);
 
   const { data: serverInfo = { token: '', port: 8765 } } = useSWR(
     'serverInfo',
     getServerInfo,
-    { refreshInterval: 30_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 30_000, onError: logSwrError('serverInfo') },
   );
   const { data: esphomeVersions = { selected: null, detected: null, available: [] }, mutate: mutateEsphomeVersions } = useSWR(
     'versions',
     getEsphomeVersions,
-    { refreshInterval: 15 * 60_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 15 * 60_000, onError: logSwrError('versions') },
   );
   // Poll at 1 Hz for live-feeling updates. Workers + queue are pure in-memory
   // reads. Targets/devices does a readdir + per-target stat() for mtime cache
@@ -126,19 +134,19 @@ export default function App() {
   const { data: workers = [], mutate: mutateWorkers } = useSWR(
     'workers',
     getWorkers,
-    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: logSwrError('workers') },
   );
   const { data: devicesAndTargets, mutate: mutateDevices } = useSWR(
     'devices',
     async () => { const [t, d] = await Promise.all([getTargets(), getDevices()]); return { targets: t, devices: d }; },
-    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: logSwrError('devices') },
   );
   const targets = devicesAndTargets?.targets ?? [];
   const devices = devicesAndTargets?.devices ?? [];
   const { data: queue = [], mutate: mutateQueue } = useSWR(
     'queue',
     getQueue,
-    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: logSwrError('queue') },
   );
   // Exclude validation-only jobs from display (they run server-side and auto-prune)
   const displayQueue = useMemo(() => queue.filter(j => !j.validate_only), [queue]);
@@ -497,28 +505,36 @@ export default function App() {
             addToast('ESPHome version list updated', 'success');
           }}
         />
-        <span
-          className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap"
-          style={{ cursor: 'pointer' }}
+        {/* QS.3: <span onClick> → <button> for Secrets, theme, streamer. */}
+        <button
+          type="button"
+          className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap cursor-pointer"
           onClick={() => setEditorTarget('secrets.yaml')}
           title="Edit secrets.yaml"
         >
           Secrets
-        </span>
-        <span
+        </button>
+        {/* QS.2: aria-label for screen readers on the icon-only theme toggle. */}
+        <button
+          type="button"
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-pressed={theme === 'light'}
           className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[13px] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
           onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? '☀' : '☾'}
-        </span>
-        <span
+        </button>
+        <button
+          type="button"
+          aria-label={streamerMode ? 'Disable streamer mode' : 'Enable streamer mode (blur sensitive data)'}
+          aria-pressed={streamerMode}
           className={`inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[13px] cursor-pointer hover:bg-[var(--border)] ${streamerMode ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
           onClick={() => setStreamerMode(s => !s)}
           title={streamerMode ? 'Disable streamer mode' : 'Enable streamer mode (blur sensitive data)'}
         >
           {streamerMode ? '🔒' : '👁'}
-        </span>
+        </button>
         <span className="spacer" />
         <span className="status-dot" title="Server online" />
       </header>
