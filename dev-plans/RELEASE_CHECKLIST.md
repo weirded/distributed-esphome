@@ -51,6 +51,7 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
 
 ### Claude does
 
+- [ ] **Create GitHub release**: `gh release create vX.Y.Z --title "X.Y.Z — <short theme>" --notes-file <(awk '/^## X\.Y\.Z/{f=1;next} /^## /{f=0} f' ha-addon/CHANGELOG.md)`. Uses the changelog section as the release body so the GitHub Releases page stays in sync with CHANGELOG.md. Mark as latest unless it's a point release behind an active major line.
 - [ ] Start next dev cycle: `git checkout develop && bash scripts/bump-dev.sh`.
 - [ ] Create `dev-plans/WORKITEMS-X.Y+1.md` — copy structure from the previous file, leave items unchecked.
 
