@@ -39,12 +39,12 @@ Theme: **UI quality + HA native integration.** Harden the frontend (split the De
 
 The current `DevicesTab.tsx` is **1,173 lines with 24 hooks** and an ESLint disable for missing deps. Splitting it unblocks the 1.5 tag/group-by work that touches the same file.
 
-- [ ] **QS.16 Replace hand-rolled context menu with `<DropdownMenu>`** — most visible CLAUDE.md "Default to shadcn/ui" violation. Drop the manual positioning logic entirely.
-- [ ] **QS.17 Extract `useDeviceColumns()` hook** — 378-line column definitions into `deviceTableColumns.ts`. Removes the ESLint disable.
-- [ ] **QS.18 Extract `DeviceTableActions.tsx`** — bulk actions dropdown, schedule-selected handler, bulk compile.
-- [ ] **QS.19 Extract `DeviceTableModals.tsx`** — RenameModal and DeleteModal into their own file.
-- [ ] **QS.20 Memoize inline handler props** — wrap `App.tsx` and `DevicesTab` inline arrow functions in `useCallback`.
-- [ ] **QS.21 Add `aria-sort` to SortHeader** — fix once, cascades to all 11 sortable columns. Also wraps click target in `<button>`.
+- [x] **QS.16** *(1.4.1-dev.2)* — Replaced hand-rolled `DeviceMenu` with shadcn `DropdownMenu`. Dropped the manual positioning logic (`translateX(-100%)`, viewport-flip math, click-catching backdrop). New `components/devices/DeviceContextMenu.tsx`; placement, focus trap, click-outside, Escape, and keyboard nav now come from Radix.
+- [x] **QS.17** *(1.4.1-dev.2)* — Extracted the 369-line columns `useMemo` into `components/devices/useDeviceColumns.tsx`. Removed the `// eslint-disable-next-line react-hooks/exhaustive-deps`. DevicesTab.tsx 1,001 → 631 lines.
+- [x] **QS.18** *(1.4.1-dev.2)* — Extracted bulk Actions dropdown + bulk schedule modal into `components/devices/DeviceTableActions.tsx`. Owns its own `bulkScheduleOpen` state.
+- [x] **QS.19** *(1.4.1-dev.2)* — Moved `RenameModal` + `DeleteModal` to `components/devices/DeviceTableModals.tsx`. RenameModal re-exported so existing App.tsx imports keep working.
+- [x] **QS.20** *(1.4.1-dev.2)* — Memoized `handlePin`/`handleUnpin` in DevicesTab and `handleCompile`/`handleOpenUpgradeModal`/`handleDeleteDevice`/`handleRenameDevice`/`switchTab` in App.tsx so `useDeviceColumns`' dep array actually caches across SWR polls.
+- [x] **QS.21** *(1.4.1-dev.2)* — Extracted shared `SortHeader` to `components/ui/sort-header.tsx`. Click target is a real `<button>` (semantic HTML); the `<th>` gets `aria-sort` via a `getAriaSort()` helper. Cascaded to all 11 sortable columns across Devices, Queue, Schedules.
 
 ## EditorModal + Utils Split
 
@@ -111,6 +111,32 @@ Custom integration that makes Distributed ESPHome a first-class HA citizen: nati
 - [ ] **SP.1 Enable gzip compression** — add `aiohttp-compress` middleware (or manual `Content-Encoding: gzip`) to the aiohttp app. Currently all JSON responses and static assets are sent uncompressed. A typical 50-device `/ui/api/targets` response (~40-50KB) would compress to ~5-10KB. Apply to all `/ui/api/*` responses and static file serving.
 - [ ] **SP.2 Strip job logs from queue list endpoint** — `/ui/api/queue` currently strips `log` from pending/working jobs but includes full logs (up to 512KB each) for finished jobs. 10 finished jobs = ~5MB polled every second. Fix: strip `log` from *all* jobs in the list response. The log modal already fetches logs individually via the existing `/ui/api/jobs/{id}/log` endpoint.
 - [ ] **SP.3 Fix version-changed log spam** — `pypi_version_refresher` in `main.py` writes to `app["_rt"]["esphome_detected_version"]` but reads from `app.get("esphome_detected_version")` — key mismatch. Every 30s poll thinks the version "changed" from None → 2026.3.3, logging 3 lines ("changed", "set", "auto-selected") every cycle. Fix the read path to match the write path. Demote steady-state unchanged checks to DEBUG.
+
+## Dependency Updates
+
+Triage and merge the 8 open Dependabot PRs. Group into low-risk auto-merge, medium-risk CI-verify, and high-risk human review per the v1.3.1 release-checklist pattern.
+
+### Low-risk — merge on green CI
+
+- [ ] **DU.1** [PR #53](https://github.com/weirded/distributed-esphome/pull/53) — `globals` 17.4.0 → 17.5.0 (ui devDep, patch bump, ESLint globals list)
+- [ ] **DU.2** [PR #51](https://github.com/weirded/distributed-esphome/pull/51) — `typescript-eslint` 8.58.0 → 8.58.2 (ui devDep, patch bump)
+- [ ] **DU.3** [PR #52](https://github.com/weirded/distributed-esphome/pull/52) — `lucide-react` 1.7.0 → 1.8.0 (ui dep, minor; icon library, only affects rendered icons; if QS.15 adopts Lucide universally, bump here first)
+
+### Medium-risk — merge after full Playwright + smoke test
+
+- [ ] **DU.4** [PR #49](https://github.com/weirded/distributed-esphome/pull/49) — `@base-ui/react` 1.3.0 → 1.4.0 (ui dep, minor). Powers every shadcn wrapper (Button, Dialog, DropdownMenu, Select, Checkbox). Run the full 43-test mocked suite + hass-4 prod suite before merging. Watch for changes in focus management, portal positioning, or event bubbling on dialogs/dropdowns.
+- [ ] **DU.5** [PR #50](https://github.com/weirded/distributed-esphome/pull/50) — `@types/node` 24.12.0 → 25.6.0 (ui devDep, major). Pure type change, but Node 25 typings may tighten or add new required fields and surface new type errors in `vite.config.ts` or any Node-API usage. Verify `tsc -b` is clean after bump.
+
+### High-risk — human review required
+
+- [ ] **DU.6** [PR #48](https://github.com/weirded/distributed-esphome/pull/48) — `docker/build-push-action` v6 → v7 (actions, major). Read v7 release notes — action inputs or default behaviours may have changed. Affects both `publish-client.yml` and `publish-server.yml`. Test on a dry-run workflow dispatch before merging to main.
+- [ ] **DU.7** [PR #47](https://github.com/weirded/distributed-esphome/pull/47) — `docker/login-action` v3 → v4 (actions, major). Usually a stable bump (same `registry`/`username`/`password` inputs), but confirm against v4 release notes. Affects both publish workflows.
+- [ ] **DU.8** [PR #46](https://github.com/weirded/distributed-esphome/pull/46) — `actions/checkout` v4 → v6 (actions, major, two versions jumped). v5 and v6 both required Node 24 on the runner; verify our runners have it (ubuntu-latest is fine). Affects `ci.yml`, `compile-test.yml`, and both publish workflows. Read v5 + v6 release notes for any flag renames.
+
+### Process
+
+- [ ] **DU.9** After all 8 merge, rerun `bash scripts/refresh-deps.sh` if any Python `requirements.txt` direct deps end up bumped by transitive resolution. Not expected since all 8 PRs are npm or GitHub Actions, but confirm.
+- [ ] **DU.10** If any PR is rebased by Dependabot after merging an earlier one (conflicts in `package-lock.json`), let Dependabot handle the rebase automatically (`@dependabot rebase` comment) rather than merging manually.
 
 ## Open Bugs & Tweaks
 

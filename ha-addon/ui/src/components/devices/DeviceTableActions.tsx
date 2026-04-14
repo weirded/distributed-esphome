@@ -29,7 +29,7 @@ type ToastFn = (msg: string, type?: 'info' | 'success' | 'error') => void;
 interface Props {
   selectedTargets: string[];
   workers: Worker[];
-  /** Full target list — used to filter "has any schedule" when bulk-removing. */
+  /** Full target list — used to filter "has a schedule" when bulk-removing. */
   targets: Target[];
   onToast: ToastFn;
   onRefresh: () => void;
