@@ -85,7 +85,7 @@ Custom integration that makes Distributed ESPHome a first-class HA citizen: nati
 
 **Discovery:** The server advertises `_distributed-esphome._tcp` via mDNS. The integration's `manifest.json` declares a `zeroconf` matcher. HA shows "Distributed ESPHome discovered" → user clicks Configure → one confirmation screen → done. Falls back to manual URL entry if mDNS isn't working.
 
-- [ ] **HI.1 Integration scaffold** — `custom_integration/distributed_esphome/` directory with: `__init__.py`, `manifest.json` (domain, zeroconf discovery, version), `config_flow.py` (mDNS auto-discovery + manual URL fallback), `const.py`, `strings.json`, `translations/en.json`. Integration type: `hub`.
+- [x] **HI.1** *(1.4.1-dev.12)* — Integration scaffold in `custom_integration/distributed_esphome/` with: `__init__.py`, `manifest.json` (domain, zeroconf discovery, version), `config_flow.py` (mDNS auto-discovery + manual URL fallback), `const.py`, `strings.json`, `translations/en.json`. Integration type: `hub`.
 - [ ] **HI.2 Services** — register three HA services:
   - `distributed_esphome.compile` — target (entity/device selector or `"all"`/`"outdated"`), optional `esphome_version`, optional `worker`. Calls `POST /ui/api/compile`.
   - `distributed_esphome.cancel` — job_id or target. Calls `POST /ui/api/queue/cancel`.

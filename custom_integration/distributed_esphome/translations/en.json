@@ -1,0 +1,27 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Connect to Distributed ESPHome",
+        "description": "Enter the base URL for your Distributed ESPHome server.",
+        "data": {
+          "base_url": "Base URL"
+        }
+      },
+      "discovery_confirm": {
+        "title": "Confirm discovered server",
+        "description": "Found {name}. Confirm or edit the URL.\nSuggested URL: {url}",
+        "data": {
+          "base_url": "Base URL"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Enter a valid http(s) URL."
+    },
+    "abort": {
+      "already_configured": "This server is already configured."
+    }
+  }
+}

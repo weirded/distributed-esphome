@@ -1,0 +1,14 @@
+{
+  "domain": "distributed_esphome",
+  "name": "Distributed ESPHome",
+  "version": "0.1.0",
+  "documentation": "https://github.com/weirded/distributed-esphome",
+  "config_flow": true,
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "zeroconf": [
+    {
+      "type": "_distributed-esphome._tcp.local."
+    }
+  ]
+}
