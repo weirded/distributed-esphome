@@ -1,6 +1,6 @@
 {
   "config": {
-    "flow_title": "{name}",
+    "flow_title": "Distributed ESPHome",
     "step": {
       "user": {
         "title": "Connect to Distributed ESPHome",
