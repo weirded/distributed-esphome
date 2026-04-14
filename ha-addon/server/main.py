@@ -111,10 +111,21 @@ async def compression_middleware(request: web.Request, handler):
         but not critical.
     """
     response = await handler(request)
-    # Note: `web.Response` is a subclass of StreamResponse; isinstance here
-    # matches ONLY plain Response (what json_response/Response returns),
-    # not FileResponse / WebSocketResponse / custom StreamResponse subclasses.
+    # Note: `web.Response` is a subclass of StreamResponse; we want ONLY
+    # plain Response (what json_response/Response returns), not FileResponse
+    # / WebSocketResponse / custom StreamResponse subclasses.
     if type(response) is web.Response and not response.headers.get("Content-Encoding"):
+        # Skip bodyless responses: 204 No Content / 304 Not Modified, plus
+        # any response with no body set. aiohttp's _do_start_compression
+        # asserts `self._body is not None`, which we'd trip on
+        # `web.Response(status=204)` returned by the worker REST API.
+        # Note: `response.body` can be bytes OR a Payload streamer; only
+        # bytes has a meaningful len(), so we special-case bytes only.
+        body = response.body
+        if response.status in (204, 304) or body is None:
+            return response
+        if isinstance(body, (bytes, bytearray)) and len(body) == 0:
+            return response
         try:
             response.enable_compression()
         except Exception:
