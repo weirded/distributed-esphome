@@ -74,6 +74,9 @@ class Job:
     # pinned_client_id rather than creating new entries.
     is_followup: bool = False
     scheduled: bool = False  # True if triggered by the cron scheduler (not a manual action)
+    # #92: when scheduled, distinguish recurring (cron) from one-time fires so
+    # the Queue tab can show which kind triggered the job. None for user-triggered.
+    schedule_kind: Optional[str] = None  # "recurring" | "once" | None
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -100,6 +103,7 @@ class Job:
             "pinned_client_id": self.pinned_client_id,
             "is_followup": self.is_followup,
             "scheduled": self.scheduled,
+            "schedule_kind": self.schedule_kind,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -132,6 +136,7 @@ class Job:
             pinned_client_id=d.get("pinned_client_id"),
             is_followup=d.get("is_followup", False),
             scheduled=d.get("scheduled", False),
+            schedule_kind=d.get("schedule_kind"),
         )
 
     def duration_seconds(self) -> Optional[float]:

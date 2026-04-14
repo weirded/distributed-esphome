@@ -387,7 +387,10 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
             <span className="device-name">
               {t.friendly_name || t.device_name || stripYaml(t.target)}
               {t.schedule && t.schedule_enabled && (
-                <span title={`Scheduled: ${t.schedule}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>🕐</span>
+                <span title={`Recurring schedule: ${t.schedule}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>🕐</span>
+              )}
+              {t.schedule_once && (
+                <span title={`One-time schedule: ${t.schedule_once}`} style={{ marginLeft: 4, fontSize: 11, opacity: 0.7 }}>📅</span>
               )}
             </span>
             <div className="device-filename">{stripYaml(t.target)}</div>
@@ -582,36 +585,39 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       ),
       sortingFn: 'alphanumeric',
     }),
-    // #5: human-readable schedule column (toggleable, default off).
-    // #40: render both recurring (t.schedule) and one-time (t.schedule_once)
-    // schedules — previously only the recurring cron was shown, so devices
-    // with a one-time schedule displayed "—".
+    // #5/#40/#92: human-readable schedule column. Renders BOTH the recurring
+    // cron and any one-time schedule when both are set, stacked. Toggleable
+    // (default off).
     columnHelper.accessor(row => row.schedule || row.schedule_once || '', {
       id: 'schedule',
       header: ({ column }) => <SortHeader label="Schedule" column={column} />,
       cell: ({ row: { original: t } }) => {
         // #72: schedule values are clickable → open upgrade modal in schedule mode
         const handleClick = () => onSchedule(t.target);
-        if (t.schedule_once && !t.schedule) {
-          const when = new Date(t.schedule_once).toLocaleString();
-          return (
-            <span style={{ cursor: 'pointer', color: 'var(--accent)' }} title={`One-time: ${t.schedule_once} — click to edit`} onClick={handleClick}>
-              Once: {when}
-            </span>
-          );
+        if (!t.schedule && !t.schedule_once) {
+          return <span style={{ color: 'var(--text-muted)' }}>—</span>;
         }
-        if (!t.schedule) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-        const human = formatCronHuman(t.schedule);
         const enabled = t.schedule_enabled !== false;
         const tzLabel = ` (${t.schedule_tz || 'UTC'})`;
+        const cronHuman = t.schedule ? formatCronHuman(t.schedule) : null;
+        const onceWhen = t.schedule_once ? new Date(t.schedule_once).toLocaleString() : null;
+        const titleParts: string[] = [];
+        if (t.schedule) titleParts.push(`${t.schedule}${tzLabel}${enabled ? '' : ' (paused)'}`);
+        if (t.schedule_once) titleParts.push(`One-time: ${t.schedule_once}`);
         return (
           <span
-            style={{ cursor: 'pointer', color: 'var(--accent)', opacity: enabled ? 1 : 0.5 }}
-            title={`${t.schedule}${tzLabel}${enabled ? '' : ' (paused)'} — click to edit`}
+            style={{ cursor: 'pointer', color: 'var(--accent)' }}
+            title={`${titleParts.join(' • ')} — click to edit`}
             onClick={handleClick}
           >
-            {human}
-            {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>(paused)</span>}
+            {cronHuman && (
+              <span style={{ opacity: enabled ? 1 : 0.5 }}>
+                🕐 {cronHuman}
+                {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>(paused)</span>}
+              </span>
+            )}
+            {cronHuman && onceWhen && <br />}
+            {onceWhen && <span>📅 Once: {onceWhen}</span>}
           </span>
         );
       },

@@ -209,11 +209,11 @@ export function QueueTab({
           <span style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             {job.scheduled && (
               <span
-                title="Triggered by schedule"
-                aria-label="scheduled run"
+                title={job.schedule_kind === 'once' ? 'Triggered by one-time schedule' : 'Triggered by recurring schedule'}
+                aria-label={job.schedule_kind === 'once' ? 'one-time scheduled run' : 'recurring scheduled run'}
                 style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}
               >
-                🕐
+                {job.schedule_kind === 'once' ? '📅' : '🕐'}
               </span>
             )}
             {job.pinned_client_id && (
@@ -258,17 +258,20 @@ export function QueueTab({
       },
       sortingFn: 'alphanumeric',
     }),
-    // #21: triggered-by column — schedule vs user.
-    columnHelper.accessor(row => row.scheduled ? 'schedule' : 'user', {
+    // #21/#92: triggered-by column — recurring schedule, one-time, or user.
+    columnHelper.accessor(row => row.scheduled ? (row.schedule_kind ?? 'schedule') : 'user', {
       id: 'triggered_by',
       header: ({ column }) => <SortHeader label="Triggered" column={column} />,
-      cell: ({ row: { original: job } }) => (
-        <span style={{ fontSize: 12 }}>
-          {job.scheduled
-            ? <span title="Triggered by cron schedule">🕐 Schedule</span>
-            : <span title="Triggered by user action">👤 User</span>}
-        </span>
-      ),
+      cell: ({ row: { original: job } }) => {
+        if (!job.scheduled) {
+          return <span style={{ fontSize: 12 }} title="Triggered by user action">👤 User</span>;
+        }
+        if (job.schedule_kind === 'once') {
+          return <span style={{ fontSize: 12 }} title="Triggered by one-time schedule">📅 One-time</span>;
+        }
+        // Default for scheduled (covers 'recurring' and legacy nulls).
+        return <span style={{ fontSize: 12 }} title="Triggered by recurring cron schedule">🕐 Recurring</span>;
+      },
       sortingFn: 'alphanumeric',
     }),
     columnHelper.accessor(row => new Date(row.created_at), {

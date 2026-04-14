@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -131,34 +131,54 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
         // #40: use humanized cron for recurring schedules and a local-time
         // format for one-time. Render in the default (proportional) table
         // font to match the other columns — previously forced monospace.
-        let label: string;
-        if (t.schedule_once && !t.schedule) {
-          label = `Once: ${new Date(t.schedule_once).toLocaleString()}`;
-        } else if (t.schedule) {
-          label = formatCronHuman(t.schedule) ?? t.schedule;
-        } else {
-          label = '—';
-        }
+        // #92: render both recurring and one-time when both are present.
+        const cronHuman = t.schedule ? (formatCronHuman(t.schedule) ?? t.schedule) : null;
+        const onceWhen = t.schedule_once ? new Date(t.schedule_once).toLocaleString() : null;
         const tzLabel = t.schedule ? ` (${t.schedule_tz || 'UTC'})` : '';
+        const titleParts: string[] = [];
+        if (t.schedule) titleParts.push(`${t.schedule}${tzLabel}${enabled ? '' : ' (paused)'}`);
+        if (t.schedule_once) titleParts.push(`One-time: ${t.schedule_once}`);
         return (
           <span
-            style={{ cursor: 'pointer', color: 'var(--accent)', opacity: enabled ? 1 : 0.5 }}
-            title={`${t.schedule ?? ''}${tzLabel} — click to edit`}
+            style={{ cursor: 'pointer', color: 'var(--accent)' }}
+            title={`${titleParts.join(' • ')} — click to edit`}
             onClick={() => onSchedule(t.target)}
           >
-            {label}
-            {!enabled && t.schedule && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>(paused)</span>}
+            {cronHuman && (
+              <span style={{ opacity: enabled ? 1 : 0.5 }}>
+                🕐 {cronHuman}
+                {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>(paused)</span>}
+              </span>
+            )}
+            {cronHuman && onceWhen && <br />}
+            {onceWhen && <span>📅 Once: {onceWhen}</span>}
+            {!cronHuman && !onceWhen && <span style={{ color: 'var(--text-muted)' }}>—</span>}
           </span>
         );
       },
     }),
-    columnHelper.accessor(row => row.schedule_once ? 'once' : row.schedule_enabled !== false ? 'active' : 'paused', {
+    columnHelper.accessor(row => {
+      // #92: combined status when both kinds are set.
+      const tags: string[] = [];
+      if (row.schedule) tags.push(row.schedule_enabled !== false ? 'active' : 'paused');
+      if (row.schedule_once) tags.push('once');
+      return tags.join(' + ') || '—';
+    }, {
       id: 'status',
       header: ({ column }) => <SortHeader label="Status" column={column} />,
       cell: ({ row: { original: t } }) => {
-        if (t.schedule_once) return <span style={{ color: 'var(--accent)' }}>One-time</span>;
-        if (t.schedule_enabled !== false) return <span style={{ color: 'var(--success)' }}>Active</span>;
-        return <span style={{ color: 'var(--text-muted)' }}>Paused</span>;
+        const labels: ReactNode[] = [];
+        if (t.schedule) {
+          labels.push(
+            t.schedule_enabled !== false
+              ? <span key="r" style={{ color: 'var(--success)' }}>Active</span>
+              : <span key="r" style={{ color: 'var(--text-muted)' }}>Paused</span>,
+          );
+        }
+        if (t.schedule_once) {
+          labels.push(<span key="o" style={{ color: 'var(--accent)' }}>One-time</span>);
+        }
+        return <>{labels.map((l, i) => <span key={i}>{i > 0 && ' + '}{l}</span>)}</>;
       },
     }),
     columnHelper.accessor(row => row.schedule_last_run || row.schedule_once || '', {

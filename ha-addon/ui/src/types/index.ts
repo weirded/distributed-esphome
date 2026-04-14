@@ -182,6 +182,8 @@ export interface Job {
   is_followup?: boolean;
   /** True when this job was triggered by the cron scheduler, not a manual action. */
   scheduled?: boolean;
+  /** When `scheduled`, distinguishes recurring (cron) from one-time fires (#92). */
+  schedule_kind?: 'recurring' | 'once' | null;
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;

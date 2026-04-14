@@ -59,6 +59,7 @@ async def _fire_recurring(target: str) -> None:
     )
     if job is not None:
         job.scheduled = True
+        job.schedule_kind = "recurring"
         schedule_history.record(target, datetime.now(timezone.utc), job.id)
         logger.info("Schedule fired for %s: enqueued job %s (version=%s)", target, job.id, version)
 
@@ -97,6 +98,7 @@ async def _fire_once(target: str) -> None:
     )
     if job is not None:
         job.scheduled = True
+        job.schedule_kind = "once"
         schedule_history.record(target, datetime.now(timezone.utc), job.id)
         logger.info("One-time schedule fired for %s: enqueued job %s", target, job.id)
 
