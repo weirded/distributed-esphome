@@ -215,14 +215,18 @@ export default function App() {
 
   // ---- Tab navigation ----
 
-  function switchTab(name: TabName) {
+  const switchTab = useCallback((name: TabName) => {
     setActiveTab(name);
     sessionStorage.setItem('activeTab', name);
-  }
+  }, []);
 
   // ---- Actions ----
 
-  async function handleCompile(targets_: string[] | 'all' | 'outdated') {
+  // QS.20: handlers passed to DevicesTab / other child components are
+  // memoized so the columns hook (useDeviceColumns) can keep its memo cache
+  // across SWR polls. Without useCallback they'd be fresh refs every render
+  // and the columns block would rebuild on every 1Hz tick.
+  const handleCompile = useCallback(async (targets_: string[] | 'all' | 'outdated') => {
     try {
       const data = await compile(targets_);
       addToast(`Queued ${data.enqueued} device(s)`, 'success');
@@ -236,15 +240,15 @@ export default function App() {
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
-  }
+  }, [addToast, switchTab, mutateQueue, mutateDevices]);
 
   // #22: open the unified Upgrade modal. defaultMode controls whether it
   // opens on "Now" or "Schedule" tab.
-  function handleOpenUpgradeModal(target: string, defaultMode: 'now' | 'schedule' = 'now') {
+  const handleOpenUpgradeModal = useCallback((target: string, defaultMode: 'now' | 'schedule' = 'now') => {
     const t = targets.find(x => x.target === target);
     const displayName = t?.friendly_name || stripYaml(target);
     setUpgradeModalTarget({ target, displayName, defaultMode });
-  }
+  }, [targets]);
 
   async function handleUpgradeConfirm(params: {
     pinnedClientId: string | null;
@@ -426,7 +430,7 @@ export default function App() {
     }
   }
 
-  async function handleDeleteDevice(target: string, archive: boolean) {
+  const handleDeleteDevice = useCallback(async (target: string, archive: boolean) => {
     try {
       await deleteTarget(target, archive);
       addToast(`${archive ? 'Archived' : 'Deleted'} ${stripYaml(target)}`, 'success');
@@ -434,9 +438,9 @@ export default function App() {
     } catch (err) {
       addToast('Delete failed: ' + (err as Error).message, 'error');
     }
-  }
+  }, [addToast, mutateDevices]);
 
-  async function handleRenameDevice(oldTarget: string, newName: string) {
+  const handleRenameDevice = useCallback(async (oldTarget: string, newName: string) => {
     try {
       const result = await renameTarget(oldTarget, newName);
       addToast(`Renamed to ${stripYaml(result.new_filename)} — compiling new firmware...`, 'success');
@@ -446,7 +450,7 @@ export default function App() {
     } catch (err) {
       addToast('Rename failed: ' + (err as Error).message, 'error');
     }
-  }
+  }, [addToast, mutateDevices, mutateQueue, switchTab]);
 
   async function handleSelectEsphomeVersion(version: string) {
     try {

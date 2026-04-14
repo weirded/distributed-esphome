@@ -145,8 +145,10 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
 
-  // VP.4: pin/unpin version from the hamburger menu.
-  async function handlePin(target: string) {
+  // VP.4 / QS.20: pin/unpin version from the hamburger menu. Memoized so
+  // useDeviceColumns' dep array can actually cache — the hook re-runs only
+  // when `targets`/`onToast` change, not every render.
+  const handlePin = useCallback(async (target: string) => {
     // Pin to the device's current running version (from the poller), or the
     // global server version if the device hasn't reported a version yet.
     const t = targets.find(x => x.target === target);
@@ -161,16 +163,16 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
     } catch (err) {
       onToast('Pin failed: ' + (err as Error).message, 'error');
     }
-  }
+  }, [targets, onToast]);
 
-  async function handleUnpin(target: string) {
+  const handleUnpin = useCallback(async (target: string) => {
     try {
       await unpinTargetVersion(target);
       onToast(`Unpinned ${stripYaml(target)}`, 'success');
     } catch (err) {
       onToast('Unpin failed: ' + (err as Error).message, 'error');
     }
-  }
+  }, [onToast]);
 
   // Persist column visibility and unmanaged toggle to localStorage
   useEffect(() => {
