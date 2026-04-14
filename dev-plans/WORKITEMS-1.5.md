@@ -117,5 +117,24 @@ LRU-based disk usage controls for both the server and workers. Currently nothing
 
 - [ ] **2.1c Create device: import from URL** — fetch config from GitHub/project URL
 
+## Rebrand: ESPHome Fleet
+
+The product has grown beyond its original "distribute ESPHome compiles to faster machines" identity — 1.4 added fleet-scale management (version pinning, scheduled upgrades, device tags, Schedules tab). The current name "Distributed ESPHome" overweights the compile mechanism and underweights the actual user value. Rebrand to **"ESPHome Fleet"**.
+
+**Scope: soft rebrand, user-facing only.** Every user-visible string changes; no internal identifiers change. Zero breaking changes for existing installs — no re-install, no re-register, no lost config, no new Docker image paths, no moved repo.
+
+**What stays the same:** repo name (`weirded/distributed-esphome`), Docker image names (`esphome-dist-server`, `esphome-dist-client`), add-on slug (`esphome_dist_server`), Python module names, logger names, custom integration domain (`distributed_esphome` from 1.4.1 HI.*), and the YAML comment marker (`# distributed-esphome:` — parsed from users' existing YAML files; changing it would be a breaking migration).
+
+- [ ] **RB.1 config.yaml** — `name: "ESPHome Distributed Build Server"` → `name: "ESPHome Fleet"` (line 1, add-on store display + add-on page header). `panel_title: "ESPH Distributed"` → `panel_title: "ESPHome Fleet"` (line 19, HA sidebar label). Review `description:` and update if it overweights "distributed."
+- [ ] **RB.2 UI header + HTML title** — `App.tsx:482` `<span>Distributed Build</span>` → `<span>Fleet</span>` (header now reads `ESPHome [logo] Fleet v1.5.0-dev.N`). `ui/index.html:7` `<title>ESPHome Distributed Build</title>` → `<title>ESPHome Fleet</title>`. Also update `server/static/index.html:7` for completeness (gets regenerated on next `npm run build`).
+- [ ] **RB.3 README.md** — heading (`# Distributed ESPHome` → `# ESPHome Fleet`), image alt text, ASCII diagram (`ESPH Distributed` → `ESPHome Fleet`), install instructions (`**ESPHome Distributed Build Server**` → `**ESPHome Fleet**`), sidebar reference (`**ESPH Distributed**` → `**ESPHome Fleet**`), and rewrite the opening tagline/blurb to position "ESPHome Fleet" as the product with distributed compile as one capability among many (version pinning, scheduled upgrades, tags).
+- [ ] **RB.4 DOCS.md** — heading `# ESPHome Distributed Build Server` → `# ESPHome Fleet`. Sidebar reference `**ESPH Distributed**` → `**ESPHome Fleet**`. Review opening blurb for stale framing.
+- [ ] **RB.5 repository.json** — `"name": "Distributed ESPHome"` → `"name": "ESPHome Fleet"` (HA add-on store display name).
+- [ ] **RB.6 CHANGELOG.md entry** — add a callout to the 1.5.0 section: *"Rebrand: now called ESPHome Fleet. Same add-on, same Docker images, no migration needed — just a new name that better describes what the tool does."* User-facing framing only; don't list `panel_title` changed etc.
+- [ ] **RB.7 CLAUDE.md project overview** — rewrite line 7: `"ESPHome Fleet (internally: distributed-esphome) manages fleets of ESPHome devices — offloads compilation to remote workers, schedules upgrades, pins versions per device, and organizes devices via tags. Runs as a Home Assistant add-on with a built-in local worker."` Briefly note the naming convention: user-facing docs/UI say "ESPHome Fleet"; code identifiers, repo, and Docker paths keep the `distributed_esphome` / `esphome-dist-*` names.
+- [ ] **RB.8 Dockerfile labels + startup log + compose comment** — `Dockerfile:7` `io.hass.name`, `Dockerfile:8` `io.hass.description`, `rootfs/etc/services.d/esphome-dist-server/run:2` startup echo, `server/main.py:962,1031` INFO log lines ("Starting/Shutting down"), `docker-compose.worker.yml:1` header comment. **PY-4 trigger** (Dockerfile changes) — bump `IMAGE_VERSION` + `MIN_IMAGE_VERSION` when this lands.
+
+**Verification:** deploy to hass-4 and confirm: HA sidebar reads "ESPHome Fleet", add-on page header reads "ESPHome Fleet", UI top nav reads `ESPHome [logo] Fleet v1.5.0-dev.N`, browser tab title reads "ESPHome Fleet", `ha addons logs` shows "Starting ESPHome Fleet" on restart, and the GitHub README renders with the new heading.
+
 ## Open Bugs & Tweaks
 

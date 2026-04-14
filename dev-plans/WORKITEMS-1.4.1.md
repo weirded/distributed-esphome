@@ -114,3 +114,5 @@ Custom integration that makes Distributed ESPHome a first-class HA citizen: nati
 
 ## Open Bugs & Tweaks
 
+- [ ] **#56** ([GitHub](https://github.com/weirded/distributed-esphome/issues/56)) — Top bar doesn't scroll on mobile (iOS). The header/nav row is sticky/fixed on narrow viewports, so the ESPHome logo, version dropdown, Secrets/theme toggles, and worker/version chips can't be reached when the viewport is narrower than their combined width. Fix candidates: allow horizontal scroll on the header's flex container at narrow widths, or collapse secondary controls (secrets, theme, streamer) into a kebab menu below a mobile breakpoint. Verify on iOS Safari — the existing `theme-responsive.spec.ts` has narrow-viewport tests but doesn't exercise header scrolling.
+
