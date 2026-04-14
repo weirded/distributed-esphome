@@ -11,6 +11,7 @@ import {
 import type { Target, Worker } from '../types';
 import { stripYaml, timeAgo, formatCronHuman } from '../utils';
 import { Button } from './ui/button';
+import { SortHeader, getAriaSort } from './ui/sort-header';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -20,23 +21,6 @@ import {
 } from './ui/dropdown-menu';
 import { deleteTargetSchedule, getScheduleHistory, type ScheduleHistoryEntry } from '../api/client';
 
-function SortHeader({ label, column }: {
-  label: string;
-  column: { getIsSorted: () => false | 'asc' | 'desc'; toggleSorting: (desc?: boolean) => void; getCanSort: () => boolean };
-}) {
-  const sorted = column.getIsSorted();
-  const indicator = sorted === 'asc' ? ' \u25b2' : sorted === 'desc' ? ' \u25bc' : '';
-  const title = sorted === 'asc' ? 'Click to sort descending' : sorted === 'desc' ? 'Click to reset sort' : 'Click to sort ascending';
-  return (
-    <span
-      onClick={() => column.toggleSorting(sorted === 'asc')}
-      style={{ cursor: 'pointer', userSelect: 'none' }}
-      title={title}
-    >
-      {label}{indicator}
-    </span>
-  );
-}
 
 function formatNextRun(schedule: string | null | undefined, lastRun: string | null | undefined, scheduleOnce: string | null | undefined): string {
   if (scheduleOnce) {
@@ -298,7 +282,10 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               {table.getHeaderGroups().map(headerGroup => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map(header => (
-                    <th key={header.id}>
+                    <th
+                      key={header.id}
+                      aria-sort={header.column.getCanSort() ? getAriaSort(header.column) : undefined}
+                    >
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}

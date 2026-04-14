@@ -15,6 +15,7 @@ import type { Device, Job, Target, Worker } from '../types';
 import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../utils';
 import { StatusDot } from './StatusDot';
 import { Button } from './ui/button';
+import { SortHeader, getAriaSort } from './ui/sort-header';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -907,7 +908,10 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
               {table.getHeaderGroups().map(headerGroup => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map(header => (
-                    <th key={header.id}>
+                    <th
+                      key={header.id}
+                      aria-sort={header.column.getCanSort() ? getAriaSort(header.column) : undefined}
+                    >
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}
@@ -1025,20 +1029,6 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
 }
 
 // Inline sort header used in column defs — renders ▲/▼ indicators
-function SortHeader({ label, column }: { label: string; column: { getIsSorted: () => false | 'asc' | 'desc'; toggleSorting: (desc?: boolean) => void; getCanSort: () => boolean } }) {
-  const sorted = column.getIsSorted();
-  const indicator = sorted === 'asc' ? ' \u25b2' : sorted === 'desc' ? ' \u25bc' : '';
-  const title = sorted === 'asc' ? 'Click to sort descending' : sorted === 'desc' ? 'Click to reset sort' : 'Click to sort ascending';
-  return (
-    <span
-      onClick={() => column.toggleSorting(sorted === 'asc')}
-      style={{ cursor: 'pointer', userSelect: 'none' }}
-      title={title}
-    >
-      {label}{indicator}
-    </span>
-  );
-}
 
 function DeviceMenu({
   target: t,
