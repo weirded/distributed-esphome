@@ -24,7 +24,14 @@ def _normalize_base_url(value: str) -> str:
     """Validate and normalize a base URL."""
     normalized = value.strip().rstrip("/")
     parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
         raise ValueError
     return normalized
 
