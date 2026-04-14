@@ -14,13 +14,13 @@ Configuration options (token, timeouts, polling intervals) are available in the 
 
 ## Web UI
 
-**Devices** — all discovered ESPHome YAML configs with online/offline status (using HA connectivity where available), firmware version, config-changed indicator, HA integration status (with deep-link to the device's HA page), and per-device version pinning. Compile individual, all, or only outdated devices. Create new devices from a stub or duplicate existing ones via "+ New Device". Inline Monaco YAML editor with ESPHome schema autocomplete and validation. Rename, delete, restart devices, copy API keys, and view live device logs. Configurable columns and search/filter.
+**Devices** — every ESPHome config in one place, with online status, current firmware version, and a one-click link to its Home Assistant page. Compile individual devices, everything that's outdated, or your whole fleet. Create new devices or duplicate existing ones, edit YAML inline with autocomplete and validation, pin individual devices to a specific ESPHome version, and view live device logs.
 
-**Queue** — live job status with build logs. Retry failed/cancelled jobs, cancel in-progress ones. Clear individual jobs, all succeeded, all finished, or the entire queue. Entries auto-prune after one hour.
+**Queue** — live job status and build logs. Retry, cancel, or clear jobs individually or in bulk.
 
-**Workers** — connected build workers with online status, current jobs, system info (CPU, memory, disk), and ESPHome version. Adjust slot count per worker (0 = paused), clean per-worker or all build caches, or remove offline workers. Workers running an outdated Docker image are flagged with a clickable "image stale" badge that opens the Connect Worker modal so you can re-run the latest `docker run` command.
+**Workers** — connected build workers with their slot count, cache size, and system info. Includes a built-in local worker and a one-click setup command for adding remote workers. Workers running an outdated image are flagged with an "image stale" badge.
 
-**Schedules** — every device with a recurring or one-time scheduled upgrade. Set schedules from the device's hamburger menu ("Schedule Upgrade…") with friendly presets (Daily 2am, Weekly, Monthly) or a custom cron expression. Schedules respect each device's pinned ESPHome version. The schedule is stored in the YAML file's `# distributed-esphome:` comment block, so it travels with the file. Status (Active / Paused / One-time), next/last run, and recent fire history are all visible. Bulk Remove via the Actions dropdown.
+**Schedules** — every scheduled upgrade in one view. Set recurring schedules (daily, weekly, monthly, custom cron) or one-time future upgrades from the device hamburger menu. Schedules are stored alongside the YAML so they travel with your config, and respect each device's pinned ESPHome version.
 
 ## Troubleshooting
 

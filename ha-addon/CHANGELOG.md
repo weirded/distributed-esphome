@@ -2,61 +2,33 @@
 
 ## 1.4.0
 
-The fleet management release. New per-device scheduling, "+ New Device" creation, a Schedules tab, and a top-to-bottom UX consistency pass across all four tabs.
+The fleet management release. Schedule upgrades, pin device versions, and create new devices — all from the UI.
 
 **New features**
 
-- **Per-device scheduled upgrades** — every device can now have a recurring cron schedule (Daily 2am, Weekly Sunday, custom cron) or a one-time scheduled upgrade. The schedule is stored in the YAML file as a `# distributed-esphome:` comment block — it travels with the file, no separate database. A new **Schedules tab** lists every scheduled device with its next/last run, status (Active / Paused / One-time), version pin, and history of recent fires (✓ success / ✗ failed / ● pending). Set schedules from the per-device hamburger menu or the bulk Actions dropdown. Schedule columns and last-run timestamps are clickable to open the upgrade dialog directly.
-- **Unified Upgrade modal** — the per-device Upgrade dialog and the Schedule dialog are now one modal with a Now / Scheduled mode toggle. Worker selection, ESPHome version, and (when scheduled) the cron picker all live in one place. The version dropdown is searchable with a "Show betas" toggle, and includes ALL historic ESPHome versions from PyPI (not just the most recent 50). The dialog title changes to "Schedule Upgrade — X" in scheduled mode.
-- **"+ New Device" and "Duplicate…"** — create a new device YAML from a stub or duplicate an existing one. Both flows open the editor on the new file. The file is staged as a hidden dotfile until first save, so cancelling out doesn't leave orphan entries in the Devices tab. Duplicate preserves `!include` packages, `!secret` references, and rewrites `substitutions.name` so the renamed device picks up its new name everywhere.
-- **Per-device version pinning** — pin any device to a specific ESPHome version (📌 icon next to the version). Bulk upgrades respect the pin. Pinned devices validate against their pinned version (the server installs the pinned ESPHome on demand if it differs from the global default). The upgrade modal includes a "Current" option that always uses whatever's installed.
-- **Home Assistant device deep-links** — the "Yes" indicator in the HA column is now a clickable link that opens the device's page in Home Assistant. Works for both managed devices (with YAML) and unmanaged ones HA knows about.
-- **Schedules tab** with TanStack Table, search, sticky headers, sortable columns, and bulk Remove via the Actions dropdown. Same layout patterns as the other three tabs.
-- **Cancelled job state** — cancelling a queued or running job now marks it as `Cancelled` (gray badge) instead of `Failed`. Cancelled jobs can be retried like any other terminal state.
-- **Clear Entire Queue** — new option in the Queue tab's Clear dropdown that cancels all running/pending jobs and clears all terminal jobs in one action.
-- **Sticky action column** — the rightmost column with action buttons (Upgrade / Edit / ⋮) is now pinned to the right edge of the table when it scrolls horizontally on narrow viewports — buttons stay accessible at any window size.
+- **Scheduled upgrades** — set any device to upgrade on a recurring schedule (daily, weekly, monthly, custom cron) or at a one-time future date. Times are entered in your local timezone. A new **Schedules tab** lists every scheduled device with its next/last run, status, and recent run history.
+- **Per-device version pinning** — pin individual devices to a specific ESPHome version. Bulk upgrades and scheduled runs respect the pin. The upgrade modal warns you when a one-off upgrade differs from a device's pin.
+- **Create devices from the UI** — "+ New Device" makes a new YAML from a stub; "Duplicate…" clones an existing device (preserving `!include`, `!secret`, and substitutions). Both open the editor on the new file. Cancelling without saving cleans up after itself.
+- **Unified Upgrade dialog** — one dialog handles "upgrade now" and "schedule for later" with a mode toggle. The version dropdown is now searchable and lists every historic ESPHome release from PyPI, with an option to show beta versions.
+- **Home Assistant device deep-links** — the "Yes" indicator in the HA column is now a clickable link to the device's page in Home Assistant.
+- **Cancel and clear queue jobs** — cancelled jobs are now distinct from failed (gray "Cancelled" badge) and can be retried. New "Clear Entire Queue" option cancels everything in flight and clears all terminal jobs in one click.
 
 **Improvements**
 
-- **Tab consistency** — all four tabs (Devices / Queue / Workers / Schedules) now share the same toolbar layout: title + search + dropdowns. Same TanStack Table, same SortHeader, same checkbox selection, same row styling, same empty-state pattern. Bulk actions live in an Actions dropdown — always visible, items disabled when nothing's selected (no more buttons that pop in and out).
-- **Standardized toolbar layout** — primary "Add new" actions (`+ New Device`, `+ Connect Worker`) are always FIRST as primary buttons; tab-specific operations (Upgrade / Retry / Clear) sit in the middle; bulk actions are LAST in the Actions dropdown.
-- **Tighter table layout** — reduced horizontal/vertical padding and harmonized font sizes for better screen-estate use on fleet management dashboards. Checkbox column hugs the device name. The local-worker row highlight extends across all cells including the sticky action column.
-- **Editor and Logs windows scale with the viewport** — both modals now use most of the available screen space (viewport minus 3rem margin) using dynamic viewport units that adapt to embedded contexts like HA Ingress.
-- **Schedule history view** — the Schedules tab's "Last Run" column shows the most recent fire event with a status indicator. Hovering reveals the last 5 runs. History persists across server restarts.
-- **Per-slot compile working dirs + shared cache** — concurrent compiles on the same worker no longer race on PlatformIO's `.pio/` and `.esphome/` directories. Each worker slot has its own working dir, with a shared per-target cache that's seeded on slot startup and promoted on successful compile. Compiles stay fully parallel and cache reuses across slots.
-- **Local-time scheduling** — schedule pickers display and accept local time; cron expressions are stored in UTC so schedules fire at the wall-clock time you set, regardless of timezone.
-- **Faster scheduler** — replaced the in-house scheduler with APScheduler. Schedules fire within milliseconds of their target time (was up to 60s polling delay), and changes take effect immediately when you save them. Misfire grace window prevents stale post-restart fires; coalesce + max-instances=1 prevents double-fire.
-- **Sticky workspace state** — the active tab persists across page reloads; the local worker's slot count survives add-on restarts.
-- **HA backup size reduction** — excluded the worker's `/data/esphome-versions/` cache from HA backups (was bloating backups by 1-2 GB after a fleet upgrade).
+- The editor and log viewers now scale to fill the available screen space.
+- Schedule fields and last-run timestamps in the Devices and Schedules tabs are clickable shortcuts that open the upgrade dialog.
+- Concurrent compiles on the same worker no longer share build directories — full parallelism, with cache reuse across worker slots.
+- Home Assistant backup sizes shrunk significantly — the local worker's ESPHome cache (1-2 GB after a fleet upgrade) is no longer included in backups.
 
 **Bug fixes**
 
-- Schedules now fire at the correct time. Fixed a timezone bug where cron expressions stored the user's local hour directly, causing schedules to fire 7+ hours off in non-UTC timezones.
-- Schedules created on the very first run now wait for the next cron occurrence instead of firing immediately.
-- One-time schedules can be set for "now" without rejection.
-- The Remove Schedule action now removes both recurring and one-time schedules (previously only touched recurring).
-- Web server links restored — devices using `web_server:` (with no value, i.e. defaults) now correctly show their IP as a clickable link.
-- The MAC-based HA matcher now finds all devices — split a too-large supervisor template query that was returning empty.
-- "+ New Device" and "Duplicate…" no longer return 404 — fixed the staging path that broke URL routing.
-- Cloned devices no longer appear "online" or "in HA" before the user saves them — the file is staged invisibly until first save.
-- Editor cleanup on cancel — closing the editor on a freshly created device without saving now deletes the staged file instead of leaving an orphan.
-- Cancelled jobs can be retried (was incorrectly excluded from the retry-eligible set).
-- Retry honors per-device pinned version (was always using the server default).
-- Ghost device rows after deleting an unflashed clone are now cleaned up; configured devices that go offline for >4 hours are auto-purged.
-- Button heights and border-radii are now uniform across all toolbar buttons and dropdowns.
-- Dialog modals no longer hang outside the viewport on narrow screens.
-- Status indicators, fonts, and pin icons render consistently across all four tabs.
-- Validation now uses the device's pinned ESPHome version (installs it on demand) instead of failing with the server's default version.
-
-**Under the hood**
-
-- Replaced the DIY scheduler with APScheduler for reliable execution (~ms latency, immediate sync on schedule changes, correct misfire handling).
-- Eliminated all aiohttp `DeprecationWarning`s by routing dynamic state through a single mutable container.
-- Removed Supervisor `/addons` listing call that returned 403 every 30s and spammed the host log.
-- Persisted scheduler history to `/data/schedule_history.json` (survives restarts).
-- New `pip-audit` regression guard (PY-8): every direct dep in `requirements.txt` must be in `requirements.lock`.
-- Post-deploy add-on log check (`scripts/check-addon-logs.sh`) wired into the dev loop.
-- 45 mocked Playwright e2e tests + 6 hass-4 prod smoke tests; full suite passes.
+- Schedules fire at the correct local time (timezone bug could shift fires by hours in non-UTC timezones).
+- Schedules created for the first time wait for the next occurrence instead of firing immediately.
+- The "Remove Schedule" action now removes both recurring and one-time schedules.
+- Web server links work for devices using `web_server:` with default settings.
+- Validation uses the device's pinned ESPHome version, installing it on demand if needed.
+- Cancelled jobs can be retried; retries honor per-device pins.
+- Ghost device rows from deleted clones, and devices that have been offline for more than 4 hours, are now cleaned up automatically.
 
 ## 1.3.1
 
