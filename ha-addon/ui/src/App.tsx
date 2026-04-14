@@ -677,13 +677,14 @@ export default function App() {
             pinnedVersion={t?.pinned_version}
             currentSchedule={t?.schedule}
             currentScheduleEnabled={t?.schedule_enabled}
+            currentScheduleTz={t?.schedule_tz}
             currentOnce={t?.schedule_once}
             defaultMode={upgradeModalTarget.defaultMode}
             onUpgradeNow={handleUpgradeConfirm}
-            onSaveSchedule={async (cron, version) => {
+            onSaveSchedule={async (cron, version, tz) => {
               try {
                 await applyScheduleVersion(upgradeModalTarget.target, t?.pinned_version ?? null, version);
-                await setTargetSchedule(upgradeModalTarget.target, cron);
+                await setTargetSchedule(upgradeModalTarget.target, cron, tz);
                 addToast(`Schedule set for ${upgradeModalTarget.displayName}`, 'success');
                 setUpgradeModalTarget(null);
                 mutateDevices();

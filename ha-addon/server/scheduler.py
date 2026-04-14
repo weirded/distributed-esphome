@@ -190,6 +190,10 @@ def _sync_target(target: str, meta: dict) -> int:
     # Recurring cron schedule
     cron_expr = meta.get("schedule")
     enabled = meta.get("schedule_enabled", False)
+    # #90: tz-aware schedules. The cron expression is interpreted in
+    # `schedule_tz` (an IANA tz name like "America/Los_Angeles"). When absent,
+    # default to UTC for backward compat with schedules created before #90.
+    cron_tz = meta.get("schedule_tz") or "UTC"
     if cron_expr and enabled:
         parts = cron_expr.strip().split()
         if len(parts) == 5:
@@ -200,7 +204,7 @@ def _sync_target(target: str, meta: dict) -> int:
                     day=parts[2],
                     month=parts[3],
                     day_of_week=parts[4],
-                    timezone="UTC",
+                    timezone=cron_tz,
                 )
                 _scheduler.add_job(
                     _fire_recurring,

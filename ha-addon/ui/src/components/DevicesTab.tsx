@@ -601,12 +601,13 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           );
         }
         if (!t.schedule) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
-        const human = formatCronHuman(t.schedule);
+        const human = formatCronHuman(t.schedule, t.schedule_tz);
         const enabled = t.schedule_enabled !== false;
+        const tzLabel = t.schedule_tz ? ` (${t.schedule_tz})` : '';
         return (
           <span
             style={{ cursor: 'pointer', color: 'var(--accent)', opacity: enabled ? 1 : 0.5 }}
-            title={`${t.schedule}${enabled ? '' : ' (paused)'} — click to edit`}
+            title={`${t.schedule}${tzLabel}${enabled ? '' : ' (paused)'} — click to edit`}
             onClick={handleClick}
           >
             {human}
@@ -973,9 +974,9 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           scheduleOnly
           defaultMode="schedule"
           onUpgradeNow={() => {}}
-          onSaveSchedule={async (cron, _version) => {
+          onSaveSchedule={async (cron, _version, tz) => {
             try {
-              await Promise.all(selectedTargets.map(t => setTargetSchedule(t, cron)));
+              await Promise.all(selectedTargets.map(t => setTargetSchedule(t, cron, tz)));
               onToast(`Schedule set for ${selectedTargets.length} device(s)`, 'success');
               setBulkScheduleOpen(false);
               onRefresh();

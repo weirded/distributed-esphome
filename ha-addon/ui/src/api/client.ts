@@ -395,13 +395,14 @@ export async function updateTargetMeta(
 export async function setTargetSchedule(
   filename: string,
   cron: string,
+  tz?: string,
 ): Promise<{ schedule_enabled: boolean }> {
   const r = await apiFetch(
     `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cron }),
+      body: JSON.stringify(tz ? { cron, tz } : { cron }),
     },
   );
   const data = await r.json() as { schedule_enabled?: boolean; error?: string };

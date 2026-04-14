@@ -77,6 +77,10 @@ export interface Target {
   schedule_last_run?: string | null;
   /** ISO datetime for a one-time scheduled upgrade. Auto-cleared after firing. */
   schedule_once?: string | null;
+  /** IANA tz name (e.g. "America/Los_Angeles") that the cron expression is
+   * interpreted in. Absent for legacy schedules — the scheduler treats those
+   * as UTC. New schedules from the UI always carry the browser tz. */
+  schedule_tz?: string | null;
   /** Comma-separated tags from YAML metadata comment. */
   tags?: string | null;
 }

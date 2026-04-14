@@ -25,6 +25,7 @@ def _write_scheduled_device(
     last_run: str | None = None,
     pin_version: str | None = None,
     schedule_once: str | None = None,
+    schedule_tz: str | None = None,
 ) -> str:
     """Write a minimal YAML with schedule metadata."""
     filename = f"{name}.yaml"
@@ -38,6 +39,8 @@ def _write_scheduled_device(
         meta["pin_version"] = pin_version
     if schedule_once:
         meta["schedule_once"] = schedule_once
+    if schedule_tz:
+        meta["schedule_tz"] = schedule_tz
 
     path = config_dir / filename
     path.write_text(f"esphome:\n  name: {name}\n")
@@ -204,6 +207,45 @@ async def test_get_jobs_info(tmp_path):
 # ---------------------------------------------------------------------------
 # History ring buffer
 # ---------------------------------------------------------------------------
+
+
+async def test_sync_target_uses_schedule_tz(tmp_path):
+    """#90: cron is interpreted in `schedule_tz` when present, UTC otherwise."""
+    import scheduler
+
+    _write_scheduled_device(
+        tmp_path, name="tz-device", cron="0 2 * * *", enabled=True,
+        schedule_tz="America/Los_Angeles",
+    )
+    _write_scheduled_device(
+        tmp_path, name="utc-device", cron="0 2 * * *", enabled=True,
+    )
+
+    app = {
+        "config": type("C", (), {"config_dir": str(tmp_path), "job_timeout": 600})(),
+        "queue": JobQueue(queue_file=tmp_path / "q.json"),
+    }
+    scheduler._app = app
+    scheduler._scheduler = None
+
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    scheduler._scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler._scheduler.start()
+
+    try:
+        scheduler.sync_target("tz-device.yaml")
+        scheduler.sync_target("utc-device.yaml")
+        tz_job = scheduler._scheduler.get_job("sched:tz-device.yaml")
+        utc_job = scheduler._scheduler.get_job("sched:utc-device.yaml")
+        # Both fire at 02:00, but in different zones — UTC offsets differ.
+        assert str(tz_job.trigger.timezone) == "America/Los_Angeles"
+        assert str(utc_job.trigger.timezone) == "UTC"
+        # Next-fire times are absolute UTC but originate from different local 02:00s.
+        assert tz_job.next_run_time != utc_job.next_run_time
+    finally:
+        scheduler._scheduler.shutdown(wait=False)
+        scheduler._scheduler = None
+        scheduler._app = None
 
 
 async def test_schedule_history_ring_buffer_caps(tmp_path, tmp_queue):

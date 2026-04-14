@@ -9,7 +9,9 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import type { Worker } from '../types';
-import { localCronToUtc, utcCronToLocal } from '../utils';
+import { utcCronToLocal } from '../utils';
+
+const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /**
  * Unified Upgrade modal (#22).
@@ -28,36 +30,22 @@ import { localCronToUtc, utcCronToLocal } from '../utils';
 // Cron builder helpers (from the old ScheduleModal)
 // ---------------------------------------------------------------------------
 
+// #90: cron expressions in this modal are timezone-naive — they're stored as
+// the user enters them, paired with a `schedule_tz` field that APScheduler
+// uses to evaluate them on the server. No client-side hour conversion needed.
 function buildCron(interval: string, every: number, time: string, dow: string): string {
   const [hh, mm] = time.split(':').map(Number);
   const minute = isNaN(mm) ? 0 : mm;
   const hour = isNaN(hh) ? 2 : hh;
 
-  // #83: convert LOCAL time to UTC for the cron expression. The scheduler
-  // evaluates cron in UTC, so storing the user's local hour directly
-  // causes the schedule to fire at the wrong time.
   if (interval === 'hours') {
-    // Hourly: only minute matters — timezone-agnostic within the hour
     return every === 1 ? `${minute} * * * *` : `${minute} */${every} * * *`;
   }
 
-  // Daily/weekly: convert local hour+minute → UTC
-  const d = new Date();
-  if (interval === 'weeks') {
-    // Set to the next occurrence of the user's picked local dow + time
-    const targetDow = parseInt(dow, 10);
-    const daysAhead = ((targetDow - d.getDay()) % 7 + 7) % 7;
-    d.setDate(d.getDate() + daysAhead);
-  }
-  d.setHours(hour, minute, 0, 0);
-  const utcMinute = d.getUTCMinutes();
-  const utcHour = d.getUTCHours();
-  const utcDow = d.getUTCDay();
-
   switch (interval) {
-    case 'days': return every === 1 ? `${utcMinute} ${utcHour} * * *` : `${utcMinute} ${utcHour} */${every} * *`;
-    case 'weeks': return `${utcMinute} ${utcHour} * * ${utcDow}`;
-    default: return `${utcMinute} ${utcHour} * * *`;
+    case 'days': return every === 1 ? `${minute} ${hour} * * *` : `${minute} ${hour} */${every} * *`;
+    case 'weeks': return `${minute} ${hour} * * ${dow}`;
+    default: return `${minute} ${hour} * * *`;
   }
 }
 
@@ -75,26 +63,14 @@ function parseCron(cron: string): { interval: string; every: number; time: strin
   }
   const h = parseInt(hour, 10);
   if (isNaN(h)) return null;
-
-  // #83: cron is stored in UTC — convert back to local for display
-  const d = new Date();
-  if (dow !== '*') {
-    const utcDow = parseInt(dow, 10);
-    const daysAhead = ((utcDow - d.getUTCDay()) % 7 + 7) % 7;
-    d.setUTCDate(d.getUTCDate() + daysAhead);
-  }
-  d.setUTCHours(h, minute, 0, 0);
-  const localHour = d.getHours();
-  const localMinute = d.getMinutes();
-  const localDow = d.getDay();
-  const timeStr = `${String(localHour).padStart(2, '0')}:${String(localMinute).padStart(2, '0')}`;
+  const timeStr = `${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
   if (dow === '*') {
     if (dom === '*') return { interval: 'days', every: 1, time: timeStr, dow: '0' };
     if (dom.startsWith('*/')) return { interval: 'days', every: parseInt(dom.slice(2), 10), time: timeStr, dow: '0' };
     return null;
   }
-  if (dom === '*') return { interval: 'weeks', every: 1, time: timeStr, dow: String(localDow) };
+  if (dom === '*') return { interval: 'weeks', every: 1, time: timeStr, dow };
   return null;
 }
 
@@ -122,6 +98,8 @@ interface Props {
   /** Pre-existing recurring schedule (cron expression). */
   currentSchedule?: string | null;
   currentScheduleEnabled?: boolean;
+  /** IANA tz the existing cron is interpreted in. Absent means legacy/UTC. */
+  currentScheduleTz?: string | null;
   /** Pre-existing one-time schedule (ISO datetime). */
   currentOnce?: string | null;
   /** Which mode to open in: 'now' for immediate upgrade, 'schedule' for scheduling. */
@@ -137,9 +115,10 @@ interface Props {
   /**
    * Save a recurring cron schedule. `version` is the user's pin choice —
    * `null` means "Latest" (unpin / use server default at run time), a
-   * specific string means "pin the device to this version".
+   * specific string means "pin the device to this version". `tz` is the
+   * IANA tz the cron is interpreted in (#90).
    */
-  onSaveSchedule: (cron: string, version: string | null) => void;
+  onSaveSchedule: (cron: string, version: string | null, tz: string) => void;
   onSaveOnce: (datetime: string, version: string | null) => void;
   onDeleteSchedule: () => void;
   onClose: () => void;
@@ -154,6 +133,7 @@ export function UpgradeModal({
   pinnedVersion,
   currentSchedule,
   currentScheduleEnabled: _currentScheduleEnabled,
+  currentScheduleTz,
   currentOnce,
   defaultMode = 'now',
   scheduleOnly = false,
@@ -197,18 +177,21 @@ export function UpgradeModal({
   const [mode, setMode] = useState<'now' | 'schedule'>(scheduleOnly ? 'schedule' : defaultMode);
 
   // --- Schedule state ---
-  const parsed = currentSchedule ? parseCron(currentSchedule) : null;
+  // #90: cron is interpreted in `currentScheduleTz` server-side. If the existing
+  // schedule has no tz (legacy, pre-#90), it's stored as UTC — convert once for
+  // editing display so the user sees their local time, and we'll write the new
+  // browser tz on save.
+  const seedCron = currentSchedule
+    ? (currentScheduleTz ? currentSchedule : utcCronToLocal(currentSchedule).cron)
+    : '';
+  const parsed = seedCron ? parseCron(seedCron) : null;
   const [scheduleType, setScheduleType] = useState<'recurring' | 'once'>(currentOnce ? 'once' : 'recurring');
   const [interval, setInterval] = useState(parsed?.interval ?? 'days');
   const [every, setEvery] = useState(parsed?.every ?? 1);
   const [time, setTime] = useState(parsed?.time ?? '02:00');
   const [dow, setDow] = useState(parsed?.dow ?? '0');
-  // #89: raw cron is shown to and entered by the user in *local* time; we
-  // convert to UTC at submit. Pre-fill the existing UTC cron (if any) by
-  // converting back to local first.
-  const [rawCron, setRawCron] = useState(currentSchedule ? utcCronToLocal(currentSchedule).cron : '');
+  const [rawCron, setRawCron] = useState(seedCron);
   const [cronMode, setCronMode] = useState<'friendly' | 'cron'>(parsed || !currentSchedule ? 'friendly' : 'cron');
-  const rawCronShift = cronMode === 'cron' && rawCron.trim() ? localCronToUtc(rawCron.trim()) : null;
   // #33: datetime-local expects a *local* wall-clock value (no timezone). Using
   // `toISOString()` returns UTC, so east-of-UTC users would see a time in the
   // past and west-of-UTC users (e.g. the author) would see a time many hours
@@ -221,7 +204,7 @@ export function UpgradeModal({
   });
 
   const effectiveCron = cronMode === 'cron'
-    ? (rawCronShift?.cron ?? rawCron.trim())
+    ? rawCron.trim()
     : buildCron(interval, every, time, dow);
   const hasExistingSchedule = !!(currentSchedule || currentOnce);
 
@@ -246,7 +229,7 @@ export function UpgradeModal({
       if (scheduleType === 'once') {
         onSaveOnce(new Date(onceDate).toISOString(), scheduleVersion);
       } else {
-        onSaveSchedule(effectiveCron, scheduleVersion);
+        onSaveSchedule(effectiveCron, scheduleVersion, BROWSER_TZ);
       }
     }
   }
@@ -389,12 +372,7 @@ export function UpgradeModal({
                 ) : (
                   <div>
                     <Input type="text" value={rawCron} placeholder="0 2 * * *" onChange={e => setRawCron(e.target.value)} />
-                    <div className="mt-1 text-[10px] text-[var(--text-muted)]">minute hour day-of-month month day-of-week — entered in your local time</div>
-                    {rawCronShift?.complex && (
-                      <div className="mt-1 text-[10px]" style={{ color: 'var(--accent)' }}>
-                        Complex expression — stored as-is and interpreted as UTC by the scheduler.
-                      </div>
-                    )}
+                    <div className="mt-1 text-[10px] text-[var(--text-muted)]">minute hour day-of-month month day-of-week — interpreted in {BROWSER_TZ}</div>
                   </div>
                 )
               ) : (
@@ -406,7 +384,7 @@ export function UpgradeModal({
 
               {scheduleType === 'recurring' && cronMode === 'friendly' && (
                 <div className="text-[10px] text-[var(--text-muted)]">
-                  Cron: <code className="bg-[var(--surface)] px-1 rounded">{utcCronToLocal(effectiveCron).cron}</code> <span className="opacity-70">(local time)</span>
+                  Cron: <code className="bg-[var(--surface)] px-1 rounded">{effectiveCron}</code> <span className="opacity-70">({BROWSER_TZ})</span>
                 </div>
               )}
 

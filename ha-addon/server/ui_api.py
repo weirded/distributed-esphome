@@ -348,6 +348,9 @@ async def get_targets(request: web.Request) -> web.Response:
             "schedule_enabled": meta.get("schedule_enabled", False),
             "schedule_last_run": meta.get("schedule_last_run"),
             "schedule_once": meta.get("schedule_once"),
+            # #90: IANA tz name (e.g. "America/Los_Angeles"). Absent for
+            # legacy schedules; the scheduler interprets those as UTC.
+            "schedule_tz": meta.get("schedule_tz"),
             "tags": meta.get("tags"),
         }
         result.append(entry)
@@ -826,6 +829,18 @@ async def set_target_schedule(request: web.Request) -> web.Response:
     if not cron_expr:
         return web.json_response({"error": "cron expression required"}, status=400)
 
+    # #90: optional `tz` (IANA name like "America/Los_Angeles"). When set,
+    # the scheduler interprets the cron expression in that tz. Absent → UTC.
+    tz = body.get("tz")
+    if tz is not None and not isinstance(tz, str):
+        return web.json_response({"error": "tz must be a string"}, status=400)
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo  # noqa: PLC0415
+            ZoneInfo(tz)  # raises ZoneInfoNotFoundError if unknown
+        except Exception as exc:
+            return web.json_response({"error": f"Invalid tz: {exc}"}, status=400)
+
     # Validate the cron expression.
     try:
         from croniter import croniter  # type: ignore[import-untyped]  # noqa: PLC0415
@@ -840,14 +855,20 @@ async def set_target_schedule(request: web.Request) -> web.Response:
     meta = read_device_meta(cfg.config_dir, filename)
     meta["schedule"] = cron_expr
     meta["schedule_enabled"] = True
+    if tz:
+        meta["schedule_tz"] = tz
+    else:
+        # No tz sent: clear any stale tz so the scheduler falls back to UTC.
+        meta.pop("schedule_tz", None)
     write_device_meta(cfg.config_dir, filename, meta)
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
-    logger.info("Schedule set for %s: %s", filename, cron_expr)
+    logger.info("Schedule set for %s: %s (tz=%s)", filename, cron_expr, tz or "UTC")
     return web.json_response({
         "ok": True,
         "schedule": cron_expr,
         "schedule_enabled": True,
+        "schedule_tz": tz,
     })
 
 
@@ -872,6 +893,7 @@ async def delete_target_schedule(request: web.Request) -> web.Response:
     meta.pop("schedule_enabled", None)
     meta.pop("schedule_last_run", None)
     meta.pop("schedule_once", None)
+    meta.pop("schedule_tz", None)
     write_device_meta(cfg.config_dir, filename, meta)
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)

@@ -15,9 +15,10 @@ export function timeAgo(isoString: string): string {
  * identically.
  */
 /**
- * #83: cron expressions are stored in UTC. This helper converts the UTC
- * hour+minute to the user's local timezone for display. Returns the local
- * hour and minute, and for weekly schedules, the local day-of-week.
+ * #83: cron expressions used to be stored in UTC. This helper converts the
+ * UTC hour+minute to the user's local timezone for display. As of #90, new
+ * schedules are tz-aware (stored with a `schedule_tz` field), so this helper
+ * is only invoked for legacy schedules without that field.
  */
 function _cronUtcToLocal(utcHour: number, utcMinute: number, utcDow?: number): { hour: number; minute: number; dow: number } {
   const d = new Date();
@@ -94,7 +95,15 @@ export function utcCronToLocal(cron: string): { cron: string; complex: boolean }
   return _shiftCron(cron, 'utcToLocal');
 }
 
-export function formatCronHuman(cron: string | null | undefined): string | null {
+/**
+ * Format a 5-field cron expression for display.
+ *
+ * #90: when `tz` is set, the cron is interpreted in that tz already — render
+ * the hour/dow literally. When `tz` is null/undefined, the schedule predates
+ * #90 and is interpreted as UTC; convert hour/dow to the user's local zone
+ * for display so legacy schedules don't appear time-shifted.
+ */
+export function formatCronHuman(cron: string | null | undefined, tz?: string | null): string | null {
   if (!cron) return null;
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return cron;
@@ -105,20 +114,26 @@ export function formatCronHuman(cron: string | null | undefined): string | null 
     const n = parseInt(hour.slice(2), 10);
     return n === 1 ? 'Hourly' : `Every ${n}h`;
   }
+  const renderTime = (h: number, m: number, dowNum?: number) => {
+    if (tz) {
+      return { hour: h, minute: m, dow: dowNum ?? 0 };
+    }
+    return _cronUtcToLocal(h, m, dowNum);
+  };
   if (dom === '*' && dow === '*' && !hour.includes('/') && !min.includes('/')) {
     const h = parseInt(hour, 10);
     const m = parseInt(min, 10);
     if (isNaN(h) || isNaN(m)) return cron;
-    const local = _cronUtcToLocal(h, m);
+    const local = renderTime(h, m);
     return `Daily ${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
   }
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   if (dom === '*' && dow !== '*' && !hour.includes('/')) {
     const h = parseInt(hour, 10);
     const m = parseInt(min, 10);
-    const utcDow = parseInt(dow, 10);
+    const dowNum = parseInt(dow, 10);
     if (isNaN(h) || isNaN(m)) return cron;
-    const local = _cronUtcToLocal(h, m, utcDow);
+    const local = renderTime(h, m, dowNum);
     const day = dayNames[local.dow] ?? dow;
     return `${day} ${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
   }
@@ -126,7 +141,7 @@ export function formatCronHuman(cron: string | null | undefined): string | null 
     const h = parseInt(hour, 10);
     const m = parseInt(min, 10);
     if (isNaN(h) || isNaN(m)) return cron;
-    const local = _cronUtcToLocal(h, m);
+    const local = renderTime(h, m);
     const suffix = dom === '1' ? 'st' : dom === '2' ? 'nd' : dom === '3' ? 'rd' : 'th';
     return `${dom}${suffix} ${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
   }

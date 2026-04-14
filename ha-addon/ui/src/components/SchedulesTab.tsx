@@ -135,14 +135,15 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
         if (t.schedule_once && !t.schedule) {
           label = `Once: ${new Date(t.schedule_once).toLocaleString()}`;
         } else if (t.schedule) {
-          label = formatCronHuman(t.schedule) ?? t.schedule;
+          label = formatCronHuman(t.schedule, t.schedule_tz) ?? t.schedule;
         } else {
           label = '—';
         }
+        const tzLabel = t.schedule_tz ? ` (${t.schedule_tz})` : '';
         return (
           <span
             style={{ cursor: 'pointer', color: 'var(--accent)', opacity: enabled ? 1 : 0.5 }}
-            title={`${t.schedule ?? ''} — click to edit`}
+            title={`${t.schedule ?? ''}${tzLabel} — click to edit`}
             onClick={() => onSchedule(t.target)}
           >
             {label}
