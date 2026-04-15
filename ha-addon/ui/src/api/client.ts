@@ -101,6 +101,13 @@ export async function getEsphomeVersions(): Promise<EsphomeVersions> {
   return parseResponse<EsphomeVersions>(await apiFetch('./ui/api/esphome-versions'), 'fetching ESPHome versions');
 }
 
+export async function refreshEsphomeVersions(): Promise<EsphomeVersions> {
+  return parseResponse<EsphomeVersions>(
+    await apiFetch('./ui/api/esphome-versions/refresh', { method: 'POST' }),
+    'refreshing ESPHome versions',
+  );
+}
+
 export async function setEsphomeVersion(version: string): Promise<void> {
   await expectOk(await apiFetch('./ui/api/esphome-version', {
     method: 'POST',

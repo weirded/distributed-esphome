@@ -11,6 +11,7 @@ import {
   removeJobs,
   getDevices,
   getEsphomeVersions,
+  refreshEsphomeVersions,
   getInitialAddonVersion,
   getQueue,
   getServerInfo,
@@ -502,8 +503,17 @@ export default function App() {
           onSelect={handleSelectEsphomeVersion}
           onRefresh={async () => {
             addToast('Refreshing ESPHome versions...', 'info');
-            await mutateEsphomeVersions();
-            addToast('ESPHome version list updated', 'success');
+            // Bug #19: force the server to re-fetch PyPI (bypassing the
+            // 1h TTL), then hand the response directly to SWR so the
+            // dropdown reflects the fresh list immediately instead of
+            // waiting for the background refresher to run.
+            try {
+              const fresh = await refreshEsphomeVersions();
+              await mutateEsphomeVersions(fresh, false);
+              addToast(`ESPHome version list updated (${fresh.available.length} versions)`, 'success');
+            } catch (err) {
+              addToast('Refresh failed: ' + (err as Error).message, 'error');
+            }
           }}
         />
         {/* QS.3: <span onClick> → <button> for Secrets, theme, streamer. */}

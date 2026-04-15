@@ -616,6 +616,39 @@ async def get_esphome_versions(request: web.Request) -> web.Response:
     })
 
 
+@routes.post("/ui/api/esphome-versions/refresh")
+async def refresh_esphome_versions(request: web.Request) -> web.Response:
+    """Force-refresh the PyPI ESPHome version list (bug #19).
+
+    Bypasses the 1-hour server-side TTL so that the Refresh button in the
+    header dropdown actually hits PyPI and returns the latest releases —
+    previously the UI just re-polled our cached list and showed the same
+    versions it already had.
+    """
+    # Import here to avoid a circular import at module load time.
+    from main import _fetch_pypi_versions  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        versions = await _fetch_pypi_versions(session)
+
+    if versions:
+        request.app["_rt"]["esphome_available_versions"] = versions
+        request.app["_rt"]["esphome_versions_fetched_at"] = _time.monotonic()
+        logger.info("UI-triggered PyPI refresh: %d versions", len(versions))
+    else:
+        logger.warning("UI-triggered PyPI refresh returned no versions")
+
+    selected = get_esphome_version()
+    detected = request.app["_rt"].get("esphome_detected_version")
+    available = versions or request.app["_rt"].get("esphome_available_versions", [])
+    return web.json_response({
+        "selected": selected,
+        "detected": detected,
+        "available": available,
+    })
+
+
 @routes.post("/ui/api/esphome-version")
 async def set_esphome_version_handler(request: web.Request) -> web.Response:
     """Set the active ESPHome version for new compile jobs.
