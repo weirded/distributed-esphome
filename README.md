@@ -1,13 +1,13 @@
-# Distributed ESPHome
+# ESPHome Fleet
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/weirded)
 
-A modern web UI for managing large fleets of ESPHome devices — with distributed compilation that offloads firmware builds to faster remote machines.
+Manage fleets of ESPHome devices from one place — bulk operations, scheduled OTA upgrades, per-device version pinning, distributed compilation, and a fast modern UI.
 
-The stock ESPHome dashboard works fine for a handful of devices, but becomes unwieldy as your fleet grows. This project provides a feature-rich management interface with bulk operations, live device logs, an inline Monaco YAML editor with schema autocomplete, and a distributed build system that lets you point compilation at faster hardware. Even without remote workers, the built-in local worker and modern UI make this a powerful upgrade.
+The stock ESPHome dashboard works fine for a handful of devices, but becomes unwieldy as your fleet grows. ESPHome Fleet adds a feature-rich management interface with bulk operations, live device logs, an inline Monaco YAML editor with schema autocomplete, scheduled upgrades, version pinning, device tags, and a distributed build system that can offload compilation to faster hardware. Even without remote workers, the built-in local worker and modern UI make this a powerful upgrade.
 
-![Distributed ESPHome — Devices tab](docs/screenshot.png)
+![ESPHome Fleet — Devices tab](docs/screenshot.png)
 
 ## How It Works
 
@@ -18,7 +18,7 @@ The add-on runs on your Home Assistant instance and manages everything — devic
                          ┌───►│   Worker 1   ├───► ESP devices
   Home Assistant         │    └──────────────┘
 ┌──────────────────┐     │    ┌──────────────┐
-│  ESPH Distributed├─────┼───►│   Worker 2   ├───► ESP devices
+│  ESPHome Fleet   ├─────┼───►│   Worker 2   ├───► ESP devices
 │  (this add-on)   │     │    └──────────────┘
 └──────────────────┘     │    ┌──────────────┐
                          └───►│   Worker N   ├───► ESP devices
@@ -35,7 +35,7 @@ A built-in local worker is included (starts paused). Increase its slot count in 
 
 Or manually: **Settings → Add-ons → Add-on Store → ⋮ → Repositories** → add `https://github.com/weirded/distributed-esphome`.
 
-Then install **ESPHome Distributed Build Server** from the store.
+Then install **ESPHome Fleet** from the store.
 
 ### Standalone Server (Docker)
 
@@ -55,7 +55,7 @@ To test pre-release builds from the `develop` branch, use the `:develop` tag ins
 
 ## Web UI
 
-Access via the HA sidebar (**ESPH Distributed**) or directly at `http://your-ha-host:8765`.
+Access via the HA sidebar (**ESPHome Fleet**) or directly at `http://your-ha-host:8765`.
 
 - **Devices** — every ESPHome config in one place, with online status, current firmware version, and a one-click link to its Home Assistant page. Compile individual devices, everything that's outdated, or your whole fleet. Create new devices or duplicate existing ones, edit YAML inline with autocomplete and validation, pin individual devices to a specific ESPHome version, and view live device logs.
 - **Queue** — live job status and build logs. Retry, cancel, or clear jobs individually or in bulk.

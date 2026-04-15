@@ -104,7 +104,7 @@ test('narrow viewport: header is horizontally scrollable so every control is rea
   // iPhone SE width — narrow enough to overflow the header's natural width.
   await page.setViewportSize({ width: 320, height: 800 });
   await page.goto('/');
-  await expect(page.getByText('Distributed Build')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText('Fleet', { exact: true })).toBeVisible({ timeout: 5000 });
 
   const header = page.locator('header');
   // overflow-x: auto turns the header into its own scroll container.

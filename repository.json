@@ -1,5 +1,5 @@
 {
-  "name": "Distributed ESPHome",
+  "name": "ESPHome Fleet",
   "url": "https://github.com/weirded/distributed-esphome",
   "maintainer": "weirded",
   "channel": "stable"

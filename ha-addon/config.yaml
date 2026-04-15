@@ -1,7 +1,7 @@
-name: "ESPHome Distributed Build Server"
-version: "1.4.1-dev.27"
+name: "ESPHome Fleet"
+version: "1.4.1-dev.28"
 slug: "esphome_dist_server"
-description: "Manage large fleets of ESPHome devices with distributed compilation, per-device version pinning, and scheduled OTA upgrades"
+description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
 # #10: dropped armhf, armv7, i386 — Supervisor flags them as deprecated, and
 # ESPHome compilation is a 64-bit-only game in practice. No real users on
@@ -19,7 +19,7 @@ codeowners:
 ingress: true
 ingress_port: 8765
 panel_icon: mdi:progress-wrench
-panel_title: "ESPH Distributed"
+panel_title: "ESPHome Fleet"
 
 # Direct port: build workers (Docker) connect here with Bearer token auth
 ports:

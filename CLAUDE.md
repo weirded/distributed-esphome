@@ -4,7 +4,9 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Project Overview
 
-Distributed ESPHome offloads ESPHome firmware compilation to remote machines. The server runs as a Home Assistant add-on, manages a job queue, and serves a web UI. Build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices.
+ESPHome Fleet (internally: `distributed-esphome`) manages fleets of ESPHome devices — offloads compilation to remote workers, schedules upgrades, pins versions per device, and organizes devices via tags. Runs as a Home Assistant add-on with a built-in local worker. Additional build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices.
+
+**Naming convention:** user-facing docs/UI/log lines say **"ESPHome Fleet"**. Code identifiers, the GitHub repo (`weirded/distributed-esphome`), Docker image names (`esphome-dist-server`, `esphome-dist-client`), the add-on slug (`esphome_dist_server`), Python module names, and the YAML comment marker (`# distributed-esphome:`) all keep their original `distributed_esphome` / `esphome-dist-*` form — changing those would force a migration on every existing install for no user benefit.
 
 ## Architecture
 

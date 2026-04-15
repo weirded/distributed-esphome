@@ -492,7 +492,7 @@ export default function App() {
           style={{ display: 'block', flexShrink: 0 }}
         />
         <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-          Distributed Build
+          Fleet
         </span>
         <span className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap">
           {serverInfo.addon_version ? `v${serverInfo.addon_version}` : 'v?'}

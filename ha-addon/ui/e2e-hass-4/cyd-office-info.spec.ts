@@ -67,7 +67,7 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
 
     // Header sanity — version badge should reflect the deployed version
     await expect(page.locator('header')).toBeVisible();
-    await expect(page.getByText('Distributed Build')).toBeVisible();
+    await expect(page.getByText('Fleet', { exact: true })).toBeVisible();
     await expect(page.getByText(`v${EXPECTED_VERSION}`)).toBeVisible();
 
     // Devices tab is the default — wait for the device table to populate

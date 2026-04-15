@@ -1,12 +1,12 @@
-# ESPHome Distributed Build Server
+# ESPHome Fleet
 
-A modern web UI for managing large fleets of ESPHome devices — with distributed compilation that offloads firmware builds to faster remote machines.
+Manage fleets of ESPHome devices from one place — bulk operations, scheduled OTA upgrades, per-device version pinning, distributed compilation, and a fast modern UI.
 
-If Home Assistant runs on a Raspberry Pi or other low-power hardware, ESPHome compilation is painfully slow. This add-on lets you point the heavy lifting at any faster machine on your network (x86, ARM, Apple Silicon) while keeping HA as the single source of truth for your device configs. Even without remote workers, the built-in local worker and the modern UI make this a powerful replacement for the stock ESPHome dashboard.
+If Home Assistant runs on a Raspberry Pi or other low-power hardware, ESPHome compilation is painfully slow. ESPHome Fleet lets you point the heavy lifting at any faster machine on your network (x86, ARM, Apple Silicon) while keeping HA as the single source of truth for your device configs. Even without remote workers, the built-in local worker and the modern UI make this a powerful replacement for the stock ESPHome dashboard.
 
 ## Getting Started
 
-Start the add-on, then open the web UI via the **ESPH Distributed** entry in the HA sidebar.
+Start the add-on, then open the web UI via the **ESPHome Fleet** entry in the HA sidebar.
 
 The add-on includes a built-in local worker (starts paused with 0 slots). Increase the slot count in the **Workers** tab to start compiling immediately. To offload builds to faster machines, click **+ Connect Worker** for a ready-to-run `docker run` command.
 

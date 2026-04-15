@@ -1,4 +1,4 @@
-"""aiohttp application entry point for the ESPHome Distributed Build Server."""
+"""aiohttp application entry point for ESPHome Fleet (formerly Distributed Build Server)."""
 
 from __future__ import annotations
 
@@ -1024,7 +1024,7 @@ def create_app() -> web.Application:
 
     # Startup/shutdown hooks
     async def on_startup(app: web.Application) -> None:
-        logger.info("Starting ESPHome Distributed Build Server")
+        logger.info("Starting ESPHome Fleet")
         logger.info("Config dir: %s", cfg.config_dir)
         logger.info("Token configured: %s", bool(cfg.token))
 
@@ -1093,7 +1093,7 @@ def create_app() -> web.Application:
             logger.info("Started local worker (PID %d, %s slots)", proc.pid, local_slots)
 
     async def on_shutdown(app: web.Application) -> None:
-        logger.info("Shutting down ESPHome Distributed Build Server")
+        logger.info("Shutting down ESPHome Fleet")
 
         # Stop local worker
         proc = app.get("local_worker_proc")

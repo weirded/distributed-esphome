@@ -9,8 +9,8 @@ ARG BUILD_ARCH
 ARG BUILD_VERSION
 
 LABEL \
-    io.hass.name="ESPHome Distributed Build Server" \
-    io.hass.description="Distributed ESPHome compilation coordinator" \
+    io.hass.name="ESPHome Fleet" \
+    io.hass.description="Manage fleets of ESPHome devices: distributed compile, version pinning, scheduled OTA upgrades" \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"

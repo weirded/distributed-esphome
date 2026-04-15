@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
 test('page loads and shows header', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('header')).toBeVisible();
-  await expect(page.getByText('Distributed Build')).toBeVisible();
+  await expect(page.getByText('Fleet', { exact: true })).toBeVisible();
   await expect(page.getByText(/^v1\.3/)).toBeVisible();
 });
 

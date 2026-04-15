@@ -1,4 +1,4 @@
-# Docker Compose file for running a Distributed ESPHome build worker.
+# Docker Compose file for running an ESPHome Fleet build worker.
 #
 # Usage:
 #   1. Copy this file to the machine that will run the worker
