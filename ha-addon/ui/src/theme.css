@@ -92,7 +92,13 @@ header {
   height: 52px;
   position: sticky;
   top: 0;
-  z-index: 100;
+  /* Bug #14: header used to be z-index: 100, which beat the Base UI
+     dropdown popover (z-50) in the stacking war — opening the version
+     dropdown from a header chip would render the dropdown's top edge
+     UNDER the header. Lowered to 30 (still above scrolled content,
+     which has no explicit z-index) so dropdown popovers, dialog
+     overlays (both z-50) all render correctly above. */
+  z-index: 30;
   box-shadow: var(--shadow);
   /* Bug #1: on iOS / narrow viewports the header items (logo, version
      dropdown, Secrets, theme/streamer buttons) overflow off the right

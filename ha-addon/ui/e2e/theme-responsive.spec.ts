@@ -128,6 +128,54 @@ test('narrow viewport: header is horizontally scrollable so every control is rea
   await expect(streamerBtn).toBeInViewport();
 });
 
+test('header version dropdown renders ABOVE the sticky header (#14)', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
+
+  const trigger = page.locator('header button[title*="ESPHome version"]').first();
+  await trigger.click();
+  // Wait for the portalled menu to mount.
+  const menu = page.locator('[data-slot="dropdown-menu-content"]');
+  await expect(menu).toBeVisible({ timeout: 2000 });
+
+  // The dropdown popup must be on top of the header in the stacking order.
+  // Read both elements' computed z-index and confirm popup > header. With
+  // header at z-100 (the old value), the dropdown's top edge rendered
+  // BEHIND the sticky header at the version chip's anchor position.
+  const stack = await page.evaluate(() => {
+    const header = document.querySelector('header')!;
+    const popup = document.querySelector('[data-slot="dropdown-menu-content"]')!;
+    return {
+      headerZ: parseInt(getComputedStyle(header).zIndex, 10),
+      popupZ: parseInt(getComputedStyle(popup).zIndex, 10),
+    };
+  });
+  expect(stack.popupZ).toBeGreaterThan(stack.headerZ);
+
+  // Belt-and-braces: even when popup and header overlap vertically (Base
+  // UI's `sideOffset: 4` puts the popup right below the trigger which sits
+  // mid-header), the popup's content at that y-band must be on top. Use
+  // elementsFromPoint() at the popup's top-center pixel and assert the
+  // popup beats the header in the hit list.
+  const hit = await page.evaluate(() => {
+    const popup = document.querySelector('[data-slot="dropdown-menu-content"]')!;
+    const r = popup.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + 5;
+    const stack = document.elementsFromPoint(x, y);
+    return {
+      topMost: stack[0]?.tagName.toLowerCase() ?? '',
+      popupIndex: stack.findIndex(el => el === popup || popup.contains(el)),
+      headerIndex: stack.findIndex(el => el.tagName.toLowerCase() === 'header'),
+    };
+  });
+  // popup wins if it's earlier in the hit list (front of stack)
+  expect(hit.popupIndex).toBeGreaterThanOrEqual(0);
+  if (hit.headerIndex !== -1) {
+    expect(hit.popupIndex).toBeLessThan(hit.headerIndex);
+  }
+});
+
 test('desktop viewport: page renders without horizontal scroll', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto('/');
