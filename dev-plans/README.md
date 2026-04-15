@@ -1,6 +1,6 @@
 # Development Plans
 
-Roadmap and bug tracking for distributed-esphome, organized by release.
+Roadmap and bug tracking for ESPHome Fleet, organized by release.
 
 ## Active files
 

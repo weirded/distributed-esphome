@@ -1,14 +1,16 @@
-# Security Audit: ESPHome Distributed Build Server
+# Security Audit: ESPHome Fleet
 
-**Date:** 2026-03-29
-**Version audited:** 0.0.21
+**Original audit:** 2026-03-29 (version 0.0.21; at the time of audit the product was called "ESPHome Distributed Build Server", renamed to ESPHome Fleet in 1.4.1).
+**Last refreshed:** 2026-04-15 against 1.4.1-dev.33.
 **Scope:** Server add-on (`ha-addon/server/`), Dockerfile, `run.sh`, `config.yaml`, and the bundled worker (`client/client.py`) as it interacts with the server security model.
+
+> **Refresh note (2026-04-15):** The original audit was written against 0.0.21. Since then, 1.3.0 → 1.3.1 → 1.4.0 → 1.4.1-dev have shipped. The findings inventory (F-01 through F-20) is still accurate for the threat model; what's changed is the *status* of each finding and the set of mitigations in place. Section statuses, the OWASP table, and the summary table at the end have been updated. Significant post-audit mitigations (hash-pinned dependencies + CI audit gates, cosign-signed GHCR images, security-headers middleware, typed protocol, CVE-applicability invariant PY-7, lockfile-sync invariant PY-8) are summarized in a new "Post-audit mitigations" subsection below.
 
 ---
 
 ## Executive Summary
 
-The ESPHome Distributed Build Server is a Home Assistant add-on that coordinates remote firmware compilation. Its threat model is deliberately relaxed: it runs on a trusted home network, behind Home Assistant's ingress authentication for the browser UI, and uses a shared secret token for build workers. Within that context, the implementation is generally sound — the code is clean, intentional, and most of the obvious risks are already mitigated.
+ESPHome Fleet is a Home Assistant add-on that coordinates remote firmware compilation. Its threat model is deliberately relaxed: it runs on a trusted home network, behind Home Assistant's ingress authentication for the browser UI, and uses a shared secret token for build workers. Within that context, the implementation is generally sound — the code is clean, intentional, and most of the obvious risks are already mitigated.
 
 However, several meaningful security issues remain. The most significant are:
 
