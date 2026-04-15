@@ -43,7 +43,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.4.1-dev.42"
+CLIENT_VERSION = "1.4.1-dev.43"
 
 
 def _read_image_version() -> Optional[str]:
@@ -1247,13 +1247,21 @@ def _locate_firmware_binary(build_dir: str, target_stem: str) -> Optional[Path]:
 
 
 def _upload_firmware(job_id: str, path: Path) -> bool:
-    """POST the compiled binary to the server. Returns True on success."""
+    """POST the compiled binary to the server. Returns True on success.
+
+    Failure reasons are surfaced into the job's log (via
+    ``_flush_log_text``) so the user can diagnose from the Queue-tab
+    Log modal without access to the worker's stdout.
+    """
     try:
         data = path.read_bytes()
     except Exception as exc:
-        logger.error("Failed to read firmware %s: %s", path, exc)
+        msg = f"Failed to read firmware {path}: {exc}"
+        logger.error(msg)
+        _flush_log_text(job_id, f"\n\033[31mUPLOAD ERROR: {msg}\033[0m\n")
         return False
 
+    last_err = ""
     for attempt in range(3):
         try:
             resp = post_bytes(
@@ -1267,18 +1275,25 @@ def _upload_firmware(job_id: str, path: Path) -> bool:
                     job_id, len(data),
                 )
                 return True
+            last_err = f"HTTP {resp.status_code}: {resp.text[:300]}"
             logger.warning(
-                "Server rejected firmware for job %s: %d %s",
-                job_id, resp.status_code, resp.text,
+                "Server rejected firmware for job %s: %s",
+                job_id, last_err,
             )
-            return False
+            # Server rejections are deterministic — no retry.
+            break
         except Exception as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "Firmware upload attempt %d failed for job %s: %s",
-                attempt + 1, job_id, exc,
+                attempt + 1, job_id, last_err,
             )
             if attempt < 2:
                 time.sleep(3)
+    _flush_log_text(
+        job_id,
+        f"\n\033[31mUPLOAD ERROR: {last_err or 'unknown failure'}\033[0m\n",
+    )
     return False
 
 
