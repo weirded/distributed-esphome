@@ -1,0 +1,54 @@
+# ESPHome Fleet service descriptors (HI.2).
+#
+# Surfaces each service to HA's automation editor with field selectors so
+# users get autocomplete + validation instead of typing raw YAML.
+
+compile:
+  name: Compile
+  description: Enqueue one or more ESPHome firmware compiles on the ESPHome Fleet add-on.
+  fields:
+    targets:
+      name: Targets
+      description: >
+        List of YAML filenames to compile (e.g. ['living-room.yaml']),
+        or the string "all" / "outdated" to batch-enqueue.
+      required: true
+      example: "['living-room.yaml']"
+      selector:
+        object:
+    esphome_version:
+      name: ESPHome version
+      description: Optional ESPHome version to compile against (defaults to the server's selected version).
+      example: "2026.3.2"
+      selector:
+        text:
+    worker_id:
+      name: Worker ID
+      description: Optional client_id of a specific build worker to pin the job to.
+      example: "12345-abc..."
+      selector:
+        text:
+
+cancel:
+  name: Cancel
+  description: Cancel one or more queued or running compile jobs by id.
+  fields:
+    job_ids:
+      name: Job IDs
+      description: List of job UUIDs to cancel.
+      required: true
+      example: "['12345-abc...']"
+      selector:
+        object:
+
+validate:
+  name: Validate
+  description: Run ESPHome config validation against a single target YAML.
+  fields:
+    target:
+      name: Target
+      description: YAML filename to validate (e.g. living-room.yaml).
+      required: true
+      example: "living-room.yaml"
+      selector:
+        text:
