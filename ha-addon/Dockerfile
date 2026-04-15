@@ -32,5 +32,9 @@ COPY VERSION /app/VERSION
 COPY client/ /app/client/
 RUN pip install --no-cache-dir --require-hashes -r /app/client/requirements.lock
 
+# HI.8: bundle the HA custom integration so the add-on can auto-install
+# it into /config/custom_components/ on startup.
+COPY custom_integration/ /app/custom_integration/
+
 ENTRYPOINT []
 CMD ["python3", "/app/main.py"]

@@ -1059,6 +1059,15 @@ def create_app() -> web.Application:
         logger.info("Config dir: %s", cfg.config_dir)
         logger.info("Token configured: %s", bool(cfg.token))
 
+        # HI.8: auto-install the bundled HA custom integration into
+        # /config/custom_components/esphome_fleet on every boot.
+        # Failures are logged and swallowed so the add-on keeps running.
+        try:
+            from integration_installer import install_integration  # noqa: PLC0415
+            install_integration()
+        except Exception:
+            logger.exception("HA integration auto-install raised unexpectedly")
+
         # Use the locally installed ESPHome package version as the initial
         # active version.  The pypi_version_refresher background task will
         # contact the HA Supervisor API shortly after startup and update the
@@ -1083,6 +1092,18 @@ def create_app() -> web.Application:
 
         # Start device poller
         await device_poller.start(app)
+
+        # HI.7: advertise ourselves on mDNS so the HA custom
+        # integration's zeroconf config-flow discovers us.
+        try:
+            from zeroconf.asyncio import AsyncZeroconf  # noqa: PLC0415
+            from mdns_advertiser import FleetAdvertiser  # noqa: PLC0415
+            app["_rt"]["mdns_zeroconf"] = AsyncZeroconf()
+            advertiser = FleetAdvertiser(app["_rt"]["mdns_zeroconf"], cfg.port)
+            await advertiser.start()
+            app["_rt"]["mdns_advertiser"] = advertiser
+        except Exception:
+            logger.exception("Failed to start mDNS advertiser (HI.7)")
 
         # Start background tasks
         app["timeout_checker_task"] = asyncio.create_task(timeout_checker(app))
@@ -1148,6 +1169,20 @@ def create_app() -> web.Application:
         # #87: stop APScheduler
         import scheduler as scheduler_module  # noqa: PLC0415
         scheduler_module.stop()
+
+        # HI.7: tear down mDNS advertiser.
+        advertiser = app["_rt"].get("mdns_advertiser")
+        if advertiser is not None:
+            try:
+                await advertiser.stop()
+            except Exception:
+                logger.debug("mDNS advertiser stop failed", exc_info=True)
+        zc = app["_rt"].get("mdns_zeroconf")
+        if zc is not None:
+            try:
+                await zc.async_close()
+            except Exception:
+                logger.debug("mDNS Zeroconf close failed", exc_info=True)
 
         await device_poller.stop()
 

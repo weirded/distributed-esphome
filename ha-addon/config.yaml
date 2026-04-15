@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.4.1-dev.36"
+version: "1.4.1-dev.37"
 slug: "esphome_dist_server"
 description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
@@ -42,7 +42,11 @@ backup_exclude:
   - esphome-versions
 
 map:
-  - config:rw
+  # HI.9: need write access to /config/custom_components/esphome_fleet/
+  # for the HA-integration auto-installer (HI.8) at startup. The old
+  # `config:rw` shorthand still works but Supervisor warns it's
+  # deprecated; use the new `homeassistant_config` key.
+  - homeassistant_config:rw
 options:
   token: ""
   job_timeout: 600

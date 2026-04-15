@@ -4,6 +4,11 @@ Polls the add-on's /ui/api/* endpoints and exposes a merged snapshot to
 entities, services, and automations. Keeping the coordinator thin: one
 HTTP call per endpoint per tick, no derived state — entities compute
 whatever they need from `data`.
+
+HI.6: also tracks per-job state so we can fire
+`esphome_fleet_compile_complete` HA events when a job transitions to a
+terminal state. Events are fired on the HA bus so automations can
+trigger off "compile failed" etc.
 """
 
 from __future__ import annotations
@@ -22,6 +27,10 @@ from .const import DEFAULT_POLL_INTERVAL_SECONDS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+EVENT_COMPILE_COMPLETE = f"{DOMAIN}_compile_complete"
+
+_TERMINAL_JOB_STATES = {"success", "failed", "timed_out", "cancelled"}
+
 
 class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls the add-on and caches the result for entities/services."""
@@ -35,6 +44,8 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._base_url = base_url.rstrip("/")
         self._session: aiohttp.ClientSession = async_get_clientsession(hass)
+        # HI.6: per-job last-seen state, for terminal-transition detection.
+        self._last_job_states: dict[str, str] = {}
 
     @property
     def base_url(self) -> str:
@@ -57,7 +68,7 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"Couldn't reach add-on at {self._base_url}: {err}") from err
 
-        return {
+        data = {
             "server_info": info,
             "targets": targets or [],
             "devices": devices or [],
@@ -65,6 +76,59 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "queue": queue or [],
             "esphome_versions": versions or {"selected": None, "available": []},
         }
+        # HI.6: fire events for any job that crossed into a terminal
+        # state since the last poll.
+        self._fire_terminal_events(data["queue"])
+        return data
+
+    def _fire_terminal_events(self, queue: list[dict[str, Any]]) -> None:
+        """Compare queue against last-poll state, fire events on transitions."""
+        current_ids: set[str] = set()
+        for job in queue:
+            job_id = job.get("id")
+            state = job.get("state")
+            if not job_id or not state:
+                continue
+            current_ids.add(job_id)
+
+            previous = self._last_job_states.get(job_id)
+            self._last_job_states[job_id] = state
+
+            if previous is None:
+                # First time we've seen this job — don't fire an event
+                # even if it's already terminal (could be a startup
+                # snapshot showing last night's failed compiles).
+                continue
+            if previous == state:
+                continue
+            if state not in _TERMINAL_JOB_STATES:
+                continue
+            if previous in _TERMINAL_JOB_STATES:
+                # Already terminal; ignore subsequent metadata-only
+                # changes (e.g. log field appearing after finish).
+                continue
+
+            event_data = {
+                "job_id": job_id,
+                "target": job.get("target"),
+                "state": state,
+                "duration_seconds": job.get("duration_seconds"),
+                "esphome_version": job.get("esphome_version"),
+                "worker_hostname": job.get("assigned_hostname"),
+                "worker_id": job.get("assigned_client_id"),
+                "scheduled": bool(job.get("scheduled")),
+                "schedule_kind": job.get("schedule_kind"),
+            }
+            self.hass.bus.async_fire(EVENT_COMPILE_COMPLETE, event_data)
+            _LOGGER.debug(
+                "Fired %s event for job %s: %s → %s",
+                EVENT_COMPILE_COMPLETE, job_id, previous, state,
+            )
+
+        # Drop tracking for jobs that disappeared from the queue so the
+        # dict doesn't grow unbounded across long uptimes.
+        for stale_id in set(self._last_job_states) - current_ids:
+            self._last_job_states.pop(stale_id, None)
 
     async def _get_json(self, path: str) -> Any:
         url = f"{self._base_url}{path}"
