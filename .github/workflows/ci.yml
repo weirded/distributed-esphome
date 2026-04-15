@@ -25,11 +25,16 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # HA is pinned to a known-working version — the latest may
+          # conflict with esphome's pins and pip's backtracker then
+          # walks all the way back to 0.19.x which fails to build from
+          # sdist (missing requirements.txt). Pin to a modern but
+          # compatible release.
           pip install \
             pytest pytest-asyncio pytest-cov pytest-xdist \
             aiohttp aioesphomeapi zeroconf \
             requests psutil pydantic croniter apscheduler \
-            esphome homeassistant
+            esphome 'homeassistant>=2025.1,<2025.2'
 
       - name: Run all tests with coverage
         run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
