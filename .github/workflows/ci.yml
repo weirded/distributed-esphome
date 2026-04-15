@@ -29,7 +29,7 @@ jobs:
             pytest pytest-asyncio pytest-cov pytest-xdist \
             aiohttp aioesphomeapi zeroconf \
             requests psutil pydantic croniter apscheduler \
-            esphome
+            esphome homeassistant
 
       - name: Run all tests with coverage
         run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
