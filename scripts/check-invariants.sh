@@ -205,6 +205,25 @@ for reqs in ha-addon/server/requirements.txt ha-addon/client/requirements.txt; d
 done
 
 # -----------------------------------------------------------------------------
+# (#56) requirements.lock must not carry macOS-only transitive deps. Regenerating
+# the lockfile on a Mac host (instead of via scripts/refresh-deps.sh's Docker
+# container on linux/amd64) pulls pyobjc-core + pyobjc-framework-* in as
+# platform-conditional transitives WITHOUT their sys_platform markers, which
+# then causes "error: PyObjC requires macOS to build" on every Linux Docker
+# build. Happened twice — 1.3.1-dev.9 and 1.4.1-dev.55. One-line guard: if any
+# of the tell-tale package names appears in the lockfile, fail CI with a
+# pointer to the proper regeneration path.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+for lock in ha-addon/server/requirements.lock ha-addon/client/requirements.lock; do
+    [[ -f "$lock" ]] || continue
+    if grep -qiE "^(pyobjc|appnope|pyobjc-core|pyobjc-framework-)" "$lock"; then
+        offenders=$(grep -iE "^(pyobjc|appnope|pyobjc-core|pyobjc-framework-)" "$lock" | head -5 | paste -sd, -)
+        fail "#56" "$lock: macOS-only deps leaked in [$offenders]. Regenerate via: bash scripts/refresh-deps.sh (inside Docker linux/amd64)."
+    fi
+done
+
+# -----------------------------------------------------------------------------
 # (SC.1) Every `uses: <org>/<repo>@…` in .github/workflows/*.yml must reference
 # a 40-char commit SHA (not a moving tag like @v6). Tag refs are an attack
 # vector — whoever controls the tag controls what our CI runs. SHA pins
