@@ -1099,11 +1099,28 @@ def create_app() -> web.Application:
         from scanner import (  # noqa: PLC0415
             scan_configs, build_name_to_target_map,
             set_esphome_version, _get_installed_esphome_version,
+            ensure_esphome_installed,
         )
 
         selected = _get_installed_esphome_version()
         set_esphome_version(selected)
         logger.info("Active ESPHome version: %s (background task will refine from HA Supervisor)", selected)
+
+        # SE.2: kick off the lazy-install of ESPHome into the server's
+        # venv cache. While SE.1 hasn't shipped yet (ESPHome is still
+        # bundled in requirements.txt), this is effectively a no-op on
+        # the hot path — VersionManager.ensure_version is a fast cache
+        # hit if the version is already installed. Once SE.1 lands and
+        # the bundled package is gone, this becomes the primary install
+        # path. Runs in an executor so it never blocks aiohttp startup.
+        async def _install_esphome_background() -> None:
+            target = _get_installed_esphome_version()
+            if target in ("unknown", "installing"):
+                # No point trying to install a phantom version.
+                return
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, ensure_esphome_installed, target)
+        app["esphome_install_task"] = asyncio.create_task(_install_esphome_background())
 
         # Update device poller with known targets
         targets = scan_configs(cfg.config_dir)
@@ -1185,7 +1202,7 @@ def create_app() -> web.Application:
                 proc.kill()
             logger.info("Local worker stopped")
 
-        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task"):
+        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task", "esphome_install_task"):
             task = app.get(task_name)
             if task:
                 task.cancel()

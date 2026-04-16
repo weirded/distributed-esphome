@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import io
 import logging
+import subprocess
+import sys
 import tarfile
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -16,12 +19,138 @@ logger = logging.getLogger(__name__)
 # None means "fall back to the installed package version".
 _selected_esphome_version: Optional[str] = None
 
+# ---------------------------------------------------------------------------
+# SE.2 / SE.3 / SE.7 — Server-side ESPHome lazy install
+# ---------------------------------------------------------------------------
+#
+# The server used to bake ESPHome into its Docker image (`esphome` in
+# requirements.txt). That was the source of #51 (version bump breaks the
+# lock), #56-class (macOS-only transitives leaking in), and #20 (upstream
+# API changes invisible until re-bump). SE.1 drops that baked-in package;
+# SE.2 replaces it with a lazy install into `/data/esphome-versions/<ver>/`
+# via the `VersionManager` already used by workers.
+#
+# Lifecycle:
+#   - on_startup schedules `ensure_esphome_installed(version)` as a
+#     background task.
+#   - `VersionManager.ensure_version` creates a venv + pip-installs ESPHome.
+#   - On success we prepend `<venv>/lib/python{M.N}/site-packages/` to
+#     sys.path (SE.3) so the deferred `import esphome.*` in
+#     `_resolve_esphome_config` picks up the venv copy.
+#   - Until that ready-event fires, callers that need ESPHome see
+#     `_server_esphome_venv is None` and degrade gracefully:
+#     `_resolve_esphome_config` returns None (callers already tolerate it);
+#     `validate_config` returns 503; `get_esphome_version` returns
+#     "installing".
+#
+# Why module globals instead of an app-attached singleton: `scanner` is
+# imported by main.py, ui_api.py, and the scheduler at module load time.
+# The import-level function-scoped `from esphome.* import` calls in
+# `_resolve_esphome_config` need the venv on sys.path *before* they run.
+# Module globals + idempotent activation is the simplest way to guarantee
+# that ordering without threading the app instance through every caller.
+
+_server_esphome_venv: Optional[Path] = None
+_server_esphome_bin: Optional[str] = None
+_esphome_ready: threading.Event = threading.Event()
+_esphome_install_failed: bool = False
+# Per-process memoized `esphome version` output (SE.7). Runs a subprocess
+# the first time, caches the result so the 1 Hz polling endpoints don't
+# fork-exec repeatedly. Cleared on re-install via `set_esphome_version`.
+_esphome_version_cache: Optional[str] = None
+
+
+def _activate_esphome_venv(venv_path: Path) -> bool:
+    """Prepend *venv_path*'s site-packages onto ``sys.path`` (SE.3).
+
+    Idempotent — re-activating the same venv is a no-op. Returns True on
+    success, False if the site-packages directory can't be located (venv
+    is malformed / interpreter mismatch).
+    """
+    # site-packages lives at <venv>/lib/pythonX.Y/site-packages. Resolve
+    # X.Y from the running interpreter — the VersionManager creates venvs
+    # using `sys.executable` so this always matches.
+    site_dir = (
+        venv_path / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    )
+    if not site_dir.is_dir():
+        logger.warning("venv site-packages missing at %s", site_dir)
+        return False
+    site_str = str(site_dir)
+    if site_str in sys.path:
+        return True
+    sys.path.insert(0, site_str)
+    logger.info("Activated ESPHome venv on sys.path: %s", site_str)
+    return True
+
+
+def ensure_esphome_installed(
+    version: str,
+    *,
+    versions_base: Path = Path("/data/esphome-versions"),
+    max_versions: int = 5,
+) -> None:
+    """Install ESPHome *version* into the server's venv cache (SE.2).
+
+    Blocking — intended to run inside an executor (see
+    `main.on_startup`). On success, sets module globals + fires
+    `_esphome_ready`. On failure, flips `_esphome_install_failed` to
+    True and leaves the event clear; callers degrade gracefully.
+
+    Idempotent: a second call for the same version is a fast cache hit
+    inside VersionManager and just re-activates the venv on sys.path.
+    """
+    global _server_esphome_venv, _server_esphome_bin, _esphome_install_failed
+    global _esphome_version_cache
+
+    # VersionManager lives in the bundled client code. In production the
+    # Dockerfile copies client/ to /app/client; locally the test harness
+    # has client on sys.path via conftest. Cover both.
+    if "/app/client" not in sys.path:
+        sys.path.insert(0, "/app/client")
+    try:
+        from version_manager import VersionManager  # noqa: PLC0415
+    except ImportError:
+        logger.warning(
+            "version_manager unavailable — cannot lazy-install ESPHome. "
+            "Running off the bundled package (see SE.1)."
+        )
+        _esphome_install_failed = True
+        return
+
+    logger.info("Installing ESPHome %s into %s (may take 1–3 min on first run)", version, versions_base)
+    try:
+        vm = VersionManager(versions_base=versions_base, max_versions=max_versions)
+        bin_path = vm.ensure_version(version)
+    except Exception:
+        logger.exception("ensure_esphome_installed(%s) failed", version)
+        _esphome_install_failed = True
+        return
+
+    venv_path = Path(bin_path).parent.parent  # <venv>/bin/esphome → <venv>
+    if not _activate_esphome_venv(venv_path):
+        _esphome_install_failed = True
+        return
+
+    _server_esphome_venv = venv_path
+    _server_esphome_bin = bin_path
+    _esphome_install_failed = False
+    # Bust the version cache — a fresh install may have a different
+    # version from what we previously reported (e.g. after a refresh).
+    _esphome_version_cache = None
+    _esphome_ready.set()
+    logger.info("ESPHome %s ready at %s", version, bin_path)
+
 
 def set_esphome_version(version: str) -> None:
     """Set the active ESPHome version used for new compile jobs."""
-    global _selected_esphome_version
+    global _selected_esphome_version, _esphome_version_cache
     previous = _selected_esphome_version
     _selected_esphome_version = version
+    # SE.7: drop the cached CLI-probed version when the selected version
+    # changes. Next `_get_installed_esphome_version` call will re-probe.
+    if previous != version:
+        _esphome_version_cache = None
     # SP.3 cleanup: the three callers (on_startup, pypi_version_refresher,
     # ui_api.set_esphome_version_handler) each log their own INFO message
     # with the right context ("Active ESPHome version: X", "…detected: X",
@@ -44,8 +173,11 @@ def get_esphome_version() -> str:
 
     Priority:
     1. Explicitly set version (via ``set_esphome_version`` or the UI).
-    2. Installed ESPHome package (``importlib.metadata``).
-    3. Fallback: ``"unknown"``.
+    2. Installed ESPHome package — the venv's `esphome version` CLI
+       output (SE.7) when the venv is ready, falling back to
+       ``importlib.metadata`` for the bundled package (test / pre-SE.1).
+    3. Fallback: ``"unknown"`` on any error, or ``"installing"`` during
+       the first-boot install window before ``_esphome_ready`` fires.
     """
     if _selected_esphome_version:
         return _selected_esphome_version
@@ -53,12 +185,55 @@ def get_esphome_version() -> str:
 
 
 def _get_installed_esphome_version() -> str:
-    """Return the installed ESPHome package version, or 'unknown' on error."""
+    """Return the installed ESPHome version, or a diagnostic sentinel.
+
+    SE.7 — ordered lookup:
+      1. If the venv has been activated (`_esphome_ready` fired), run
+         `<venv>/bin/esphome version` once and cache the result.
+      2. Otherwise fall back to `importlib.metadata.version("esphome")` —
+         covers the test harness (bundled package on sys.path) and the
+         pre-SE.1 transitional state where ESPHome is still baked into
+         the server image.
+      3. If the install is mid-flight (ready event clear, no metadata),
+         return ``"installing"`` so the UI can surface a banner rather
+         than crash.
+      4. Fallback on exception: ``"unknown"``.
+    """
+    global _esphome_version_cache
+
+    if _esphome_version_cache is not None:
+        return _esphome_version_cache
+
+    if _esphome_ready.is_set() and _server_esphome_bin:
+        try:
+            # ESPHome prints "Version: X.Y.Z" on stdout for this subcommand.
+            # Short timeout; the venv binary is local so it's near-instant.
+            result = subprocess.run(
+                [_server_esphome_bin, "version"],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            for line in result.stdout.splitlines():
+                stripped = line.strip()
+                if stripped.lower().startswith("version:"):
+                    _esphome_version_cache = stripped.split(":", 1)[1].strip()
+                    return _esphome_version_cache
+            # Older builds printed just the bare version on stdout.
+            stripped = result.stdout.strip()
+            if stripped:
+                _esphome_version_cache = stripped.split()[-1]
+                return _esphome_version_cache
+        except Exception:
+            logger.debug("venv esphome version lookup failed", exc_info=True)
+
     try:
         from importlib.metadata import version  # noqa: PLC0415
         return version("esphome")
     except Exception:
         logger.debug("Could not determine esphome version", exc_info=True)
+        # If we know the install is mid-flight, surface that state so the
+        # UI banner can render "Installing ESPHome…" rather than a blank.
+        if not _esphome_ready.is_set() and not _esphome_install_failed:
+            return "installing"
         return "unknown"
 
 

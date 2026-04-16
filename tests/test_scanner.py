@@ -173,12 +173,18 @@ def test_get_esphome_version_returns_unknown_when_not_installed():
 
     meta.version = mock_version
     scanner._selected_esphome_version = None
+    # SE.7: without the failure flag set, the new logic assumes the
+    # lazy-install is in flight and returns "installing". This test
+    # exercises the "install won't help" terminal state, so simulate
+    # the failure flag too.
+    scanner._esphome_install_failed = True
     try:
         ver = get_esphome_version()
         assert ver == "unknown"
     finally:
         meta.version = original
         scanner._selected_esphome_version = original_selected
+        scanner._esphome_install_failed = False
 
 
 # ---------------------------------------------------------------------------

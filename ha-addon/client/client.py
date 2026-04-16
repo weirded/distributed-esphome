@@ -43,7 +43,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.4.1-dev.63"
+CLIENT_VERSION = "1.4.1-dev.64"
 
 
 def _read_image_version() -> Optional[str]:
