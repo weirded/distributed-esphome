@@ -352,9 +352,9 @@ export function QueueTab({
                 href={`./ui/api/jobs/${job.id}/firmware`}
                 download
                 className={buttonVariants({ variant: 'secondary', size: 'sm' })}
-                title="Download compiled firmware binary"
+                title="Download compiled firmware binary (.bin)"
               >
-                Download
+                Download .bin
               </a>
             )}
             {hasLog && (

@@ -252,8 +252,8 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stac
           <Button variant="secondary" size="sm" onClick={handleCopy} title="Copy log to clipboard">
             Copy
           </Button>
-          <Button variant="secondary" size="sm" onClick={handleDownload} title="Download log as file">
-            <Download className="size-3.5 mr-1" aria-hidden="true" /> Download
+          <Button variant="secondary" size="sm" onClick={handleDownload} title="Download build log as text file">
+            <Download className="size-3.5 mr-1" aria-hidden="true" /> Download log
           </Button>
         </DialogHeader>
         <div style={{ flex: 1, padding: 0, overflow: 'hidden' }}>

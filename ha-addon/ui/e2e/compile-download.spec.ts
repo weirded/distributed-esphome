@@ -85,14 +85,15 @@ test('Queue tab renders Download button only on eligible rows', async ({ page })
 
   // job-008 (office.yaml) is the only download-only+has_firmware fixture.
   const downloadRow = page.locator('#tab-queue tbody tr').filter({ hasText: 'office' });
-  const dlAnchor = downloadRow.getByRole('link', { name: 'Download' });
+  // #68: relabeled "Download" → "Download .bin" to disambiguate from log-download buttons.
+  const dlAnchor = downloadRow.getByRole('link', { name: 'Download .bin' });
   await expect(dlAnchor).toBeVisible();
   await expect(dlAnchor).toHaveAttribute('href', /\/ui\/api\/jobs\/job-008\/firmware$/);
   await expect(dlAnchor).toHaveAttribute('download', '');
 
-  // Any other success row (e.g. bedroom-light job-001 OTA success) must NOT have Download.
+  // Any other success row (e.g. bedroom-light job-001 OTA success) must NOT have the .bin download.
   const otaRow = page.locator('#tab-queue tbody tr').filter({ hasText: 'bedroom-light' });
-  await expect(otaRow.getByRole('link', { name: 'Download' })).toHaveCount(0);
+  await expect(otaRow.getByRole('link', { name: 'Download .bin' })).toHaveCount(0);
 });
 
 test('download-only success row shows Ready badge, not OTA Pending (#23)', async ({ page }) => {
