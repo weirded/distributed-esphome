@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 
 from esphome_fleet.const import DOMAIN
@@ -105,3 +108,114 @@ def test_worker_device_info_names_worker_with_suffix() -> None:
 def test_worker_device_info_handles_missing_system_info() -> None:
     info = worker_device_info({"client_id": "xyz", "hostname": "w"}, "entry-xyz")
     assert info["model"] == "Build worker"
+
+
+# --- #39: stale-device cleanup tests ---
+
+
+def _make_device(identifiers, config_entries):
+    """Minimal device stub for _register_devices tests."""
+    return SimpleNamespace(
+        identifiers=set(tuple(i) for i in identifiers),
+        config_entries=set(config_entries),
+        id=f"dev-{hash(tuple(tuple(i) for i in identifiers)) % 10000}",
+        name="test-device",
+    )
+
+
+def test_register_devices_removes_stale_fleet_only_device() -> None:
+    """#39 — a Fleet-only device whose target vanished gets removed."""
+    from esphome_fleet import _register_devices
+
+    stale_device = _make_device(
+        identifiers=[(DOMAIN, "target:deleted.yaml")],
+        config_entries=["entry-1"],
+    )
+
+    registry = MagicMock()
+    registry.async_get_or_create = MagicMock()
+    registry.async_remove_device = MagicMock()
+    registry.async_update_device = MagicMock()
+
+    with patch("esphome_fleet.dr.async_get", return_value=registry):
+        with patch(
+            "esphome_fleet.dr.async_entries_for_config_entry",
+            return_value=[stale_device],
+        ):
+            hass = SimpleNamespace()
+            entry = SimpleNamespace(entry_id="entry-1")
+            coordinator = SimpleNamespace(
+                data={"targets": [], "workers": []},
+                base_url="http://test:8765",
+            )
+            _register_devices(hass, entry, coordinator)
+
+    registry.async_remove_device.assert_called_once_with(stale_device.id)
+    registry.async_update_device.assert_not_called()
+
+
+def test_register_devices_detaches_stale_merged_device() -> None:
+    """#39 — a merged device keeps its row; we only detach our entry."""
+    from esphome_fleet import _register_devices
+
+    merged_device = _make_device(
+        identifiers=[(DOMAIN, "target:removed.yaml")],
+        config_entries=["entry-1", "esphome-entry-2"],
+    )
+
+    registry = MagicMock()
+    registry.async_get_or_create = MagicMock()
+    registry.async_remove_device = MagicMock()
+    registry.async_update_device = MagicMock()
+
+    with patch("esphome_fleet.dr.async_get", return_value=registry):
+        with patch(
+            "esphome_fleet.dr.async_entries_for_config_entry",
+            return_value=[merged_device],
+        ):
+            hass = SimpleNamespace()
+            entry = SimpleNamespace(entry_id="entry-1")
+            coordinator = SimpleNamespace(
+                data={"targets": [], "workers": []},
+                base_url="http://test:8765",
+            )
+            _register_devices(hass, entry, coordinator)
+
+    registry.async_remove_device.assert_not_called()
+    registry.async_update_device.assert_called_once_with(
+        merged_device.id, remove_config_entry_id="entry-1"
+    )
+
+
+def test_register_devices_keeps_live_devices() -> None:
+    """#39 — devices whose targets still exist are not touched."""
+    from esphome_fleet import _register_devices
+
+    live_device = _make_device(
+        identifiers=[(DOMAIN, "target:still-here.yaml")],
+        config_entries=["entry-1"],
+    )
+
+    registry = MagicMock()
+    registry.async_get_or_create = MagicMock()
+    registry.async_remove_device = MagicMock()
+    registry.async_update_device = MagicMock()
+
+    with patch("esphome_fleet.dr.async_get", return_value=registry):
+        with patch(
+            "esphome_fleet.dr.async_entries_for_config_entry",
+            return_value=[live_device],
+        ):
+            hass = SimpleNamespace()
+            entry = SimpleNamespace(entry_id="entry-1")
+            coordinator = SimpleNamespace(
+                data={
+                    "targets": [{"target": "still-here.yaml"}],
+                    "workers": [],
+                },
+                base_url="http://test:8765",
+            )
+            _register_devices(hass, entry, coordinator)
+
+    registry.async_remove_device.assert_not_called()
+    registry.async_update_device.assert_not_called()

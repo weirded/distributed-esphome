@@ -6,15 +6,12 @@ Global (hub device):
     QueueDepthSensor             — count of pending + working jobs.
 
 Per managed target:
-    TargetScheduleSensor         — human-readable cron/one-shot schedule
-                                    (#28). Replaces the old firmware
-                                    version sensor — firmware version is
-                                    already surfaced by HA's native
-                                    ESPHome integration, so duplicating
-                                    it here was confusing.
+    TargetScheduleSensor         — human-readable recurring cron schedule
+                                    (#28, #40).
+    TargetScheduledOnceSensor    — one-time scheduled upgrade datetime
+                                    (#40).
     TargetPinnedVersionSensor    — ESPHome version the next compile
-                                    will use for this target, or
-                                    "Auto (server default)" when no pin.
+                                    will use for this target, or "None".
 
 Per build worker:
     WorkerActiveJobsSensor       — count of WORKING queue entries
@@ -66,6 +63,9 @@ async def async_setup_entry(
                 seen_targets.add(filename)
                 new.append(
                     TargetScheduleSensor(coordinator, entry.entry_id, filename)
+                )
+                new.append(
+                    TargetScheduledOnceSensor(coordinator, entry.entry_id, filename)
                 )
                 new.append(
                     TargetPinnedVersionSensor(coordinator, entry.entry_id, filename)
@@ -129,6 +129,53 @@ class QueueDepthSensor(CoordinatorEntity[EsphomeFleetCoordinator], SensorEntity)
         return sum(1 for j in queue if j.get("state") in ("pending", "working"))
 
 
+_DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+
+def _format_cron_human(cron: str) -> str:
+    """Translate a 5-field cron expression to a human-readable string.
+
+    Port of the UI's ``formatCronHuman`` (``utils/cron.ts``). Falls back
+    to the raw expression for patterns it doesn't recognize.
+    """
+    parts = cron.strip().split()
+    if len(parts) != 5:
+        return cron
+    minute, hour, dom, _mon, dow = parts
+
+    if minute == "0" and hour.startswith("*/"):
+        try:
+            n = int(hour[2:])
+        except ValueError:
+            return cron
+        return "Hourly" if n == 1 else f"Every {n}h"
+
+    if dom == "*" and dow == "*" and "/" not in hour and "/" not in minute:
+        try:
+            h, m = int(hour), int(minute)
+        except ValueError:
+            return cron
+        return f"Daily {h:02d}:{m:02d}"
+
+    if dom == "*" and dow != "*" and "/" not in hour:
+        try:
+            h, m, d = int(hour), int(minute), int(dow)
+        except ValueError:
+            return cron
+        day = _DAY_NAMES[d] if 0 <= d < 7 else dow
+        return f"{day} {h:02d}:{m:02d}"
+
+    if dom != "*" and dow == "*" and "/" not in hour:
+        try:
+            h, m = int(hour), int(minute)
+        except ValueError:
+            return cron
+        suffix = "st" if dom == "1" else "nd" if dom == "2" else "rd" if dom == "3" else "th"
+        return f"{dom}{suffix} {h:02d}:{m:02d}"
+
+    return cron
+
+
 class _TargetSensorBase(CoordinatorEntity[EsphomeFleetCoordinator], SensorEntity):
     """Shared target-scoping boilerplate."""
 
@@ -183,17 +230,47 @@ class TargetScheduleSensor(_TargetSensorBase):
     @property
     def native_value(self) -> str | None:
         t = self._target or {}
-        once = t.get("schedule_once")
-        if once:
-            return f"Once: {once}"
         cron = t.get("schedule")
         enabled = t.get("schedule_enabled")
         if cron and enabled:
+            human = _format_cron_human(cron)
             tz = t.get("schedule_tz")
-            return f"{cron} ({tz})" if tz else str(cron)
+            return f"{human} ({tz})" if tz else human
         if cron and not enabled:
             return "Paused"
-        return "No schedule"
+        return "None"
+
+
+class TargetScheduledOnceSensor(_TargetSensorBase):
+    """One-time scheduled upgrade datetime (#40).
+
+    Separate from the recurring schedule so dashboards can distinguish
+    "next scheduled OTA" from "ongoing cron". Reports the ISO datetime
+    in a human-friendly format, or "None" when no one-shot is pending.
+    """
+
+    _attr_name = "Scheduled one-time upgrade"
+    _attr_icon = "mdi:calendar-star"
+
+    def __init__(
+        self, coordinator: EsphomeFleetCoordinator, entry_id: str, target_filename: str
+    ) -> None:
+        super().__init__(coordinator, entry_id, target_filename, "schedule_once")
+
+    @property
+    def native_value(self) -> str:
+        t = self._target or {}
+        once = t.get("schedule_once")
+        if not once:
+            return "None"
+        # schedule_once is an ISO datetime string from the server.
+        # Parse and render in a friendlier format.
+        try:
+            from datetime import datetime  # noqa: PLC0415
+            dt = datetime.fromisoformat(once)
+            return dt.strftime("%b %d, %Y %H:%M")
+        except (ValueError, TypeError):
+            return str(once)
 
 
 class TargetPinnedVersionSensor(_TargetSensorBase):

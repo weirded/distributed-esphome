@@ -153,7 +153,7 @@ Scope: additive. Ingress-trusted access keeps working unchanged. Direct-port acc
   The middleware attaches `request["ha_user"] = {name, id, is_admin}` (or `None` for the legacy Ingress-without-user case) for downstream handlers. Behavior change is gated behind a `require_ha_auth: bool` add-on option (default `false` in 1.4.1 to avoid breaking existing setups; flip to `true` in 1.5 once we've verified it's stable in the wild).
 - [ ] **AU.3 Close F-03 when `require_ha_auth` is true** — when the add-on option is enabled, the middleware rejects direct-port requests that don't carry a valid Bearer token. Ingress-tunneled requests continue to work because Supervisor adds the `X-Ingress-Path` header. Update `SECURITY_AUDIT.md` F-03 from WONTFIX to `FIXED (1.4.1, opt-in via require_ha_auth)`.
 - [ ] **AU.4 Attribute mutations to the HA user** — `/ui/api/compile`, `/ui/api/queue/cancel`, `/ui/api/queue/retry`, `POST /ui/api/targets/{f}/*` (save content, rename, delete, pin, schedule, tags, meta): if `request["ha_user"]` is set, log the user name at INFO on the mutation log line. Example: `"Compile run X enqueued by stefan: 1 job"`. Non-goal: persisting user identity on queue entries — just log it for now; fold into a proper audit log if users ask.
-- [ ] **AU.5 (stretch) Admin-only gating for destructive actions** — `is_admin` from the resolved HA user lets us gate high-blast-radius actions (bulk delete, bulk cancel-all-and-clear, worker removal, `config.yaml` writes) on admin role. Off-by-default add-on option `admin_only_destructive: bool`. If not enabled, any authenticated user can do anything (matches today's behavior modulo the auth check). This is defer-able to 1.5; list here because it's the obvious next step once AU.2 surfaces the role.
+- ~~**AU.5**~~ REMOVED — Admin-only gating for destructive actions. Struck: this is a home-lab tool used by 1-2 people; role-based access control adds complexity without value for the target audience. If a multi-user deployment ever needs it, revisit then.
 - [ ] **AU.6 Tests + docs** — `tests/test_auth.py` gains:
   - An Ingress-path-present test (current 401 pattern still works when `require_ha_auth=false`)
   - A valid-Bearer test that mocks Supervisor `/auth` returning 200 with `{name, id, group_ids}` and asserts the handler gets the resolved user attached
@@ -352,3 +352,24 @@ Let users compile a target **without** the OTA flash step, then download the res
 
 - [x] **#38** *(1.4.1-dev.50)* — Compile action fix + tests.
   Made `targets` optional in the schema (was `vol.Required`; broke the service call when using device targeting). Added 4 new pytest cases: device-targeted compile resolves IDs, non-target device rejection, empty-call error message, device-targeted validate. Total service tests: 8 → 12.
+
+- [x] **#39** *(1.4.1-dev.51)* — HA integration leaves stale devices when targets/workers are removed.
+  `_register_devices` now builds the set of live identifiers each tick and compares against `dr.async_entries_for_config_entry`. Fleet-only stale devices get `async_remove_device`; merged devices (#27) get `async_update_device(remove_config_entry_id=...)` so the ESPHome integration's device row survives. Three new pytest cases: stale removal, merged detach, live-device retention. Device info tests: 13 → 16.
+
+- [x] **#40** *(1.4.1-dev.51)* — Human-readable schedule entities + separate one-time entity.
+  `TargetScheduleSensor` now shows human-readable cron (ported `formatCronHuman` from the UI's `utils/cron.ts`): "Daily 03:00 (America/Los_Angeles)", "Mon 08:30", "Every 2h", etc. Falls back to raw cron for patterns the formatter doesn't recognize. Added new `TargetScheduledOnceSensor` for one-time scheduled upgrades — shows "Apr 20, 2026 18:30" or "None". Both sensors are `EntityCategory.DIAGNOSTIC` and appear on the merged device card alongside ESPHome's native entities.
+
+- [ ] **#41** — Real-time entity state updates (push instead of polling).
+  The coordinator polls `/ui/api/*` every 30 seconds. User actions (compile, cancel) and worker status changes take up to 30s to reflect in HA entities. Proper fix: the add-on pushes state changes via a webhook or WebSocket callback to the HA custom integration, which calls `coordinator.async_set_updated_data()` immediately. Requires a server-side change (register a webhook URL with the coordinator, send SSE/WebSocket notifications) + an integration-side listener. Deferred — 30s latency is acceptable for 1.4.1; revisit in 1.5 alongside the UE.* update-entity work.
+
+- [ ] 42 Let's add sensors for the number of workers and number of task slots to the main ESPHome fleet device. 
+
+- [ ] 43 Let's also add a sensor for the currently selected ESP Home version to the ESP Home Fleet device. 
+
+- [ ] 44 And let's expose the version of the ESP Home fleet as a sensor also. Unless there's a way to publish it more natively in the integration, then let's do that. 
+
+- [ ] 45 Let's expose a clean cache button and action for the workers. 
+
+- [ ] 46 Let's add sensors for the number of total devices, online devices, as well as the number of outdated devices to the ESP Home Fleet device. 
+
+- [ ] 47 Let's add the ability to change the number of slots on a worker. I'm not sure if that's a sensor or how to exactly do that, but you can, from home assistance, change the number of slots from an automation. 

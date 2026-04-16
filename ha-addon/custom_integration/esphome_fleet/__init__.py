@@ -93,6 +93,12 @@ def _register_devices(
     Idempotent — HA's device_registry.async_get_or_create deduplicates
     by identifiers. Called on setup and on every coordinator update so
     newly-added targets/workers show up without an HA restart.
+
+    #39: also removes stale devices for targets/workers that vanished
+    from the add-on (YAML deleted, worker decommissioned). For merged
+    devices (#27) we only detach our config_entry — the device row
+    survives as long as another integration (e.g. native ESPHome) still
+    references it.
     """
     registry = dr.async_get(hass)
 
@@ -102,9 +108,14 @@ def _register_devices(
         **hub_device_info(entry.entry_id, coordinator.base_url),
     )
 
+    # Build the set of identifiers that SHOULD exist right now.
+    live_identifiers: set[tuple[str, str]] = set()
+    live_identifiers.add((DOMAIN, f"hub:{entry.entry_id}"))
+
     # Per-target
     for t in (coordinator.data or {}).get("targets") or []:
         if t.get("target"):
+            live_identifiers.add((DOMAIN, f"target:{t['target']}"))
             registry.async_get_or_create(
                 config_entry_id=entry.entry_id,
                 **target_device_info(t, entry.entry_id),
@@ -113,7 +124,37 @@ def _register_devices(
     # Per-worker
     for w in (coordinator.data or {}).get("workers") or []:
         if w.get("client_id"):
+            live_identifiers.add((DOMAIN, f"worker:{w['client_id']}"))
             registry.async_get_or_create(
                 config_entry_id=entry.entry_id,
                 **worker_device_info(w, entry.entry_id),
             )
+
+    # #39: prune devices that belong to this config entry but are no
+    # longer in the coordinator snapshot.
+    for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        # Keep the device if any of its identifiers are still live.
+        if device.identifiers & live_identifiers:
+            continue
+        # Only consider devices that have at least one Fleet identifier
+        # (avoid touching devices we were merged into purely by MAC
+        # connection without an identifier match).
+        has_fleet_ident = any(d == DOMAIN for d, _ in device.identifiers)
+        if not has_fleet_ident:
+            continue
+        if len(device.config_entries) > 1:
+            # Merged with another integration (#27) — just detach us.
+            _LOGGER.info(
+                "Detaching stale Fleet device %s (%s) — still owned by "
+                "other integrations",
+                device.name, device.id,
+            )
+            registry.async_update_device(
+                device.id, remove_config_entry_id=entry.entry_id
+            )
+        else:
+            _LOGGER.info(
+                "Removing stale Fleet device %s (%s)",
+                device.name, device.id,
+            )
+            registry.async_remove_device(device.id)
