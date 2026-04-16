@@ -79,21 +79,40 @@ test('scheduled mode hides the OTA/Download sub-toggle', async ({ page }) => {
   await expect(dialog.getByLabel('Compile + Download (no OTA)', { exact: true })).toHaveCount(0);
 });
 
-test('Queue tab renders Download button only on eligible rows', async ({ page }) => {
+test('Queue tab renders Download dropdown only on eligible rows', async ({ page }) => {
   await page.getByRole('button', { name: /Queue/ }).click();
   await expect(page.getByText('bedroom-light')).toBeVisible({ timeout: 5000 });
 
   // job-008 (office.yaml) is the only download-only+has_firmware fixture.
   const downloadRow = page.locator('#tab-queue tbody tr').filter({ hasText: 'office' });
-  // #68: relabeled "Download" → "Download .bin" to disambiguate from log-download buttons.
-  const dlAnchor = downloadRow.getByRole('link', { name: 'Download .bin' });
-  await expect(dlAnchor).toBeVisible();
-  await expect(dlAnchor).toHaveAttribute('href', /\/ui\/api\/jobs\/job-008\/firmware$/);
-  await expect(dlAnchor).toHaveAttribute('download', '');
+  // #69: replaced the single `<a>Download</a>` with a shadcn DropdownMenu
+  // trigger button (aria-label "Download firmware") that opens a menu of
+  // variant × compression options.
+  const dlTrigger = downloadRow.getByRole('button', { name: 'Download firmware' });
+  await expect(dlTrigger).toBeVisible();
+  await dlTrigger.click();
 
-  // Any other success row (e.g. bedroom-light job-001 OTA success) must NOT have the .bin download.
+  // Each menu item is an <a download> with a variant-scoped href.
+  // Legacy fixture (job-008) was pre-#69 so it surfaces as the single
+  // "firmware" variant, yielding two menu items: raw + gzipped.
+  const rawItem = page.getByRole('menuitem', { name: /Firmware.*\.bin\)$/ });
+  const gzItem = page.getByRole('menuitem', { name: /Firmware.*\.bin\.gz\)$/ });
+  await expect(rawItem).toBeVisible();
+  await expect(gzItem).toBeVisible();
+  await expect(rawItem).toHaveAttribute(
+    'href', /\/ui\/api\/jobs\/job-008\/firmware\?variant=firmware$/,
+  );
+  await expect(gzItem).toHaveAttribute(
+    'href', /\/ui\/api\/jobs\/job-008\/firmware\?variant=firmware&gz=1$/,
+  );
+
+  // Close the menu before asserting on the OTA row (Escape drops the
+  // portal; leaving it open can occlude sibling rows).
+  await page.keyboard.press('Escape');
+
+  // Any other success row (e.g. bedroom-light job-001 OTA success) must NOT have a download button.
   const otaRow = page.locator('#tab-queue tbody tr').filter({ hasText: 'bedroom-light' });
-  await expect(otaRow.getByRole('link', { name: 'Download .bin' })).toHaveCount(0);
+  await expect(otaRow.getByRole('button', { name: 'Download firmware' })).toHaveCount(0);
 });
 
 test('download-only success row shows Ready badge, not OTA Pending (#23)', async ({ page }) => {

@@ -238,6 +238,11 @@ export interface Job {
    *  from GET /ui/api/jobs/{id}/firmware. Drives the Queue tab's Download
    *  button visibility. */
   has_firmware?: boolean;
+  /** #69: variant names currently stored for this job (e.g. ["factory", "ota"]).
+   *  ESP32 produces both; ESP8266 produces only "ota". Legacy pre-#69 blobs
+   *  surface as ["firmware"]. Drives which entries the Download dropdown
+   *  renders. Empty when has_firmware is false. */
+  firmware_variants?: string[];
   ota_result?: string;
   log?: string;
 }

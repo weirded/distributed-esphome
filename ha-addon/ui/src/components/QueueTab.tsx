@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Calendar, Clock, Pin, User } from 'lucide-react';
+import { Calendar, Clock, Download, Pin, User } from 'lucide-react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -11,7 +11,7 @@ import {
   type SortingFn,
 } from '@tanstack/react-table';
 import type { Job, Target, Worker } from '../types';
-import { Button, buttonVariants } from './ui/button';
+import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
 import { fmtDuration, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
 import {
@@ -58,6 +58,18 @@ const stateSort: SortingFn<Job> = (rowA, rowB) => {
 };
 
 // Inline sort header — mirrors the pattern used in DevicesTab
+
+// #69: display labels for the firmware variants served by the
+// Download dropdown. Maps server-side variant names (stable wire
+// identifiers) to user-facing strings.
+const variantLabel = (variant: string): string => {
+  switch (variant) {
+    case 'factory': return 'Factory image';
+    case 'ota':     return 'OTA image';
+    case 'firmware': return 'Firmware';  // legacy pre-#69 blob
+    default:        return variant;
+  }
+};
 
 const columnHelper = createColumnHelper<Job>();
 
@@ -330,9 +342,14 @@ export function QueueTab({
         const hasLog = job.state !== 'pending';
         const canRetry = isJobRetryable(job);
         const canCancel = inProgress;
-        // FD.8: Download button is only meaningful for a successful
-        // download-only job whose worker has actually uploaded the .bin.
+        // FD.8 / #69: Download dropdown offers each stored firmware
+        // variant (factory for ESP32 first-flash; ota for OTA / ESP8266)
+        // plus a gzip toggle. Fallback to a single-item variants=["firmware"]
+        // list for pre-#69 blobs still on disk after an upgrade.
         const canDownload = job.state === 'success' && !!job.download_only && !!job.has_firmware;
+        const variants = (job.firmware_variants && job.firmware_variants.length > 0)
+          ? job.firmware_variants
+          : (canDownload ? ['firmware'] : []);
         return (
           <div className="flex gap-1">
             {canCancel && (
@@ -347,15 +364,52 @@ export function QueueTab({
                 ? <Button variant="success" size="sm" onClick={() => onRetry([job.id])}>Rerun</Button>
                 : <Button variant="warn" size="sm" onClick={() => onRetry([job.id])}>Retry</Button>
             )}
-            {canDownload && (
-              <a
-                href={`./ui/api/jobs/${job.id}/firmware`}
-                download
-                className={buttonVariants({ variant: 'secondary', size: 'sm' })}
-                title="Download compiled firmware binary (.bin)"
-              >
-                Download .bin
-              </a>
+            {canDownload && variants.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer"
+                  title="Download compiled firmware"
+                  aria-label="Download firmware"
+                >
+                  <Download className="size-3.5" aria-hidden="true" />
+                  Download
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuGroup>
+                    {variants.map((variant) => (
+                      <DropdownMenuItem
+                        key={`${variant}-raw`}
+                        render={(props) => (
+                          <a
+                            {...props}
+                            href={`./ui/api/jobs/${job.id}/firmware?variant=${variant}`}
+                            download
+                          >
+                            {variantLabel(variant)} (.bin)
+                          </a>
+                        )}
+                      />
+                    ))}
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    {variants.map((variant) => (
+                      <DropdownMenuItem
+                        key={`${variant}-gz`}
+                        render={(props) => (
+                          <a
+                            {...props}
+                            href={`./ui/api/jobs/${job.id}/firmware?variant=${variant}&gz=1`}
+                            download
+                          >
+                            {variantLabel(variant)} (.bin.gz)
+                          </a>
+                        )}
+                      />
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {hasLog && (
               <Button variant="secondary" size="sm" onClick={() => onOpenLog(job.id)}>Log</Button>

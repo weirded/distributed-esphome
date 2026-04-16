@@ -443,11 +443,21 @@ async def get_queue(request: web.Request) -> web.Response:
     = ~5 MB/s steady-state. The log modal and WebSocket tail both fetch
     per-job via /ui/api/jobs/{id}/log, so the list endpoint doesn't need it.
     """
+    from firmware_storage import list_variants  # noqa: PLC0415
     queue = request.app["queue"]
     jobs = []
     for job in queue.get_all():
         d = job.to_dict()
         d["log"] = None
+        # #69: surface the available firmware variants up front so the
+        # Queue-tab Download dropdown knows whether to show Factory,
+        # OTA, or both without a second round trip. Cheap — just a dir
+        # scan when has_firmware is true; skipped for every other job
+        # row so the list endpoint stays small.
+        if job.has_firmware:
+            d["firmware_variants"] = list_variants(job.id)
+        else:
+            d["firmware_variants"] = []
         jobs.append(d)
     return web.json_response(jobs)
 
@@ -471,7 +481,18 @@ async def get_job_log(request: web.Request) -> web.Response:
 
 @routes.get("/ui/api/jobs/{id}/firmware")
 async def download_job_firmware(request: web.Request) -> web.Response:
-    """FD.6 — download the firmware binary stored for a download-only job."""
+    """FD.6 / #69 — download one variant of a job's firmware binary.
+
+    Query params:
+      - ``variant``: ``factory`` (first-flash image, ESP32) or ``ota``
+        (smaller OTA-safe image, ESP32 + ESP8266). Defaults to the
+        first variant reported by ``list_variants`` so pre-#69 callers
+        (and pre-#69 legacy blobs) keep working without modification.
+      - ``gz``: ``1`` to gzip-compress the response body on the fly
+        and serve it with a ``.bin.gz`` filename. Useful for users
+        mirroring builds to a fleet — ~30-40% smaller wire size.
+    """
+    import gzip as _gzip  # noqa: PLC0415
     job_id = request.match_info["id"]
     queue = request.app["queue"]
     job = queue.get(job_id)
@@ -480,17 +501,64 @@ async def download_job_firmware(request: web.Request) -> web.Response:
     if not job.has_firmware:
         return web.json_response({"error": "Firmware not available"}, status=404)
 
-    from firmware_storage import firmware_path  # noqa: PLC0415
-    path = firmware_path(job_id)
-    if not path.is_file():
-        # has_firmware flipped but file disappeared — log and 404.
+    from firmware_storage import firmware_path, list_variants, read_firmware  # noqa: PLC0415
+    available = list_variants(job_id)
+    if not available:
         logger.warning(
-            "Job %s has_firmware=True but %s is missing", job_id, path,
+            "Job %s has_firmware=True but no variants found on disk", job_id,
+        )
+        return web.json_response({"error": "Firmware not available"}, status=404)
+
+    variant = request.rel_url.query.get("variant") or available[0]
+    if variant not in available:
+        return web.json_response(
+            {
+                "error": f"Variant {variant!r} not available",
+                "available": available,
+            },
+            status=404,
+        )
+
+    path = firmware_path(job_id, variant=variant)
+    if not path.is_file():
+        # list_variants said yes but the file vanished — race with
+        # a concurrent delete_firmware. 404 cleanly.
+        logger.warning(
+            "Job %s variant=%s listed but %s is missing", job_id, variant, path,
         )
         return web.json_response({"error": "Firmware not available"}, status=404)
 
     stem = job.target.removesuffix(".yaml").removesuffix(".yml") or job.target
-    filename = f"{stem}-{job_id[:8]}.bin"
+    # Surface the variant in the filename so a user who downloads both
+    # doesn't end up with two indistinguishable `.bin`s in their
+    # browser's Downloads folder.
+    if variant == "firmware":
+        filename = f"{stem}-{job_id[:8]}.bin"  # legacy shape (no variant tag)
+    else:
+        filename = f"{stem}-{job_id[:8]}-{variant}.bin"
+
+    gz_requested = request.rel_url.query.get("gz") in ("1", "true", "yes")
+    if gz_requested:
+        # Read + gzip-compress in memory. Firmware binaries are 1-2MB so
+        # buffering is cheap, and a streaming compressor adds complexity
+        # without a material benefit at this scale. Use gzip.compress
+        # with the default compresslevel (9) — saves ~30-40% on typical
+        # ESP firmware at ~30ms CPU per job. Served with
+        # Content-Encoding: identity and a .gz filename so the browser
+        # saves the compressed bytes literally instead of auto-decoding.
+        raw = read_firmware(job_id, variant=variant)
+        if raw is None:
+            return web.json_response({"error": "Firmware not available"}, status=404)
+        compressed = _gzip.compress(raw)
+        return web.Response(
+            body=compressed,
+            headers={
+                "Content-Type": "application/gzip",
+                "Content-Disposition": f'attachment; filename="{filename}.gz"',
+                "Content-Encoding": "identity",
+            },
+        )
+
     return web.FileResponse(
         path=path,
         headers={
@@ -498,6 +566,23 @@ async def download_job_firmware(request: web.Request) -> web.Response:
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+@routes.get("/ui/api/jobs/{id}/firmware-variants")
+async def list_job_firmware_variants(request: web.Request) -> web.Response:
+    """#69 — enumerate the firmware variants stored for a job.
+
+    Driven by the Queue-tab Download dropdown: the UI polls this once
+    per job-row on modal open to know which options (Factory / OTA,
+    plus the .gz toggle) to render. Cheap to compute — just a dir scan.
+    """
+    from firmware_storage import list_variants  # noqa: PLC0415
+    job_id = request.match_info["id"]
+    queue = request.app["queue"]
+    job = queue.get(job_id)
+    if not job:
+        return web.json_response({"error": "Job not found"}, status=404)
+    return web.json_response({"variants": list_variants(job_id)})
 
 
 @routes.get("/ui/api/targets/{filename}/logs/ws")

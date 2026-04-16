@@ -43,7 +43,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.5.0-dev.73"
+CLIENT_VERSION = "1.5.0-dev.74"
 
 
 def _read_image_version() -> Optional[str]:
@@ -910,29 +910,54 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             # Compile succeeded — warm the shared cache.
             _sync_slot_into_cache(target_stem, build_dir)
 
-            firmware_path = _locate_firmware_binary(build_dir, target_stem)
-            if firmware_path is None:
+            # #69: collect EVERY variant present in the build tree
+            # (factory + ota on ESP32; ota only on ESP8266) and upload
+            # each one. Server stores them under
+            # `/data/firmware/{job_id}.{variant}.bin` and the Queue-tab
+            # Download dropdown offers whichever ones made it through.
+            variants = _collect_firmware_variants(build_dir, target_stem)
+            if not variants:
                 _flush_log_text(
                     job_id,
-                    "\n\033[31mERROR: Compile succeeded but firmware binary was "
-                    "not found under .pioenvs/ — nothing to upload.\033[0m\n",
+                    "\n\033[31mERROR: Compile succeeded but no firmware binary was "
+                    "found under .pioenvs/ — nothing to upload.\033[0m\n",
                 )
                 _submit_result(job_id, "failed", log=None, ota_result=None)
                 return
 
             _report_status(job_id, "Uploading firmware")
-            upload_ok = _upload_firmware(job_id, firmware_path, client_id=client_id)
-            if not upload_ok:
+            uploaded_any = False
+            for variant_name, variant_path in variants.items():
+                if _upload_firmware(
+                    job_id, variant_path,
+                    variant=variant_name, client_id=client_id,
+                ):
+                    uploaded_any = True
+                else:
+                    _flush_log_text(
+                        job_id,
+                        f"\n\033[33mWARNING: Failed to upload variant "
+                        f"{variant_name!r} — other variants (if any) will "
+                        f"continue.\033[0m\n",
+                    )
+            if not uploaded_any:
                 _flush_log_text(
                     job_id,
-                    "\n\033[31mERROR: Firmware upload to server failed.\033[0m\n",
+                    "\n\033[31mERROR: All firmware-variant uploads to server failed.\033[0m\n",
                 )
                 _submit_result(job_id, "failed", log=None, ota_result=None)
                 return
 
+            # #69: log the total size across every successfully uploaded
+            # variant so the user sees e.g. "1.8 MB + 0.6 MB" in the log
+            # when ESP32 produced both factory and ota binaries.
+            size_summary = ", ".join(
+                f"{name}={variants[name].stat().st_size} B"
+                for name in variants if name  # keep ordering from dict
+            )
             _flush_log_text(
                 job_id,
-                f"\nFirmware uploaded to server ({firmware_path.stat().st_size} bytes). "
+                f"\nFirmware uploaded to server ({size_summary}). "
                 "Download from the Queue tab.\n",
             )
             _submit_result(job_id, "success", log=None, ota_result=None)
@@ -1208,19 +1233,24 @@ def _submit_result(
                 time.sleep(2)
 
 
-def _locate_firmware_binary(build_dir: str, target_stem: str) -> Optional[Path]:
-    """Find the compiled firmware .bin under .esphome/build/<device>/.
+def _collect_firmware_variants(build_dir: str, target_stem: str) -> dict[str, Path]:
+    """Find every compiled firmware binary under .esphome/build/<device>/.
 
-    ESPHome layout after `esphome compile` is:
+    ESPHome layout after ``esphome compile`` is:
       {build_dir}/.esphome/build/{device_name}/.pioenvs/{device_name}/firmware.factory.bin   (ESP32)
-      {build_dir}/.esphome/build/{device_name}/.pioenvs/{device_name}/firmware.bin           (ESP8266)
+      {build_dir}/.esphome/build/{device_name}/.pioenvs/{device_name}/firmware.bin           (ESP8266 or ESP32 OTA-only)
+
+    Returns a mapping of ``variant → path``:
+      - ``factory``: full flash image (ESP32 only; used for first
+        USB/serial flash).
+      - ``ota``: the ``firmware.bin`` shape (smaller, OTA-safe; ESP32
+        produces this alongside factory; ESP8266 produces only this).
 
     The device name can differ from the target filename stem if the
-    YAML uses substitutions. Walk the build tree and pick the largest
-    `firmware.*.bin` we find — on ESP32 that's `firmware.factory.bin`
-    (~1-2MB, the full flash image); on ESP8266 it's `firmware.bin`.
-    Logs what it picked so ESPHome-version-specific layout changes are
-    diagnosable from the job log.
+    YAML uses substitutions, so we walk every device_dir under
+    ``.esphome/build/``. For #69: returning *all* variants lets the
+    server store them and the UI offer users a choice in the Download
+    dropdown. Pre-#69 callers picked just one; that path is gone.
     """
     esphome_build = Path(build_dir) / ".esphome" / "build"
     if not esphome_build.is_dir():
@@ -1228,39 +1258,51 @@ def _locate_firmware_binary(build_dir: str, target_stem: str) -> Optional[Path]:
             "Build tree %s does not exist — compile likely failed or produced no artifacts",
             esphome_build,
         )
-        return None
+        return {}
 
-    # Prefer .factory.bin (full flash image) when present; fall back to
-    # firmware.bin (ESP8266 / OTA-only ESP32 build variant).
-    candidates: list[Path] = []
+    variants: dict[str, Path] = {}
     for device_dir in esphome_build.iterdir():
         if not device_dir.is_dir():
             continue
-        for name in ("firmware.factory.bin", "firmware.bin"):
-            p = device_dir / ".pioenvs" / device_dir.name / name
-            if p.is_file():
-                candidates.append(p)
+        pioenvs = device_dir / ".pioenvs" / device_dir.name
+        candidates = {
+            "factory": pioenvs / "firmware.factory.bin",
+            "ota": pioenvs / "firmware.bin",
+        }
+        for variant_name, path in candidates.items():
+            if not path.is_file():
+                continue
+            # First-match wins when multiple device_dirs exist (usually
+            # there's only one; substitutions don't spawn duplicates).
+            if variant_name not in variants:
+                variants[variant_name] = path
+                logger.info(
+                    "Located firmware variant %s for %s: %s (%d bytes)",
+                    variant_name, target_stem, path, path.stat().st_size,
+                )
 
-    if not candidates:
+    if not variants:
         logger.warning("No firmware binary found under %s", esphome_build)
-        return None
-
-    # factory.bin > firmware.bin (lexicographic puts factory first which is fine)
-    candidates.sort(key=lambda p: (0 if "factory" in p.name else 1, -p.stat().st_size))
-    picked = candidates[0]
-    logger.info(
-        "Located firmware binary for %s: %s (%d bytes)",
-        target_stem, picked, picked.stat().st_size,
-    )
-    return picked
+    return variants
 
 
-def _upload_firmware(job_id: str, path: Path, client_id: Optional[str] = None) -> bool:
-    """POST the compiled binary to the server. Returns True on success.
+def _upload_firmware(
+    job_id: str,
+    path: Path,
+    *,
+    variant: str = "factory",
+    client_id: Optional[str] = None,
+) -> bool:
+    """POST one variant of the compiled binary to the server.
 
-    Failure reasons are surfaced into the job's log (via
-    ``_flush_log_text``) so the user can diagnose from the Queue-tab
-    Log modal without access to the worker's stdout.
+    Returns True on success. Failure reasons are surfaced into the
+    job's log (via ``_flush_log_text``) so the user can diagnose from
+    the Queue-tab Log modal without access to the worker's stdout.
+
+    ``variant`` is an HTTP path segment — ``factory`` for ESP32's full
+    flash image, ``ota`` for the smaller OTA-safe image. The server
+    stores each under a separate filename so both are available for
+    download (#69).
     """
     try:
         data = path.read_bytes()
@@ -1274,15 +1316,15 @@ def _upload_firmware(job_id: str, path: Path, client_id: Optional[str] = None) -
     for attempt in range(3):
         try:
             resp = post_bytes(
-                f"/api/v1/jobs/{job_id}/firmware",
+                f"/api/v1/jobs/{job_id}/firmware/{variant}",
                 data,
                 timeout=600,
                 client_id=client_id,
             )
             if resp.ok:
                 logger.info(
-                    "Uploaded firmware for job %s (%d bytes) → server",
-                    job_id, len(data),
+                    "Uploaded firmware for job %s (variant=%s, %d bytes) → server",
+                    job_id, variant, len(data),
                 )
                 return True
             last_err = f"HTTP {resp.status_code}: {resp.text[:300]}"

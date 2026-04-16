@@ -406,22 +406,21 @@ async def submit_job_result(request: web.Request) -> web.Response:
     return web.json_response(OkResponse().model_dump())
 
 
-@routes.post("/api/v1/jobs/{id}/firmware")
-async def upload_job_firmware(request: web.Request) -> web.Response:
-    """FD.5 — worker uploads the compiled binary for a download-only job.
+# Variant names workers may upload. Kept server-side as an authoritative
+# whitelist so stale/unexpected values can't create arbitrary filenames.
+# "firmware" = pre-#69 legacy shape (see firmware_storage.LEGACY_VARIANT).
+_UPLOADABLE_VARIANTS = ("factory", "ota", "firmware")
 
-    Body: raw bytes of the `.bin`. Rejected unless the job is WORKING,
-    was enqueued as download_only, and the caller is the worker
-    currently assigned to the job. Idempotent — a legitimate re-upload
-    by the assigned worker overwrites in place.
 
-    Bug #24: previously the handler stored the bytes to disk *before*
-    checking state, so a stale worker that arrived after the job had
-    been re-queued-and-succeeded-elsewhere would overwrite the good
-    binary from disk, then the rejection path would delete the
-    overwritten file — destroying the successful worker's upload.
-    The state + client-identity checks now run FIRST; bytes aren't
-    written until we've confirmed the caller owns the job.
+async def _handle_firmware_upload(
+    request: web.Request, *, variant: str,
+) -> web.Response:
+    """Shared handler for ``POST /api/v1/jobs/{id}/firmware[/{variant}]``.
+
+    The legacy no-variant route (pre-#69 workers) funnels through this
+    with ``variant="firmware"``; the new variant-qualified route passes
+    ``"factory"`` or ``"ota"``. All state-safety checks (bug #24,
+    security audit F-08) run identically for both shapes.
     """
     job_id = request.match_info["id"]
     queue = request.app["queue"]
@@ -429,6 +428,9 @@ async def upload_job_firmware(request: web.Request) -> web.Response:
         request.headers.get(HEADER_X_CLIENT_ID)
         or request.rel_url.query.get("client_id")
     )
+
+    if variant not in _UPLOADABLE_VARIANTS:
+        return _protocol_error("unknown_firmware_variant", status=400)
 
     job = queue.get(job_id)
     if job is None:
@@ -443,9 +445,9 @@ async def upload_job_firmware(request: web.Request) -> web.Response:
     from job_queue import JobState  # noqa: PLC0415
     if job.state != JobState.WORKING:
         logger.info(
-            "Refusing firmware upload for job %s — state is %s "
+            "Refusing firmware upload for job %s (variant=%s) — state is %s "
             "(stale worker %s; current assigned: %s)",
-            job_id, job.state.value, caller_client_id, job.assigned_client_id,
+            job_id, variant, job.state.value, caller_client_id, job.assigned_client_id,
         )
         return _protocol_error("job_not_working", status=409)
 
@@ -458,9 +460,9 @@ async def upload_job_firmware(request: web.Request) -> web.Response:
         and caller_client_id != job.assigned_client_id
     ):
         logger.warning(
-            "Refusing firmware upload for job %s — caller %s is not the "
+            "Refusing firmware upload for job %s (variant=%s) — caller %s is not the "
             "assigned worker %s (stale upload after requeue?)",
-            job_id, caller_client_id, job.assigned_client_id,
+            job_id, variant, caller_client_id, job.assigned_client_id,
         )
         return _protocol_error("worker_identity_mismatch", status=409)
 
@@ -470,26 +472,52 @@ async def upload_job_firmware(request: web.Request) -> web.Response:
 
     from firmware_storage import save_firmware, delete_firmware  # noqa: PLC0415
     try:
-        save_firmware(job_id, data)
+        save_firmware(job_id, data, variant=variant)
     except Exception:
-        logger.exception("Failed to save firmware for job %s", job_id)
+        logger.exception(
+            "Failed to save firmware for job %s (variant=%s)", job_id, variant,
+        )
         return _protocol_error("firmware_save_failed", status=500)
 
     ok = await queue.mark_firmware_stored(job_id)
     if not ok:
         # Genuine race: the job transitioned out of WORKING between
         # our pre-write state check and mark_firmware_stored. Clean
-        # up the bytes we wrote; the `delete_firmware` call here is
-        # for OUR OWN upload, not someone else's (pre-write guards
-        # above prevent that).
+        # up EVERY variant written by this worker for this job — the
+        # queue rejected the whole job, not just one variant.
         logger.info(
-            "Cleaned up out-of-order firmware upload for job %s "
-            "(transitioned out of WORKING during write)", job_id,
+            "Cleaned up out-of-order firmware upload for job %s (variant=%s) "
+            "(transitioned out of WORKING during write)", job_id, variant,
         )
         delete_firmware(job_id)
         return _protocol_error("job_not_eligible", status=409)
 
     return web.json_response(OkResponse().model_dump())
+
+
+@routes.post("/api/v1/jobs/{id}/firmware")
+async def upload_job_firmware_legacy(request: web.Request) -> web.Response:
+    """Legacy no-variant route (#69) — pre-#69 workers still hit this.
+
+    Stored as variant ``firmware`` (the pre-#69 blob name). Once the
+    worker auto-updates to the post-#69 client, subsequent uploads go
+    through ``/firmware/{variant}`` with the real variant name.
+    """
+    return await _handle_firmware_upload(request, variant="firmware")
+
+
+@routes.post("/api/v1/jobs/{id}/firmware/{variant}")
+async def upload_job_firmware(request: web.Request) -> web.Response:
+    """FD.5 (#69-extended) — worker uploads one variant of the compiled binary.
+
+    ``variant`` ∈ {``factory``, ``ota``}: ESP32 produces both; ESP8266
+    only produces ``ota``. Workers call this once per variant, so a
+    single job may carry multiple binaries in ``/data/firmware/``.
+    Body: raw bytes of the ``.bin``. All other semantics match the
+    legacy route — see ``_handle_firmware_upload``.
+    """
+    variant = request.match_info["variant"]
+    return await _handle_firmware_upload(request, variant=variant)
 
 
 @routes.post("/api/v1/jobs/{id}/status")

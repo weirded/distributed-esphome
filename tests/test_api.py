@@ -1114,14 +1114,15 @@ async def test_firmware_upload_stores_bin_and_flips_has_firmware(tmp_path, monke
         # Claim moves the job to WORKING.
         await ta.queue.claim_next("any-client")
 
+        # #69: workers now POST to variant-qualified path.
         resp = await ta.post(
-            f"/api/v1/jobs/{job.id}/firmware",
+            f"/api/v1/jobs/{job.id}/firmware/factory",
             data=b"\xde\xad\xbe\xef" * 100,
             headers={**AUTH_HEADERS, "Content-Type": "application/octet-stream"},
         )
         assert resp.status == 200
 
-        stored = firmware_storage.firmware_path(job.id, root=firmware_dir)
+        stored = firmware_storage.firmware_path(job.id, variant="factory", root=firmware_dir)
         assert stored.is_file()
         assert stored.read_bytes() == b"\xde\xad\xbe\xef" * 100
 
@@ -1290,7 +1291,7 @@ async def test_firmware_upload_accepted_for_matching_assigned_worker(
         await ta.queue.claim_next("assigned-worker")
 
         resp = await ta.post(
-            f"/api/v1/jobs/{job.id}/firmware",
+            f"/api/v1/jobs/{job.id}/firmware/factory",
             data=b"RIGHT_BYTES",
             headers={
                 **AUTH_HEADERS,
@@ -1299,7 +1300,7 @@ async def test_firmware_upload_accepted_for_matching_assigned_worker(
             },
         )
         assert resp.status == 200
-        path = firmware_storage.firmware_path(job.id, root=firmware_dir)
+        path = firmware_storage.firmware_path(job.id, variant="factory", root=firmware_dir)
         assert path.read_bytes() == b"RIGHT_BYTES"
         assert ta.queue.get(job.id).has_firmware is True
     finally:

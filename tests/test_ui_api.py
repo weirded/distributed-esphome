@@ -847,7 +847,12 @@ async def test_firmware_download_streams_stored_bin(tmp_path, monkeypatch):
         )
         assert job is not None
         await ta.queue.claim_next("any")
-        firmware_storage.save_firmware(job.id, b"HELLO_FW", root=firmware_dir)
+        # #69: save via the default (factory) variant; the endpoint
+        # picks the first variant reported by list_variants when no
+        # ?variant= is given.
+        firmware_storage.save_firmware(
+            job.id, b"HELLO_FW", variant="factory", root=firmware_dir,
+        )
         await ta.queue.mark_firmware_stored(job.id)
 
         resp = await ta.get(f"/ui/api/jobs/{job.id}/firmware")
@@ -858,7 +863,82 @@ async def test_firmware_download_streams_stored_bin(tmp_path, monkeypatch):
         cd = resp.headers.get("Content-Disposition", "")
         assert "attachment" in cd
         assert "office-" in cd
-        assert cd.endswith('.bin"')
+        # #69: non-legacy variants (factory/ota) are tagged in the filename.
+        assert "-factory.bin" in cd
+    finally:
+        await ta.close()
+
+
+async def test_firmware_download_selects_variant_by_query(tmp_path, monkeypatch):
+    """#69 — ?variant=ota serves the OTA binary even when factory exists."""
+    import firmware_storage
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="office.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        await ta.queue.claim_next("any")
+        firmware_storage.save_firmware(
+            job.id, b"FACTORY", variant="factory", root=firmware_dir,
+        )
+        firmware_storage.save_firmware(
+            job.id, b"OTA_ONLY", variant="ota", root=firmware_dir,
+        )
+        await ta.queue.mark_firmware_stored(job.id)
+
+        resp = await ta.get(f"/ui/api/jobs/{job.id}/firmware?variant=ota")
+        assert resp.status == 200
+        assert await resp.read() == b"OTA_ONLY"
+        assert "-ota.bin" in resp.headers["Content-Disposition"]
+
+        resp = await ta.get(f"/ui/api/jobs/{job.id}/firmware?variant=factory")
+        assert await resp.read() == b"FACTORY"
+        assert "-factory.bin" in resp.headers["Content-Disposition"]
+
+        # Unknown variant → 404 with the available list in the body.
+        resp = await ta.get(f"/ui/api/jobs/{job.id}/firmware?variant=nope")
+        assert resp.status == 404
+        data = await resp.json()
+        assert data["available"] == ["factory", "ota"]
+    finally:
+        await ta.close()
+
+
+async def test_firmware_download_gzip_flag_compresses_body(tmp_path, monkeypatch):
+    """#69 — ?gz=1 wraps the response in gzip and serves a .bin.gz filename."""
+    import gzip
+    import firmware_storage
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="office.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        await ta.queue.claim_next("any")
+        payload = b"A" * 4096  # compressible
+        firmware_storage.save_firmware(
+            job.id, payload, variant="factory", root=firmware_dir,
+        )
+        await ta.queue.mark_firmware_stored(job.id)
+
+        resp = await ta.get(f"/ui/api/jobs/{job.id}/firmware?gz=1")
+        assert resp.status == 200
+        body = await resp.read()
+        # Content-Encoding: identity ensures aiohttp didn't transparently
+        # re-inflate on the client side.
+        assert resp.headers["Content-Encoding"] == "identity"
+        assert gzip.decompress(body) == payload
+        # Compression is real — body should be materially smaller than
+        # the uncompressed 4096 bytes (4096 A's compresses to <100).
+        assert len(body) < 200
+        assert resp.headers["Content-Disposition"].endswith('.bin.gz"')
     finally:
         await ta.close()
 
