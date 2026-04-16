@@ -359,8 +359,8 @@ Let users compile a target **without** the OTA flash step, then download the res
 - [x] **#40** *(1.4.1-dev.51)* — Human-readable schedule entities + separate one-time entity.
   `TargetScheduleSensor` now shows human-readable cron (ported `formatCronHuman` from the UI's `utils/cron.ts`): "Daily 03:00 (America/Los_Angeles)", "Mon 08:30", "Every 2h", etc. Falls back to raw cron for patterns the formatter doesn't recognize. Added new `TargetScheduledOnceSensor` for one-time scheduled upgrades — shows "Apr 20, 2026 18:30" or "None". Both sensors are `EntityCategory.DIAGNOSTIC` and appear on the merged device card alongside ESPHome's native entities.
 
-- [ ] **#41** — Real-time entity state updates (push instead of polling).
-  The coordinator polls `/ui/api/*` every 30 seconds. User actions (compile, cancel) and worker status changes take up to 30s to reflect in HA entities. Proper fix: the add-on pushes state changes via a webhook or WebSocket callback to the HA custom integration, which calls `coordinator.async_set_updated_data()` immediately. Requires a server-side change (register a webhook URL with the coordinator, send SSE/WebSocket notifications) + an integration-side listener. Deferred — 30s latency is acceptable for 1.4.1; revisit in 1.5 alongside the UE.* update-entity work.
+- [x] **#41** *(1.4.1-dev.54)* — Real-time entity state updates via WebSocket.
+  New server-side event bus (`event_bus.py`) + `/ui/api/ws/events` WebSocket endpoint that broadcasts `queue_changed` / `workers_changed` / `targets_changed` / `devices_changed` events. Broadcasts piggy-back on existing persistence points: `JobQueue._persist`, `registry.register/remove/set_disabled`, `scanner.write_device_meta`, `DevicePoller._save_cache`, plus direct hooks on content-save / delete / rename / slot-change / cache-clean endpoints. The HA integration's `ws_client.py` opens a long-lived WebSocket with exponential-backoff reconnect (2s → 60s cap) and calls `coordinator.async_request_refresh()` on every event. The 30s coordinator poll stays enabled as a safety net — a missed event adds at most 30s of latency on one update. New `tests/test_event_bus.py` covers delivery, multi-subscriber fan-out, queue-full eviction, and payload passthrough (6 tests).
 
 - [x] **#42** *(1.4.1-dev.52)* — Worker count + total build slots sensors on the hub device.
   `WorkerCountSensor` counts registered workers; `TotalSlotsSensor` sums `max_parallel_jobs` across all workers. Both are `MEASUREMENT` state class for HA history graphs.
@@ -382,3 +382,9 @@ Let users compile a target **without** the OTA flash step, then download the res
 
 - [x] **#48** *(1.4.1-dev.53)* — Cyd-office-info validation failure: compare pin against actual binary, not tracked version.
   The YAML uses `sram1_as_iram: true` (added in ESPHome 2026.4.0). The Fleet add-on's container bundles ESPHome 2026.3.3 but `pypi_version_refresher` updates the server's "selected" version from the HA Supervisor's ESPHome add-on (2026.4.0). The validate endpoint's `if pin and pin != get_esphome_version()` short-circuited when the pin matched the tracked "selected" version, silently using the 2026.3.3 binary instead of installing 2026.4.0 via version_manager. Fixed by comparing the pin against the ACTUAL installed binary version (`_get_installed_esphome_version()`). Added a `pin_version: 2026.4.0` comment in cyd-office-info.yaml (via the existing `/ui/api/targets/.../pin` endpoint) so validation installs and uses 2026.4.0.
+
+  - [ ] 49 Every time Home Assistant is restarted, all the worker entities appear to be duplicated. Let's figure out why and make sure that doesn't happen. 
+
+  - [ ] 51  Can we make sure that we always bundle the latest public ESPHome version in the Docker container?
+
+  - [ ] 52 Let's add a link to ESPHome Web (to the header?) to allow people to perform operations via serial web as a short term solution. 

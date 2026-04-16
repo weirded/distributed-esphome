@@ -464,6 +464,12 @@ class DevicePoller:
 
         Does NOT persist ip_address or address_source — see _load_cache
         docstring for why.
+
+        #41: also broadcasts a ``devices_changed`` event so HA integrations
+        refresh in real time instead of waiting on the coordinator poll.
+        Piggy-backs on the existing save-point, which fires on every
+        material device transition (online/offline, running_version,
+        mac_address, compilation_time).
         """
         try:
             data = {
@@ -480,6 +486,11 @@ class DevicePoller:
             tmp.replace(DEVICE_CACHE_FILE)
         except Exception:
             logger.debug("Failed to save device cache", exc_info=True)
+        try:
+            from event_bus import EVENT_DEVICES_CHANGED, broadcast  # noqa: PLC0415
+            broadcast(EVENT_DEVICES_CHANGED)
+        except Exception:
+            logger.debug("event_bus broadcast failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Public

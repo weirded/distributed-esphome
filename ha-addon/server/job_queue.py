@@ -187,7 +187,15 @@ class JobQueue:
     # ------------------------------------------------------------------
 
     def _persist(self) -> None:
-        """Write current queue state to disk. Called after every mutation."""
+        """Write current queue state to disk. Called after every mutation.
+
+        Also broadcasts a ``queue_changed`` event (#41) so connected HA
+        integrations refresh within milliseconds instead of waiting on
+        their 30 s polling interval. The broadcast is cheap (no-op when
+        no subscribers are connected) and safe to fire on every call —
+        piggy-backing on the persist call site means we can't forget it
+        at a new mutation point.
+        """
         try:
             self._queue_file.parent.mkdir(parents=True, exist_ok=True)
             data = [job.to_dict() for job in self._jobs.values()]
@@ -196,6 +204,11 @@ class JobQueue:
             tmp.replace(self._queue_file)
         except Exception:
             logger.exception("Failed to persist queue to %s", self._queue_file)
+        try:
+            from event_bus import EVENT_QUEUE_CHANGED, broadcast  # noqa: PLC0415
+            broadcast(EVENT_QUEUE_CHANGED)
+        except Exception:
+            logger.debug("event_bus broadcast failed", exc_info=True)
 
     def load(self) -> None:
         """Load queue from disk on server startup, applying restart recovery rules."""

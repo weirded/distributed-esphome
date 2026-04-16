@@ -15,6 +15,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _broadcast_workers_changed() -> None:
+    """Fire an event on the server event bus (#41). No-op on import error."""
+    try:
+        from event_bus import EVENT_WORKERS_CHANGED, broadcast  # noqa: PLC0415
+        broadcast(EVENT_WORKERS_CHANGED)
+    except Exception:
+        logger.debug("event_bus broadcast failed", exc_info=True)
+
+
 @dataclass
 class Worker:
     client_id: str
@@ -105,6 +114,7 @@ class WorkerRegistry:
             client_id, hostname, platform, client_version or "?",
             image_version or "?", max_parallel_jobs,
         )
+        _broadcast_workers_changed()
         return client_id
 
     def heartbeat(self, client_id: str, system_info: Optional[dict] = None) -> bool:
@@ -142,6 +152,7 @@ class WorkerRegistry:
             return False
         worker.disabled = disabled
         logger.info("Worker %s (%s) %s", client_id, worker.hostname, "disabled" if disabled else "enabled")
+        _broadcast_workers_changed()
         return True
 
     def remove(self, client_id: str) -> bool:
@@ -150,6 +161,7 @@ class WorkerRegistry:
         if worker is None:
             return False
         logger.info("Removed worker %s (%s)", client_id, worker.hostname)
+        _broadcast_workers_changed()
         return True
 
     def get(self, client_id: str) -> Optional[Worker]:

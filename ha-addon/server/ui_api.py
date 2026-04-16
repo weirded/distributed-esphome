@@ -29,6 +29,20 @@ logger = logging.getLogger(__name__)
 
 routes = web.RouteTableDef()
 
+
+def _broadcast_ws(event_type: str, **payload: object) -> None:
+    """Fire a state-change event on the WebSocket bus (#41).
+
+    Thin wrapper around :func:`event_bus.broadcast` so call sites don't
+    have to import/except. Silent no-op on any failure — the 30 s HA
+    coordinator poll still catches the change.
+    """
+    try:
+        from event_bus import broadcast  # noqa: PLC0415
+        broadcast(event_type, **payload)
+    except Exception:
+        logger.debug("event_bus broadcast failed", exc_info=True)
+
 # Module-level cache: populated once per server lifetime (components don't
 # change until ESPHome is upgraded, which restarts the add-on).
 _esphome_components_cache: list[str] | None = None
@@ -516,6 +530,47 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
         except Exception:
             pass
 
+    return ws
+
+
+@routes.get("/ui/api/ws/events")
+async def ws_events(request: web.Request) -> web.WebSocketResponse:
+    """State-change event stream (#41).
+
+    Any client (typically the HA custom integration's coordinator) can
+    connect and receive JSON events whenever something changes on the
+    server — queue mutations, worker registrations, device discoveries,
+    scanner picks-up-new-YAML. Enables real-time entity updates in HA
+    without waiting for the 30 s coordinator poll.
+
+    Protocol: server → client JSON messages of the form
+    ``{"type": "queue_changed"|"workers_changed"|"targets_changed"|
+    "devices_changed", ...}``. No client → server messages expected;
+    pings are handled by aiohttp's autoping.
+    """
+    import asyncio as _asyncio  # noqa: PLC0415
+    from event_bus import subscribe, unsubscribe  # noqa: PLC0415
+
+    ws = web.WebSocketResponse(heartbeat=30.0)
+    await ws.prepare(request)
+    queue = subscribe()
+    try:
+        # Send an immediate "hello" so clients can distinguish "connected,
+        # no events yet" from "not yet connected".
+        await ws.send_json({"type": "hello"})
+        while not ws.closed:
+            try:
+                message = await _asyncio.wait_for(queue.get(), timeout=60.0)
+            except _asyncio.TimeoutError:
+                # Autoping keeps the connection alive; this just lets us
+                # check ws.closed and exit cleanly if the peer vanished.
+                continue
+            try:
+                await ws.send_json(message)
+            except ConnectionError:
+                break
+    finally:
+        unsubscribe(queue)
     return ws
 
 
@@ -1219,6 +1274,7 @@ async def save_target_content(request: web.Request) -> web.Response:
     from scanner import _config_cache  # noqa: PLC0415
     _config_cache.pop(filename, None)
     logger.info("Saved %s (%d bytes)", filename, len(content))
+    _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
 
@@ -1342,6 +1398,7 @@ async def delete_target(request: web.Request) -> web.Response:
     _config_cache.pop(filename, None)
 
     logger.info("Deleted config %s (archive=%s)", filename, archive)
+    _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
 
@@ -1494,6 +1551,7 @@ async def rename_target(request: web.Request) -> web.Response:
         device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides, addr_sources)
 
     logger.info("Renamed config %s → %s", filename, new_filename)
+    _broadcast_ws("targets_changed")
 
     queue = request.app["queue"]
     server_version = get_esphome_version()
@@ -1807,6 +1865,7 @@ async def set_worker_parallel_jobs(request: web.Request) -> web.Response:
             Path("/data/local_worker_slots").write_text(str(value))
         except Exception:
             pass
+    _broadcast_ws("workers_changed")
     return web.json_response({"ok": True, "max_parallel_jobs": value})
 
 
@@ -1820,6 +1879,7 @@ async def clean_worker_cache(request: web.Request) -> web.Response:
         return web.json_response({"error": "Worker not found"}, status=404)
     worker.pending_clean = True
     logger.info("Worker %s (%s): clean build cache requested", client_id, worker.hostname)
+    _broadcast_ws("workers_changed")
     return web.json_response({"ok": True})
 
 

@@ -67,6 +67,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_services(hass)
 
+    # #41: real-time event stream. Triggers coordinator refresh on every
+    # server-side state change so HA entities update within milliseconds
+    # instead of waiting on the 30 s polling interval.
+    from .ws_client import EventStreamClient  # noqa: PLC0415
+    event_stream = EventStreamClient(hass, coordinator)
+    event_stream.start()
+    entry.async_on_unload(lambda: hass.async_create_task(event_stream.stop()))
+
     _LOGGER.info("ESPHome Fleet entry %s set up against %s", entry.entry_id, base_url)
     return True
 

@@ -373,6 +373,15 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
     # 4. Invalidate the config cache for this target.
     _config_cache.pop(target, None)
 
+    # #41: broadcast so HA integrations refresh immediately instead of
+    # waiting on the 30 s coordinator poll. Cheap no-op when nothing is
+    # subscribed.
+    try:
+        from event_bus import EVENT_TARGETS_CHANGED, broadcast  # noqa: PLC0415
+        broadcast(EVENT_TARGETS_CHANGED)
+    except Exception:
+        logger.debug("event_bus broadcast failed", exc_info=True)
+
 
 def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
     """Fully resolve an ESPHome YAML config including packages and substitutions.
