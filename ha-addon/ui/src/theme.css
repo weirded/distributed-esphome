@@ -160,7 +160,13 @@ th {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
+  /* UX.2: stopped uppercasing table headers. React source now controls
+     the case (sentence-case across all four tabs — Devices, Queue,
+     Workers, Schedules). The old `text-transform: uppercase` globally
+     inverted the React-source case, creating a Workers-vs-rest drift
+     because Devices/Queue/Schedules SortHeader buttons normalized via
+     Tailwind Preflight's button reset while Workers' plain <th> text
+     stayed all-caps. */
   padding: 6px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);

@@ -110,7 +110,13 @@ function DeviceContextMenuImpl({
           >
             Restart
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleCopyApiKey} disabled={!t.has_api_key}>
+          <DropdownMenuItem
+            onClick={handleCopyApiKey}
+            disabled={!t.has_api_key}
+            /* UX.11: disable-don't-fail tooltips explain why the item
+               is disabled + what YAML change enables it. */
+            title={t.has_api_key ? undefined : "This device has no `api:` block with an encryption key. Add `api: { encryption: { key: ... } }` to enable."}
+          >
             Copy API Key
           </DropdownMenuItem>
         </DropdownMenuGroup>

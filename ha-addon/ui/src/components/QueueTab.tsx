@@ -13,7 +13,7 @@ import {
 import type { Job, Target, Worker } from '../types';
 import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
-import { fmtDuration, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
+import { fmtDuration, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -196,15 +196,13 @@ export function QueueTab({
           : null;
 
         const baseHostname = job.assigned_hostname || assignedClient?.hostname || null;
-        const showSlot =
-          baseHostname &&
-          job.worker_id != null &&
-          (assignedClient?.max_parallel_jobs || 1) > 1;
-        const clientName = baseHostname
-          ? showSlot
-            ? `${baseHostname}/${job.worker_id}`
-            : baseHostname
-          : '—';
+        // UX.6: render the slot as a second, muted line beneath the
+        // hostname (never glued with `/N` — that reads like "version N"
+        // or "retry N" to new users). `showSlot` stays guarded by
+        // multi-slot workers only; single-slot workers get just the
+        // hostname.
+        const slotTotal = assignedClient?.max_parallel_jobs || 1;
+        const showSlot = baseHostname && job.worker_id != null && slotTotal > 1;
 
         const pinnedHostname = pinnedClient?.hostname || job.assigned_hostname;
         const showPinnedHint =
@@ -238,7 +236,18 @@ export function QueueTab({
               </span>
             )}
             <span>
-              {clientName}
+              {baseHostname || '—'}
+              {showSlot && (
+                <>
+                  <br />
+                  <span
+                    className="text-[10px] text-[var(--text-muted)]"
+                    title={`Build slot ${job.worker_id} of ${slotTotal} on this worker.`}
+                  >
+                    slot {job.worker_id}
+                  </span>
+                </>
+              )}
               {showPinnedHint && !job.assigned_hostname && (
                 <><br /><span className="text-[10px] text-[var(--text-muted)]">→ {pinnedHostname}</span></>
               )}
@@ -270,29 +279,49 @@ export function QueueTab({
       },
       sortingFn: 'alphanumeric',
     }),
-    // #21/#92: triggered-by column — recurring schedule, one-time, or user.
+    // #21/#92 + UX.5: triggered-by column — recurring schedule, one-time, or
+    // manual. Recurring/once rows look up the parent target's cron / one-time
+    // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
+    // Hover reveals the full cron expression + tz so users can reconcile with
+    // the Schedules tab.
     columnHelper.accessor(row => row.scheduled ? (row.schedule_kind ?? 'schedule') : 'user', {
       id: 'triggered_by',
       header: ({ column }) => <SortHeader label="Triggered" column={column} />,
       cell: ({ row: { original: job } }) => {
         if (!job.scheduled) {
+          // UX.5: "User" → "Manual" until AU.* auth lets us attribute to a
+          // specific HA user. Tooltip spells out "manual action from the UI".
           return (
-            <span className="inline-flex items-center gap-1 text-[12px]" title="Triggered by user action">
-              <User className="size-3" aria-hidden="true" /> User
+            <span className="inline-flex items-center gap-1 text-[12px]" title="Manual action (from the Fleet UI)">
+              <User className="size-3" aria-hidden="true" /> Manual
             </span>
           );
         }
+        const target = targets.find(t => t.target === job.target);
         if (job.schedule_kind === 'once') {
+          const when = target?.schedule_once;
+          const pretty = when ? new Date(when).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
           return (
-            <span className="inline-flex items-center gap-1 text-[12px]" title="Triggered by one-time schedule">
-              <Calendar className="size-3" aria-hidden="true" /> One-time
+            <span
+              className="inline-flex items-center gap-1 text-[12px]"
+              title={when ? `Triggered by one-time schedule fired at ${when}` : 'Triggered by one-time schedule'}
+            >
+              <Calendar className="size-3" aria-hidden="true" />
+              {pretty ? <>Once <span className="text-[var(--text-muted)]">@ {pretty}</span></> : 'Once'}
             </span>
           );
         }
         // Default for scheduled (covers 'recurring' and legacy nulls).
+        const cron = target?.schedule;
+        const tz = target?.schedule_tz;
+        const human = formatCronHuman(cron);
+        const tipParts: string[] = ['Triggered by recurring cron schedule'];
+        if (cron) tipParts.push(`cron: ${cron}`);
+        if (tz) tipParts.push(`tz: ${tz}`);
         return (
-          <span className="inline-flex items-center gap-1 text-[12px]" title="Triggered by recurring cron schedule">
-            <Clock className="size-3" aria-hidden="true" /> Recurring
+          <span className="inline-flex items-center gap-1 text-[12px]" title={tipParts.join(' · ')}>
+            <Clock className="size-3" aria-hidden="true" />
+            {human ? <>Recurring <span className="text-[var(--text-muted)]">· {human}</span></> : 'Recurring'}
           </span>
         );
       },
@@ -486,9 +515,11 @@ export function QueueTab({
             )}
           </div>
           <div className="actions">
-            {/* Retry dropdown */}
+            {/* Retry dropdown — UX.4: rerun-class actions use the green
+                success colors (same as per-row Retry/Rerun buttons).
+                Orange/amber is reserved for genuine warn states. */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-[#78350f] px-2.5 h-7 text-[0.8rem] font-medium text-[#fcd34d] hover:bg-[#92400e] cursor-pointer">
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-[#14532d] px-2.5 h-7 text-[0.8rem] font-medium text-[#4ade80] hover:bg-[#166534] cursor-pointer">
                 Retry <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">

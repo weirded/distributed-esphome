@@ -107,6 +107,8 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 **UI-5 — Typed fixtures.** E2E Playwright fixtures in `ha-addon/ui/e2e/fixtures.ts` must import the runtime types from `src/types` so a field rename breaks the e2e build. (Enforced by `tsc -b` on the e2e project.)
 
+**UI-7 — Icon-only buttons need both `aria-label` and `title`.** Icon controls carry no visible text, so screen readers need `aria-label` and sighted hover needs `title`. If you reach for one, add both — they're almost always the same string. Landed from UX.12 after the UX review (bug class: icons that hover-reveal no context, or lack accessible names).
+
 **PY-1 — YAML goes through `yaml.safe_load`.** Never hand-rolled regex parsers for YAML content (regression source: #160, ESPHome device-name detection). The `_ota_network_diagnostics` regex fallback is allow-listed because it tries `safe_load` first.
 
 **PY-2 — Every file that calls `subprocess.run`/`subprocess.Popen` must have a module-level `logger`.** The actual command line must also be logged before the subprocess runs (reviewed in PR; file-level logger presence is the grep-able floor). Bug sources: #176, #177, #180 — untriageable reports when the command line wasn't in the log.

@@ -112,6 +112,21 @@ check_absent "UI-4" \
     '' \
     ha-addon/ui/src
 
+# (UI-7) Icon-only buttons need both aria-label and title (UX.12). Icon
+# controls are unlabeled by default — screen readers need aria-label, and
+# sighted hover needs a title. If you're reaching for one, you need both.
+# Narrow grep: any <button> or *Trigger opening tag that mentions
+# aria-label= but doesn't have title= on the same opening tag (or vice
+# versa) is flagged. Opening tags can span multiple lines (Prettier style),
+# so the single-line grep approximates the rule — full enforcement is
+# reviewed. This still catches the common case of adding aria-label and
+# forgetting title (or vice versa) on one line.
+check_absent "UI-7" \
+    "icon-only button has aria-label but no title (or vice versa) on the same line" \
+    '<(button|[A-Z][A-Za-z]*Trigger)\b[^>]*aria-label=[^>]*>[^<]*$' \
+    'title=' \
+    ha-addon/ui/src
+
 # -----------------------------------------------------------------------------
 # Python invariants
 # -----------------------------------------------------------------------------

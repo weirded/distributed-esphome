@@ -11,14 +11,14 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByText('bedroom-light')).toBeVisible({ timeout: 5000 });
 });
 
-test('triggered column shows User by default and Recurring for scheduled jobs', async ({ page }) => {
+test('triggered column shows Manual by default and Recurring for scheduled jobs (UX.5)', async ({ page }) => {
   // job-007 (garage-door, scheduled recurring) → "Recurring" cell.
-  // job-001 (bedroom-light, manual)            → "User" cell.
+  // job-001 (bedroom-light, manual)            → "Manual" cell (UX.5 rename from "User").
   const garageRow = page.locator('#tab-queue tbody tr').filter({ hasText: 'garage-door' }).first();
-  await expect(garageRow).toContainText(/Recurring|User/);
+  await expect(garageRow).toContainText(/Recurring|Manual/);
 
   const bedroomRow = page.locator('#tab-queue tbody tr').filter({ hasText: 'bedroom-light' }).first();
-  await expect(bedroomRow).toContainText('User');
+  await expect(bedroomRow).toContainText('Manual');
 });
 
 test('successful job uses Rerun (not Retry) label', async ({ page }) => {

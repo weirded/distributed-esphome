@@ -45,12 +45,12 @@ test('switching mode changes title and confirm-button label', async ({ page }) =
   await expect(dialog.getByRole('heading', { name: /^Upgrade —/ })).toBeVisible();
 
   // Toggle to Scheduled
-  await dialog.getByLabel('Scheduled', { exact: true }).check();
+  await dialog.getByRole('radio', { name: /Schedule Upgrade/ }).check();
   await expect(dialog.getByRole('heading', { name: /^Schedule Upgrade —/ })).toBeVisible();
   await expect(dialog.getByRole('button', { name: /Save Schedule/ })).toBeVisible();
 
-  // Toggle back to Now
-  await dialog.getByLabel('Now', { exact: true }).check();
+  // Toggle back to the default "Upgrade Now" action (UX.8).
+  await dialog.getByRole('radio', { name: /Upgrade Now/ }).check();
   await expect(dialog.getByRole('heading', { name: /^Upgrade —/ })).toBeVisible();
   await expect(dialog.getByRole('button', { name: /^Upgrade$/ })).toBeVisible();
 });
@@ -72,7 +72,7 @@ test('saving a recurring schedule fires POST /schedule with cron + tz', async ({
   const row = page.locator('#tab-devices tbody tr').filter({ hasText: 'Living Room Sensor' });
   await row.getByRole('button', { name: 'Upgrade' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Scheduled', { exact: true }).check();
+  await dialog.getByRole('radio', { name: /Schedule Upgrade/ }).check();
   // Default cadence in friendly mode is "Every 1 day(s) at 02:00" → cron 0 2 * * *
   await dialog.getByRole('button', { name: /Save Schedule/ }).click();
 
@@ -98,7 +98,7 @@ test('saving a one-time schedule fires POST /schedule/once', async ({ page }) =>
   const row = page.locator('#tab-devices tbody tr').filter({ hasText: 'Living Room Sensor' });
   await row.getByRole('button', { name: 'Upgrade' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Scheduled', { exact: true }).check();
+  await dialog.getByRole('radio', { name: /Schedule Upgrade/ }).check();
   await dialog.getByLabel('One-time', { exact: true }).check();
   // Default onceDate seeds to "now" → already valid; just confirm.
   await dialog.getByRole('button', { name: /Save Schedule/ }).click();

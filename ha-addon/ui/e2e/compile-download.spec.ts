@@ -1,17 +1,18 @@
 import { expect, test } from '@playwright/test';
 import { mockApi } from './fixtures';
 
-// FD.3 + FD.8 — Compile-and-download flow end-to-end in the UI.
+// FD.3 + FD.8 + UX.8 — Compile-and-download flow end-to-end in the UI.
 //
 // Covers:
-//   - UpgradeModal "Now" mode shows a "Compile + OTA" vs
-//     "Compile + Download" sub-toggle.
-//   - Selecting "Compile + Download" changes the confirm button label
-//     to "Compile & Download".
-//   - Submitting with that mode selected POSTs
+//   - UpgradeModal exposes a three-option Action radio: Upgrade Now |
+//     Download Now | Schedule Upgrade (UX.8, replaces the earlier
+//     nested Now/Scheduled + Compile-OTA/Compile-Download toggles).
+//   - Selecting "Download Now" changes the confirm button to
+//     "Compile & Download".
+//   - Submitting with Download Now selected POSTs
 //     {targets:[x], download_only: true} to /ui/api/compile.
-//   - Scheduled mode does NOT show the sub-toggle (download-only is
-//     Now-only in 1.4.1).
+//   - scheduleOnly mode (opened from Schedules-tab Edit) hides the
+//     action radios entirely — download-only is not a scheduled action.
 //   - Queue tab renders a Download button ONLY on rows that are
 //     (success && download_only && has_firmware) — not on OTA rows.
 
@@ -21,33 +22,33 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 });
 
-test('UpgradeModal shows Compile + OTA/Download toggle in Now mode', async ({ page }) => {
+test('UpgradeModal exposes the three Action radios (UX.8)', async ({ page }) => {
   const row = page.locator('#tab-devices tbody tr').filter({ hasText: 'Living Room Sensor' });
   await row.getByRole('button', { name: 'Upgrade' }).click();
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  // The sub-toggle sits below the main Now/Scheduled radio.
-  await expect(dialog.getByLabel('Compile + OTA', { exact: true })).toBeVisible();
-  await expect(dialog.getByLabel('Compile + Download (no OTA)', { exact: true })).toBeVisible();
-  // Default is OTA, so the confirm button reads "Upgrade".
+  await expect(dialog.getByRole('radio', { name: /Upgrade Now/ })).toBeVisible();
+  await expect(dialog.getByRole('radio', { name: /Download Now/ })).toBeVisible();
+  await expect(dialog.getByRole('radio', { name: /Schedule Upgrade/ })).toBeVisible();
+  // Default action is Upgrade Now, so the confirm button reads "Upgrade".
   await expect(dialog.getByRole('button', { name: /^Upgrade$/ })).toBeVisible();
 });
 
-test('selecting Compile + Download swaps the confirm button label', async ({ page }) => {
+test('selecting Download Now swaps the confirm button label', async ({ page }) => {
   const row = page.locator('#tab-devices tbody tr').filter({ hasText: 'Living Room Sensor' });
   await row.getByRole('button', { name: 'Upgrade' }).click();
 
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Compile + Download (no OTA)', { exact: true }).check();
+  await dialog.getByRole('radio', { name: /Download Now/ }).check();
   await expect(dialog.getByRole('button', { name: /^Compile & Download$/ })).toBeVisible();
 
-  // Flipping back to OTA restores the original label.
-  await dialog.getByLabel('Compile + OTA', { exact: true }).check();
+  // Flipping back to Upgrade Now restores the original label.
+  await dialog.getByRole('radio', { name: /Upgrade Now/ }).check();
   await expect(dialog.getByRole('button', { name: /^Upgrade$/ })).toBeVisible();
 });
 
-test('submitting Compile + Download POSTs download_only: true', async ({ page }) => {
+test('submitting Download Now POSTs download_only: true', async ({ page }) => {
   let body: { targets?: string[] | string; download_only?: boolean } | null = null;
   await page.route('**/ui/api/compile', async route => {
     try {
@@ -59,24 +60,29 @@ test('submitting Compile + Download POSTs download_only: true', async ({ page })
   const row = page.locator('#tab-devices tbody tr').filter({ hasText: 'Living Room Sensor' });
   await row.getByRole('button', { name: 'Upgrade' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Compile + Download (no OTA)', { exact: true }).check();
+  await dialog.getByRole('radio', { name: /Download Now/ }).check();
   await dialog.getByRole('button', { name: /^Compile & Download$/ }).click();
 
   await expect.poll(() => body?.download_only).toBe(true);
   expect(Array.isArray(body!.targets) && body!.targets[0]).toBe('living-room.yaml');
 });
 
-test('scheduled mode hides the OTA/Download sub-toggle', async ({ page }) => {
-  // Open from Schedules tab → Edit so the modal opens in Scheduled mode.
+test('Schedules-tab Edit pre-selects Schedule Upgrade (UX.8)', async ({ page }) => {
+  // Open from Schedules tab → Edit. All three Action radios are available
+  // (per UX.8 design — user can flip to Upgrade Now if they want to run it
+  // once instead of editing the schedule), but "Schedule Upgrade" is the
+  // pre-selected default and the schedule sub-form is visible.
   await page.getByRole('button', { name: /Schedules/ }).click();
   const row = page.locator('#tab-schedules tbody tr').filter({ hasText: 'Garage Door' });
   await row.getByRole('button', { name: 'Edit' }).click();
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  // The radios from the FD.3 sub-toggle should NOT exist here.
-  await expect(dialog.getByLabel('Compile + OTA', { exact: true })).toHaveCount(0);
-  await expect(dialog.getByLabel('Compile + Download (no OTA)', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('heading', { name: /^Schedule Upgrade —/ })).toBeVisible();
+  // Schedule Upgrade radio is pre-checked; the other two are present but not checked.
+  await expect(dialog.getByRole('radio', { name: /Schedule Upgrade/ })).toBeChecked();
+  await expect(dialog.getByRole('radio', { name: /Upgrade Now/ })).not.toBeChecked();
+  await expect(dialog.getByRole('radio', { name: /Download Now/ })).not.toBeChecked();
 });
 
 test('Queue tab renders Download dropdown only on eligible rows', async ({ page }) => {

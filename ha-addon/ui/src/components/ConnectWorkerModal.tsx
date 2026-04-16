@@ -20,7 +20,12 @@ interface Props {
   preset?: WorkerPreset | null;
 }
 
-type Shell = 'bash' | 'powershell';
+// UX.10: supported output formats in the Connect Worker modal. `compose`
+// emits a docker-compose.yml snippet, replacing the old static
+// docker-compose.worker.yml that was retired from the repo root — the
+// modal generates the live-from-server equivalent with the real
+// SERVER_URL / SERVER_TOKEN baked in.
+type Format = 'bash' | 'powershell' | 'compose';
 
 function buildDockerCmd(params: {
   serverUrl: string;
@@ -32,15 +37,45 @@ function buildDockerCmd(params: {
   hostPlatform: string;
   restartPolicy: string;
   clientTag: string;
-  shell: Shell;
+  format: Format;
 }): string {
   const {
     serverUrl, token, containerName, hostname, maxJobs,
-    seedVersion, hostPlatform, restartPolicy, clientTag, shell,
+    seedVersion, hostPlatform, restartPolicy, clientTag, format,
   } = params;
 
-  const cont = shell === 'powershell' ? '`' : '\\';
-  const hostnameVar = shell === 'powershell' ? '$env:COMPUTERNAME' : '$(hostname)';
+  if (format === 'compose') {
+    const envLines: string[] = [
+      `      - SERVER_URL=${serverUrl}`,
+      `      - SERVER_TOKEN=${token}`,
+      `      - MAX_PARALLEL_JOBS=${maxJobs}`,
+    ];
+    if (hostname) envLines.push(`      - HOSTNAME=${hostname}`);
+    if (seedVersion) envLines.push(`      - ESPHOME_SEED_VERSION=${seedVersion}`);
+    if (hostPlatform) envLines.push(`      - HOST_PLATFORM=${hostPlatform}`);
+    const yaml = [
+      'name: esphome-fleet-worker',
+      '',
+      'services:',
+      '  worker:',
+      `    image: ghcr.io/weirded/esphome-dist-client:${clientTag}`,
+      `    container_name: ${containerName}`,
+      ...(restartPolicy !== 'no' ? [`    restart: ${restartPolicy}`] : []),
+      '    network_mode: host',
+      '    environment:',
+      ...envLines,
+      '    volumes:',
+      '      - esphome-versions:/esphome-versions',
+      '',
+      'volumes:',
+      '  esphome-versions:',
+      '    name: esphome-versions',
+    ];
+    return yaml.join('\n');
+  }
+
+  const cont = format === 'powershell' ? '`' : '\\';
+  const hostnameVar = format === 'powershell' ? '$env:COMPUTERNAME' : '$(hostname)';
 
   const lines = [`docker run -d ${cont}`];
   lines.push(`  --name ${containerName} ${cont}`);
@@ -75,7 +110,8 @@ interface FormState {
   seedVersion: string;
   hostPlatform: string;
   restartPolicy: string;
-  shell: Shell;
+  // UX.10: renamed from `shell` to cover the new `compose` output too.
+  format: Format;
 }
 
 type FormAction =
@@ -103,20 +139,23 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset
   // modal is short-lived and a mid-edit prop change would be surprising.
   const [form, dispatch] = useReducer(formReducer, {
     serverUrl: urlOptions[0] || '',
-    containerName: 'distributed-esphome-worker',
+    // UX.9: renamed from 'distributed-esphome-worker' to match the
+    // ESPHome Fleet rebrand. Shows in `docker ps`, dashboards, and
+    // logs — only affects newly-copied commands, not existing containers.
+    containerName: 'esphome-fleet-worker',
     hostname: preset?.hostname ?? '',
     maxJobs: preset?.max_parallel_jobs ?? 2,
     seedVersion: esphomeVersion || '',
     hostPlatform: preset?.host_platform ?? '',
     restartPolicy: 'unless-stopped',
-    shell: 'bash',
+    format: 'bash',
   });
   const seedUserEdited = useRef(false);
   const [copied, setCopied] = useState(false);
 
   // Convenience aliases so JSX stays readable.
   const { serverUrl, containerName, hostname, maxJobs, seedVersion,
-    hostPlatform, restartPolicy, shell } = form;
+    hostPlatform, restartPolicy, format } = form;
   const set = <K extends keyof FormState>(field: K, value: FormState[K]) =>
     dispatch({ type: 'set', field, value });
 
@@ -146,7 +185,7 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset
     hostPlatform,
     restartPolicy,
     clientTag,
-    shell,
+    format,
   });
 
   function handleCopy() {
@@ -248,21 +287,32 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset
             </div>
           </div>
           <div className="flex items-center gap-2 mb-2">
-            <Label className="mb-0">Shell</Label>
+            <Label className="mb-0">Format</Label>
             <ButtonGroup>
               <Button
-                variant={shell === 'bash' ? 'default' : 'secondary'}
+                variant={format === 'bash' ? 'default' : 'secondary'}
                 size="sm"
-                onClick={() => set('shell', 'bash')}
+                onClick={() => set('format', 'bash')}
               >
                 Bash
               </Button>
               <Button
-                variant={shell === 'powershell' ? 'default' : 'secondary'}
+                variant={format === 'powershell' ? 'default' : 'secondary'}
                 size="sm"
-                onClick={() => set('shell', 'powershell')}
+                onClick={() => set('format', 'powershell')}
               >
                 PowerShell
+              </Button>
+              {/* UX.10: `docker compose` tab replaces the repo-root
+                  docker-compose.worker.yml file. The snippet below
+                  bakes in the user's real SERVER_URL + SERVER_TOKEN,
+                  so it can't drift from the running server config. */}
+              <Button
+                variant={format === 'compose' ? 'default' : 'secondary'}
+                size="sm"
+                onClick={() => set('format', 'compose')}
+              >
+                Docker Compose
               </Button>
             </ButtonGroup>
           </div>
@@ -273,8 +323,9 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset
             </Button>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 12 }}>
-            Run this command on any Docker host that has network access to your ESP devices (port 3232 for OTA).
-            The worker will poll this server for build jobs, compile firmware, and push updates directly to your devices.
+            {format === 'compose'
+              ? 'Save this snippet as docker-compose.yml on a Docker host with network access to your ESP devices, then run `docker compose up -d`.'
+              : 'Run this command on any Docker host that has network access to your ESP devices (port 3232 for OTA). The worker will poll this server for build jobs, compile firmware, and push updates directly to your devices.'}
           </p>
         </div>
       </DialogContent>

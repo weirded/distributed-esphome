@@ -16,8 +16,9 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
 } from './ui/dropdown-menu';
-import { stripYaml, timeAgo, usePersistedState } from '../utils';
+import { getJobBadge, stripYaml, timeAgo, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
+import { SortHeader, getAriaSort } from './ui/sort-header';
 
 interface Props {
   workers: Worker[];
@@ -240,20 +241,22 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
     );
   }, [workers, filter]);
 
+  // UX.2: wrap every sortable column header in SortHeader so the sort
+  // glyph renders consistently with Devices/Queue/Schedules (QS.21).
   const columns = useMemo(() => [
     columnHelper.accessor(w => getWorkerSortValue(w, 'hostname'), {
       id: 'hostname',
-      header: 'Hostname',
+      header: ({ column }) => <SortHeader label="Hostname" column={column} />,
       sortingFn: 'alphanumeric',
     }),
     columnHelper.accessor(w => getWorkerSortValue(w, 'status'), {
       id: 'status',
-      header: 'Status',
+      header: ({ column }) => <SortHeader label="Status" column={column} />,
       sortingFn: 'alphanumeric',
     }),
     columnHelper.accessor(w => getWorkerSortValue(w, 'version'), {
       id: 'version',
-      header: 'Version',
+      header: ({ column }) => <SortHeader label="Version" column={column} />,
       sortingFn: 'alphanumeric',
     }),
     // Non-sortable display columns — included so flexRender can handle headers uniformly
@@ -310,19 +313,39 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
           j.state === 'working',
       ) : null;
 
+      // UX.6: render the slot on a separate muted line rather than
+      // gluing `/N` to the hostname (which reads as "version N"). The
+      // tooltip spells out what the slot number means.
       const slotNameEl = slots > 1
-        ? <>{c.hostname}<span className="text-[11px] text-[var(--text-muted)]">/{slot}</span></>
+        ? (
+          <>
+            {c.hostname}
+            <br />
+            <span
+              className="text-[10px] text-[var(--text-muted)]"
+              title={`Build slot ${slot} of ${slots} on this worker.`}
+            >
+              slot {slot}
+            </span>
+          </>
+        )
         : <>{c.hostname}</>;
 
+      // UX.3: render the same state badge on the Workers Current Job
+      // cell as the one used on the Queue tab, so a state label looks
+      // identical regardless of where it appears.
       const jobEl = slots === 0
         ? <span className="text-[12px] italic text-[var(--text-muted)]">Paused</span>
         : slotJob
-          ? <>
-              <code className="text-[12px]">{stripYaml(slotJob.target)}</code>
-              {slotJob.status_text && (
-                <><br /><span className="text-[10px] text-[var(--text-muted)]">{slotJob.status_text}</span></>
-              )}
-            </>
+          ? (() => {
+              const { label, cls } = getJobBadge(slotJob);
+              return (
+                <div className="flex flex-col gap-0.5">
+                  <code className="text-[12px]">{stripYaml(slotJob.target)}</code>
+                  <span className={cls}>{label}</span>
+                </div>
+              );
+            })()
           : <span className="text-[12px] text-[var(--text-muted)]">Idle</span>;
 
       // When offline, show how long it's been gone instead of stale process uptime.
@@ -395,21 +418,13 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
   function renderHeader(id: string) {
     const h = headerByid[id];
     if (!h) return <th key={id}></th>;
+    // UX.2: click + sort indicators now come from the SortHeader child
+    // button (mirroring Devices/Queue/Schedules); the <th> only carries
+    // the aria-sort state. Old cell-wide onClick + inline arrow removed.
     const canSort = h.column.getCanSort();
-    const sorted = h.column.getIsSorted();
-    const indicator = sorted === 'asc' ? ' \u25b2' : sorted === 'desc' ? ' \u25bc' : '';
-    const title = !canSort ? undefined
-      : sorted === 'asc' ? 'Click to sort descending'
-      : sorted === 'desc' ? 'Click to reset sort'
-      : 'Click to sort ascending';
     return (
-      <th
-        key={id}
-        onClick={canSort ? h.column.getToggleSortingHandler() : undefined}
-        style={canSort ? { cursor: 'pointer', userSelect: 'none' } : undefined}
-        title={title}
-      >
-        {flexRender(h.column.columnDef.header, h.getContext())}{indicator}
+      <th key={id} aria-sort={canSort ? getAriaSort(h.column) : undefined}>
+        {flexRender(h.column.columnDef.header, h.getContext())}
       </th>
     );
   }

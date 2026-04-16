@@ -65,7 +65,11 @@ export function isJobRetryable(job: JobStatusLike): boolean {
   return isJobFinished(job);
 }
 
-const BADGE_BASE = 'inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide';
+// UX.3: badges now render in title case — labels declared in
+// getJobBadge below are already title case ("Pending", "Failed",
+// "Timed Out", etc.), so dropping `uppercase` here gives the UI the
+// case the source code actually declares.
+const BADGE_BASE = 'inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide';
 const BADGE_VARIANTS: Record<string, string> = {
   pending:   `${BADGE_BASE} bg-[#374151] text-[#9ca3af]`,
   working:   `${BADGE_BASE} bg-[#1e3a5f] text-[#60a5fa]`,

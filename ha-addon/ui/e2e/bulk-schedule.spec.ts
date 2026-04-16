@@ -45,8 +45,10 @@ test('Schedule Selected opens the modal in scheduleOnly mode with multi-target t
   // Title is "Schedule Upgrade — N devices" (scheduleOnly hides the worker
   // + version selectors and forces the heading into Scheduled phrasing).
   await expect(dialog.getByRole('heading', { name: /Schedule Upgrade — 2 devices/ })).toBeVisible();
-  // The Now/Scheduled mode radios are hidden in scheduleOnly mode.
-  await expect(dialog.getByLabel('Now', { exact: true })).toHaveCount(0);
+  // UX.8: the 3-option Action radio (Upgrade Now / Download Now /
+  // Schedule Upgrade) is hidden in scheduleOnly mode.
+  await expect(dialog.getByRole('radio', { name: /Upgrade Now/ })).toHaveCount(0);
+  await expect(dialog.getByRole('radio', { name: /Download Now/ })).toHaveCount(0);
 });
 
 test('saving a bulk schedule fires POST /schedule for every selected target', async ({ page }) => {

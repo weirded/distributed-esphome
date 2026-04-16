@@ -175,13 +175,19 @@ export function UpgradeModal({
     return true;
   });
 
-  // --- Mode: now vs schedule ---
-  const [mode, setMode] = useState<'now' | 'schedule'>(scheduleOnly ? 'schedule' : defaultMode);
-  // FD.3: "Now" mode has a sub-toggle: compile+OTA (default) vs
-  // compile+download. The download variant skips OTA entirely; the
-  // worker uploads the binary to the server and the user grabs it
-  // from the Queue tab. Scheduled mode always runs OTA.
-  const [nowAction, setNowAction] = useState<'ota' | 'download'>('ota');
+  // UX.8: One 3-option action radio replaces the earlier "Now | Scheduled"
+  // + nested "Compile + OTA | Compile + Download" toggles. The legal
+  // combinations are:
+  //   upgrade-now   → mode=now, nowAction=ota      (most common, default)
+  //   download-now  → mode=now, nowAction=download (compile-only, OTA skipped)
+  //   schedule      → mode=schedule, always OTA    (no download-while-scheduled)
+  type Action = 'upgrade-now' | 'download-now' | 'schedule';
+  const initialAction: Action = scheduleOnly
+    ? 'schedule'
+    : defaultMode === 'schedule' ? 'schedule' : 'upgrade-now';
+  const [action, setAction] = useState<Action>(initialAction);
+  const mode: 'now' | 'schedule' = action === 'schedule' ? 'schedule' : 'now';
+  const nowAction: 'ota' | 'download' = action === 'download-now' ? 'download' : 'ota';
 
   // --- Schedule state ---
   // #90/#91: cron is shown literally in the picker — no client-side hour
@@ -250,7 +256,10 @@ export function UpgradeModal({
       <DialogContent style={{ maxWidth: 480 }}>
         <DialogHeader>
           <DialogTitle>
-            {mode === 'schedule' ? 'Schedule Upgrade' : 'Upgrade'} — {displayName}
+            {/* UX.8: title matches the selected action verb. */}
+            {action === 'schedule'
+              ? 'Schedule Upgrade'
+              : action === 'download-now' ? 'Download' : 'Upgrade'}{' '}— {displayName}
           </DialogTitle>
         </DialogHeader>
         <div className="p-[18px] flex flex-col gap-4">
@@ -259,9 +268,15 @@ export function UpgradeModal({
           {!scheduleOnly && (
             <>
               <div>
-                <Label>Worker</Label>
-                <Select value={selectedWorker} onChange={e => setSelectedWorker(e.target.value)}>
-                  <option value="">&lt;any&gt; — let the scheduler pick</option>
+                <Label htmlFor="upgrade-worker-select">Worker</Label>
+                <Select
+                  id="upgrade-worker-select"
+                  value={selectedWorker}
+                  onChange={e => setSelectedWorker(e.target.value)}
+                  title="Fleet will pick the fastest available worker at compile time."
+                >
+                  {/* UX.7: dropped the <any> coder-syntax label. */}
+                  <option value="">Any available worker (auto)</option>
                   {eligibleWorkers.map(w => (
                     <option key={w.client_id} value={w.client_id}>{w.hostname}</option>
                   ))}
@@ -315,44 +330,42 @@ export function UpgradeModal({
             </>
           )}
 
-          {/* Mode radio: Now vs Schedule (hidden in scheduleOnly mode).
-              #34: Radios sit *below* the worker+version selectors so the
-              primary choice (what to upgrade to) comes before the
-              secondary choice (when to run it). */}
+          {/* UX.8: single Action radio (3 options) replaces the former
+              nested Now/Scheduled + Compile-OTA/Compile-Download toggles.
+              #34: sits below the worker+version selectors so the primary
+              choice (what to upgrade to) comes first. */}
           {!scheduleOnly && (
-            <div className="flex items-center gap-4 pt-1 border-t border-[var(--border)]">
-              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer pt-2">
-                <input type="radio" name="upgrade-mode" checked={mode === 'now'} onChange={() => setMode('now')} />
-                Now
-              </label>
-              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer pt-2">
-                <input type="radio" name="upgrade-mode" checked={mode === 'schedule'} onChange={() => setMode('schedule')} />
-                Scheduled
-              </label>
-            </div>
-          )}
-
-          {/* FD.3: Compile + OTA vs Compile + Download sub-toggle.
-              Only shown in Now mode; scheduled runs always OTA. */}
-          {!scheduleOnly && mode === 'now' && (
-            <div className="flex items-center gap-4 text-[12px] text-[var(--text-muted)]">
-              <label className="flex items-center gap-1.5 cursor-pointer">
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-[var(--border)]">
+              <Label>Action</Label>
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
                 <input
                   type="radio"
-                  name="upgrade-now-action"
-                  checked={nowAction === 'ota'}
-                  onChange={() => setNowAction('ota')}
+                  name="upgrade-action"
+                  checked={action === 'upgrade-now'}
+                  onChange={() => setAction('upgrade-now')}
                 />
-                Compile + OTA
+                Upgrade Now
+                <span className="text-[11px] text-[var(--text-muted)]">— compile + OTA flash</span>
               </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
                 <input
                   type="radio"
-                  name="upgrade-now-action"
-                  checked={nowAction === 'download'}
-                  onChange={() => setNowAction('download')}
+                  name="upgrade-action"
+                  checked={action === 'download-now'}
+                  onChange={() => setAction('download-now')}
                 />
-                Compile + Download (no OTA)
+                Download Now
+                <span className="text-[11px] text-[var(--text-muted)]">— compile only, no OTA; grab the .bin from the Queue tab</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
+                <input
+                  type="radio"
+                  name="upgrade-action"
+                  checked={action === 'schedule'}
+                  onChange={() => setAction('schedule')}
+                />
+                Schedule Upgrade
+                <span className="text-[11px] text-[var(--text-muted)]">— run the OTA upgrade on a cron or a one-time timestamp</span>
               </label>
             </div>
           )}
@@ -443,9 +456,10 @@ export function UpgradeModal({
               disabled={mode === 'schedule' && scheduleType === 'once' && !onceDate}
               onClick={handleConfirm}
             >
-              {mode === 'now'
-                ? (nowAction === 'download' ? 'Compile & Download' : 'Upgrade')
-                : 'Save Schedule'}
+              {/* UX.8: confirm-button label mirrors the action verb. */}
+              {action === 'upgrade-now' && 'Upgrade'}
+              {action === 'download-now' && 'Compile & Download'}
+              {action === 'schedule' && 'Save Schedule'}
             </Button>
           </div>
         </div>

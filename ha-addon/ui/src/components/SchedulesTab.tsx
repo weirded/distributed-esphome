@@ -316,7 +316,8 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               {table.getRowModel().rows.length === 0 ? (
                 <tr className="empty-row"><td colSpan={7}>
                   {scheduled.length === 0
-                    ? 'No devices have a schedule configured — open a device\'s menu and choose "Schedule Upgrade..."'
+                    ? /* UX.1: the menu item this used to reference was removed in #93. */
+                      'No devices have a schedule configured — click Upgrade on a device, then choose Scheduled.'
                     : 'No schedules match filter'}
                 </td></tr>
               ) : (

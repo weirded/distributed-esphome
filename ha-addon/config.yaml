@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.5.0-dev.75"
+version: "1.5.0-dev.76"
 slug: "esphome_dist_server"
 description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
