@@ -110,7 +110,7 @@ async def test_server_info_returns_version_and_token(tmp_path):
         assert data["token"] == "ui-test-token"
         assert "addon_version" in data
         assert "min_image_version" in data
-        assert data["min_image_version"] == "5"
+        assert data["min_image_version"] == "4"
     finally:
         await ta.close()
 
