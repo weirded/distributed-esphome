@@ -11,8 +11,10 @@
 compile:
   name: Compile
   description: >
-    Compile and OTA-flash firmware for one or more ESPHome devices
-    managed by the Fleet add-on.
+    Compile and OTA-flash firmware for ESPHome devices managed by the
+    Fleet add-on. Pick devices AND/OR workers in the target selector:
+    device rows become the compile list, worker rows pin the job to
+    that specific build worker (#63). Mixing both works.
   target:
     device:
       integration: esphome_fleet
@@ -33,8 +35,11 @@ compile:
       selector:
         text:
     worker_id:
-      name: Worker ID
-      description: Optional client_id of a specific build worker to pin the job to.
+      name: Worker client_id (advanced)
+      description: >
+        #63: prefer picking a Worker device in the target selector
+        above — same effect, better UX. This field stays as a manual
+        override for automations that want to pin by raw client_id.
       example: "12345-abc..."
       selector:
         text:

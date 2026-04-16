@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from ._discovery import entity_already_registered
 from .const import DOMAIN
 from .coordinator import EsphomeFleetCoordinator
 from .device import target_device_info
@@ -32,17 +33,17 @@ async def async_setup_entry(
     """Add one UpdateEntity per managed target, refreshing on each poll."""
     coordinator: EsphomeFleetCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    seen: set[str] = set()
-
     def _discover() -> None:
+        # #62: registry-backed check; see sensor.py::async_setup_entry.
         targets = coordinator.data.get("targets") if coordinator.data else []
         new_entities: list[TargetFirmwareUpdate] = []
         for t in targets or []:
             filename = t.get("target")
-            if not filename or filename in seen:
+            if not filename:
                 continue
-            seen.add(filename)
-            new_entities.append(TargetFirmwareUpdate(coordinator, entry.entry_id, filename))
+            ent = TargetFirmwareUpdate(coordinator, entry.entry_id, filename)
+            if not entity_already_registered(hass, "update", ent.unique_id):
+                new_entities.append(ent)
         if new_entities:
             async_add_entities(new_entities)
 

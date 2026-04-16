@@ -121,21 +121,23 @@ async def test_compile_resolves_device_ids_to_targets() -> None:
     assert payload == {"targets": ["living-room.yaml"]}
 
 
-async def test_compile_device_targeting_rejects_non_target_devices() -> None:
-    """#37 — selecting a worker device (not a target) raises."""
+async def test_compile_rejects_unknown_fleet_device_identifier() -> None:
+    """#37/#63 — picking a device that's known to HA but doesn't carry
+    a `target:` or `worker:` Fleet identifier (e.g. the hub) raises.
+    """
     from homeassistant.exceptions import HomeAssistantError
 
     hass, _ = _hass_with_coordinator()
 
     fake_device = SimpleNamespace(
-        identifiers={(DOMAIN, "worker:abc123")},
+        identifiers={(DOMAIN, "hub:entry-xyz")},  # not target/worker
     )
     fake_registry = SimpleNamespace(
         async_get=lambda did: fake_device,
     )
 
     with patch("esphome_fleet.services.dr.async_get", return_value=fake_registry):
-        with pytest.raises(HomeAssistantError, match="managed ESPHome Fleet targets"):
+        with pytest.raises(HomeAssistantError, match="targets or workers"):
             await _handle_compile(
                 _FakeCall(hass, {"device_id": ["dev-456"]})
             )
@@ -183,3 +185,50 @@ def test_resolve_device_ids_extracts_target_filename() -> None:
         hass = SimpleNamespace()
         result = _resolve_device_ids_to_targets(hass, ["d1", "d-unknown"])
     assert result == ["foo.yaml"]
+
+
+async def test_compile_picks_worker_device_as_pin() -> None:
+    """#63 — picking a worker device in the target selector pins the
+    compile to that worker's client_id, falls back to 'all' targets.
+    """
+    hass, post = _hass_with_coordinator()
+
+    worker_dev = SimpleNamespace(
+        identifiers={(DOMAIN, "worker:abc-client")},
+    )
+    target_dev = SimpleNamespace(
+        identifiers={(DOMAIN, "target:living-room.yaml")},
+    )
+    fake_registry = SimpleNamespace(
+        async_get=lambda did: {"w1": worker_dev, "t1": target_dev}.get(did),
+    )
+
+    with patch("esphome_fleet.services.dr.async_get", return_value=fake_registry):
+        # Target + worker picked together — targets from the target,
+        # pin from the worker.
+        await _handle_compile(
+            _FakeCall(hass, {"device_id": ["t1", "w1"]})
+        )
+    _, payload = post.call_args.args
+    assert payload["targets"] == ["living-room.yaml"]
+    assert payload["pinned_client_id"] == "abc-client"
+
+
+async def test_compile_worker_only_defaults_to_all_targets() -> None:
+    """#63 — picking ONLY worker devices falls back to `targets: all`
+    with the worker as pin. Lets users say "rebuild everything on
+    this worker" with one picker action.
+    """
+    hass, post = _hass_with_coordinator()
+    worker_dev = SimpleNamespace(
+        identifiers={(DOMAIN, "worker:abc-client")},
+    )
+    fake_registry = SimpleNamespace(
+        async_get=lambda did: worker_dev if did == "w1" else None,
+    )
+
+    with patch("esphome_fleet.services.dr.async_get", return_value=fake_registry):
+        await _handle_compile(_FakeCall(hass, {"device_id": ["w1"]}))
+    _, payload = post.call_args.args
+    assert payload["targets"] == "all"
+    assert payload["pinned_client_id"] == "abc-client"

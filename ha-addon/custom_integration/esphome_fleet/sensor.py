@@ -34,6 +34,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from ._discovery import entity_already_registered
 from .const import DOMAIN
 from .coordinator import EsphomeFleetCoordinator
 from .device import hub_device_info, target_device_info, worker_device_info
@@ -60,48 +61,37 @@ async def async_setup_entry(
         OutdatedDevicesSensor(coordinator, eid, url),
     ])
 
-    seen_targets: set[str] = set()
-    seen_workers: set[str] = set()
-
     def _discover() -> None:
+        # #62: switched from closure-scoped `seen_*` sets to an HA
+        # entity-registry lookup. The old in-memory set went stale when
+        # #39 cleaned up a worker/target whose coordinator snapshot had
+        # briefly gone silent — the stale set then kept us from
+        # recreating the entities once the worker came back. The
+        # registry-backed check is self-healing across add/remove cycles.
         new: list[SensorEntity] = []
+        eid = entry.entry_id
+
+        def _needs(cls, *args) -> None:
+            ent = cls(coordinator, eid, *args)
+            if not entity_already_registered(hass, "sensor", ent.unique_id):
+                new.append(ent)
 
         for t in (coordinator.data or {}).get("targets") or []:
             filename = t.get("target")
-            if filename and filename not in seen_targets:
-                seen_targets.add(filename)
-                new.append(
-                    TargetScheduleSensor(coordinator, entry.entry_id, filename)
-                )
-                new.append(
-                    TargetScheduledOnceSensor(coordinator, entry.entry_id, filename)
-                )
-                new.append(
-                    TargetPinnedVersionSensor(coordinator, entry.entry_id, filename)
-                )
+            if filename:
+                _needs(TargetScheduleSensor, filename)
+                _needs(TargetScheduledOnceSensor, filename)
+                _needs(TargetPinnedVersionSensor, filename)
 
         for w in (coordinator.data or {}).get("workers") or []:
             client_id = w.get("client_id")
-            if client_id and client_id not in seen_workers:
-                seen_workers.add(client_id)
-                new.append(
-                    WorkerActiveJobsSensor(coordinator, entry.entry_id, client_id)
-                )
-                new.append(
-                    WorkerDiskUsageSensor(coordinator, entry.entry_id, client_id)
-                )
-                new.append(
-                    WorkerCpuUsageSensor(coordinator, entry.entry_id, client_id)
-                )
-                new.append(
-                    WorkerDiskFreeSensor(coordinator, entry.entry_id, client_id)
-                )
-                new.append(
-                    WorkerCpuCoresSensor(coordinator, entry.entry_id, client_id)
-                )
-                new.append(
-                    WorkerMemorySensor(coordinator, entry.entry_id, client_id)
-                )
+            if client_id:
+                _needs(WorkerActiveJobsSensor, client_id)
+                _needs(WorkerDiskUsageSensor, client_id)
+                _needs(WorkerCpuUsageSensor, client_id)
+                _needs(WorkerDiskFreeSensor, client_id)
+                _needs(WorkerCpuCoresSensor, client_id)
+                _needs(WorkerMemorySensor, client_id)
 
         if new:
             async_add_entities(new)

@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from ._discovery import entity_already_registered
 from .const import DOMAIN
 from .coordinator import EsphomeFleetCoordinator
 from .device import worker_device_info
@@ -29,17 +30,16 @@ async def async_setup_entry(
 ) -> None:
     coordinator: EsphomeFleetCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    seen: set[str] = set()
-
     def _discover() -> None:
+        # #62: registry-backed check; see sensor.py::async_setup_entry.
         new: list[WorkerSlotCountNumber] = []
         for w in (coordinator.data or {}).get("workers") or []:
             client_id = w.get("client_id")
-            if client_id and client_id not in seen:
-                seen.add(client_id)
-                new.append(
-                    WorkerSlotCountNumber(coordinator, entry.entry_id, client_id)
-                )
+            if not client_id:
+                continue
+            ent = WorkerSlotCountNumber(coordinator, entry.entry_id, client_id)
+            if not entity_already_registered(hass, "number", ent.unique_id):
+                new.append(ent)
         if new:
             async_add_entities(new)
 
