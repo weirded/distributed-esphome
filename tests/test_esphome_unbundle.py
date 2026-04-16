@@ -190,3 +190,27 @@ def test_get_version_returns_unknown_on_hard_failure() -> None:
     scanner._esphome_install_failed = True
     with patch("importlib.metadata.version", side_effect=Exception("no pkg")):
         assert scanner._get_installed_esphome_version() == "unknown"
+
+
+# --- SE.4 — _resolve_esphome_config degradation ---
+
+
+def test_resolve_esphome_config_returns_none_when_venv_not_ready_and_no_bundle(
+    tmp_path: Path,
+) -> None:
+    """SE.4 — mid-install + no bundled package → clean None + INFO log."""
+    yaml_file = tmp_path / "foo.yaml"
+    yaml_file.write_text("esphome:\n  name: foo\n")
+    # scanner._esphome_ready cleared by autouse fixture.
+    # Simulate "no bundled esphome" via import hook.
+    import builtins as _builtins
+    real_import = _builtins.__import__
+
+    def _no_esphome(name, *args, **kwargs):
+        if name == "esphome" or name.startswith("esphome."):
+            raise ImportError("no bundled esphome")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(_builtins, "__import__", side_effect=_no_esphome):
+        result = scanner._resolve_esphome_config(str(tmp_path), "foo.yaml")
+    assert result is None

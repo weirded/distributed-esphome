@@ -103,8 +103,37 @@ async def get_esphome_schema(request: web.Request) -> web.Response:
     if _esphome_components_cache is None:
         try:
             from pathlib import Path as _Path  # noqa: PLC0415
-            import esphome.loader as _loader  # noqa: PLC0415
-            comps_path = _Path(_loader.__file__).parent / "components"
+            import scanner as _scanner  # noqa: PLC0415
+
+            # SE.5: walk the venv's components directory directly instead of
+            # importing esphome.loader. This sidesteps the chicken-and-egg
+            # problem where the venv is on sys.path but Python has already
+            # cached a half-resolved `esphome` module object from an earlier
+            # failed import. When the venv isn't ready yet, fall through to
+            # the old import-based path (covers pre-SE.1 bundled package +
+            # the test harness).
+            comps_path = None
+            if _scanner._esphome_ready.is_set() and _scanner._server_esphome_venv:
+                import sys as _sys  # noqa: PLC0415
+                candidate = (
+                    _scanner._server_esphome_venv / "lib"
+                    / f"python{_sys.version_info.major}.{_sys.version_info.minor}"
+                    / "site-packages" / "esphome" / "components"
+                )
+                if candidate.is_dir():
+                    comps_path = candidate
+            if comps_path is None:
+                try:
+                    import esphome.loader as _loader  # noqa: PLC0415
+                    comps_path = _Path(_loader.__file__).parent / "components"
+                except ImportError:
+                    # Install still in flight and no bundled package —
+                    # return an empty list; autocomplete briefly off.
+                    logger.info(
+                        "ESPHome still installing — components list empty until venv is ready"
+                    )
+                    return web.json_response({"components": []})
+
             names = sorted({
                 p.stem
                 for p in comps_path.iterdir()
@@ -838,11 +867,38 @@ async def validate_config(request: web.Request) -> web.Response:
     # differ from the version bundled in our own container). Otherwise a
     # pin matching the "selected" version silently skips the version-
     # manager install and uses the wrong binary.
+    import scanner as _scanner  # noqa: PLC0415
     from scanner import _get_installed_esphome_version  # noqa: PLC0415
     meta = read_device_meta(cfg.config_dir, target)
     pin = meta.get("pin_version")
-    esphome_bin = "esphome"  # default: server's installed version
+    # SE.6: default to the lazy-installed venv binary when ready. Pin
+    # code path below still runs VersionManager for pinned devices, so
+    # those remain decoupled from the server's tracked version.
+    if _scanner._esphome_ready.is_set() and _scanner._server_esphome_bin:
+        esphome_bin = _scanner._server_esphome_bin
+    else:
+        # Pre-SE.1 transitional / test-harness fallback: the bundled
+        # `esphome` binary on PATH.
+        esphome_bin = "esphome"
     installed_binary_version = _get_installed_esphome_version()
+
+    # SE.6: when no pin is set and the venv isn't ready yet, return
+    # 503 so the UI can surface "please retry in a moment" instead of
+    # shelling into a binary that doesn't exist. Pinned-device path
+    # installs its own version via VersionManager regardless.
+    if not pin and not _scanner._esphome_ready.is_set():
+        # Last-chance: check if the bundled package provides `esphome`
+        # on PATH — covers the pre-SE.1 state where no lazy install is
+        # needed to validate.
+        import shutil as _shutil  # noqa: PLC0415
+        if _shutil.which("esphome") is None:
+            return web.json_response(
+                {
+                    "success": False,
+                    "output": "ESPHome still installing, please retry in a moment",
+                },
+                status=503,
+            )
 
     if pin and pin != installed_binary_version:
         try:

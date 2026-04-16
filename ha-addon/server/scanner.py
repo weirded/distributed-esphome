@@ -606,6 +606,24 @@ def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
         if cached and cached[0] == mtime:
             return cached[1]
 
+        # SE.4: early-return during the first-boot install window so the
+        # scanner degrades gracefully instead of raising ImportError.
+        # Callers (device_poller, /ui/api/targets) already tolerate a
+        # None return — they fall back to `yaml.safe_load` for metadata
+        # (friendly_name etc. stays raw ${...} until ESPHome is ready).
+        # The import-guard below is belt-and-suspenders for the pre-SE.1
+        # world where the bundled package is still on sys.path.
+        if not _esphome_ready.is_set() and _server_esphome_venv is None:
+            try:
+                import esphome  # noqa: PLC0415, F401
+            except ImportError:
+                logger.info(
+                    "ESPHome still installing — skipping config resolution for %s "
+                    "(UI will use raw YAML metadata until the venv is ready)",
+                    target,
+                )
+                return None
+
         from esphome.yaml_util import load_yaml  # noqa: PLC0415
         from esphome.components.substitutions import do_substitution_pass  # noqa: PLC0415
         from esphome.components.packages import do_packages_pass, merge_packages  # noqa: PLC0415

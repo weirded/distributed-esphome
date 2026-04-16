@@ -945,12 +945,20 @@ async def pypi_version_refresher(app: web.Application) -> None:
                 old_detected = app["_rt"].get("esphome_detected_version")
                 if new_detected and new_detected != old_detected:
                     app["_rt"]["esphome_detected_version"] = new_detected
-                    from scanner import set_esphome_version  # noqa: PLC0415
+                    from scanner import set_esphome_version, ensure_esphome_installed  # noqa: PLC0415
                     set_esphome_version(new_detected)
                     if old_detected is None:
                         logger.info("ESPHome add-on version detected: %s", new_detected)
                     else:
                         logger.info("ESPHome add-on version changed: %s → %s", old_detected, new_detected)
+                    # SE.4: lazy-install the newly-detected version in the
+                    # background so the server's venv tracks whatever the HA
+                    # ESPHome add-on is on. VersionManager is a fast cache
+                    # hit if the version is already installed.
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        loop.run_in_executor(None, ensure_esphome_installed, new_detected)
+                    )
 
                 # Refresh PyPI list periodically
                 pypi_countdown -= check_interval
