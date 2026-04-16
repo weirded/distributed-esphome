@@ -1113,6 +1113,14 @@ def create_app() -> web.Application:
         except Exception:
             logger.exception("Failed to start mDNS advertiser (HI.7)")
 
+        # #26: register ourselves with Supervisor's /discovery API so the
+        # custom integration can auto-configure without a URL prompt.
+        try:
+            from supervisor_discovery import register_discovery  # noqa: PLC0415
+            app["_rt"]["supervisor_discovery_uuid"] = await register_discovery(cfg.port)
+        except Exception:
+            logger.debug("Supervisor discovery registration raised", exc_info=True)
+
         # Start background tasks
         app["timeout_checker_task"] = asyncio.create_task(timeout_checker(app))
         app["config_scanner_task"] = asyncio.create_task(config_scanner(app))
@@ -1177,6 +1185,16 @@ def create_app() -> web.Application:
         # #87: stop APScheduler
         import scheduler as scheduler_module  # noqa: PLC0415
         scheduler_module.stop()
+
+        # #26: deregister from Supervisor discovery so a fresh install
+        # after a reinstall gets a clean discovery flow.
+        discovery_uuid = app["_rt"].get("supervisor_discovery_uuid")
+        if discovery_uuid:
+            try:
+                from supervisor_discovery import unregister_discovery  # noqa: PLC0415
+                await unregister_discovery(discovery_uuid)
+            except Exception:
+                logger.debug("Supervisor discovery unregister failed", exc_info=True)
 
         # HI.7: tear down mDNS advertiser.
         advertiser = app["_rt"].get("mdns_advertiser")

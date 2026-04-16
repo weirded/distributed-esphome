@@ -20,8 +20,9 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import zeroconf
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
-from .const import CONF_BASE_URL, DEFAULT_TITLE, DOMAIN
+from .const import CONF_BASE_URL, DEFAULT_TITLE, DOMAIN, ZEROCONF_TYPE
 
 
 def _url_schema(default_url: str | None = None) -> vol.Schema:
@@ -79,6 +80,42 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_hassio(
+        self, discovery_info: HassioServiceInfo
+    ) -> FlowResult:
+        """Handle Supervisor-initiated discovery (#26).
+
+        When the add-on starts, it POSTs to `/discovery` on the
+        Supervisor API with its internal hostname + port, which HA
+        forwards here. Since the add-on is running locally and we
+        already trust it (we wouldn't have been auto-installed
+        otherwise), we skip the URL prompt entirely and create the
+        config entry directly.
+        """
+        config = discovery_info.config or {}
+        host = config.get("host")
+        port = config.get("port")
+        if not host or not port:
+            return self.async_abort(reason="invalid_discovery_info")
+
+        scheme = "https" if config.get("ssl") else "http"
+        base_url = f"{scheme}://{host}:{port}"
+
+        # De-dupe by URL — if the user already set this up manually,
+        # don't create a second entry. Also prevents repeated discovery
+        # flows from piling up.
+        await self.async_set_unique_id(base_url.lower())
+        self._abort_if_unique_id_configured()
+
+        # Still route through the confirm screen so the user sees a
+        # one-click notification rather than an unexplained entry
+        # appearing — matches the pattern HA uses for other add-on
+        # sidecar integrations.
+        self._discovery_name = DEFAULT_TITLE
+        self._discovery_url = base_url
+        self.context["title_placeholders"] = {"name": DEFAULT_TITLE}
+        return await self.async_step_discovery_confirm()
+
     async def async_step_zeroconf(
         self, discovery_info: zeroconf.ZeroconfServiceInfo
     ) -> FlowResult:
@@ -86,7 +123,14 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not discovery_info.host or not discovery_info.port:
             return await self.async_step_user()
 
-        self._discovery_name = discovery_info.name or DEFAULT_TITLE
+        # `discovery_info.name` is the full mDNS service instance name,
+        # e.g. "ESPHome Fleet._esphome-fleet._tcp.local.". Strip the
+        # service-type suffix so the confirm dialog shows just the
+        # human-readable instance label (#31).
+        raw_name = (discovery_info.name or "").removesuffix(
+            f".{ZEROCONF_TYPE}"
+        ).removesuffix(ZEROCONF_TYPE)
+        self._discovery_name = raw_name.strip(". ") or DEFAULT_TITLE
         self._discovery_url = f"http://{discovery_info.host}:{discovery_info.port}"
         return await self.async_step_discovery_confirm()
 

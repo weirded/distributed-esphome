@@ -78,6 +78,30 @@ def test_failed_when_source_manifest_unparseable(tmp_path: Path) -> None:
     (src / "manifest.json").write_text("not valid json {{{")
 
     dest = tmp_path / "config" / "custom_components" / "esphome_fleet"
-    result = install_integration(source_dir=src, destination_dir=dest)
+    # Point version_file at a non-existent path so we exercise the
+    # manifest-parse fallback without picking up the host /app/VERSION.
+    result = install_integration(
+        source_dir=src,
+        destination_dir=dest,
+        version_file=tmp_path / "nonexistent_VERSION",
+    )
     assert result == "failed"
     assert not dest.exists()
+
+
+def test_version_file_overrides_manifest_version(tmp_path: Path) -> None:
+    """#30 — manifest version in the destination matches /app/VERSION."""
+    src = tmp_path / "src" / "esphome_fleet"
+    _write_manifest(src, "0.1.0")  # stale placeholder in source
+
+    version_file = tmp_path / "VERSION"
+    version_file.write_text("1.4.1-dev.46\n")
+
+    dest = tmp_path / "config" / "custom_components" / "esphome_fleet"
+    result = install_integration(
+        source_dir=src, destination_dir=dest, version_file=version_file
+    )
+
+    assert result == "installed"
+    installed = json.loads((dest / "manifest.json").read_text())
+    assert installed["version"] == "1.4.1-dev.46"

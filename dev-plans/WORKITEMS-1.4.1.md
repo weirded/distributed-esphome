@@ -310,3 +310,25 @@ Let users compile a target **without** the OTA flash step, then download the res
   **Deferred — push-cancel to abandoned worker (#21).** Still loses ~60s of compute when a worker is abandoned mid-job, but the user-visible data loss is gone. Revisit with the 1.5 remote-compilation work which needs a worker cancel endpoint anyway.
   
   Three new pytest regression tests in `test_api.py`: stale-worker upload post-success is rejected AND the good binary survives (the core data-loss scenario); unassigned-worker upload during WORKING is rejected with no file written; matching-assigned-worker upload succeeds. Full pytest: 461 → 464.
+
+- [ ] **#25** — Icon in the HA integration picker.
+  **Deferred to a follow-up release.** Home Assistant's *Add Integration* picker does NOT render `icon.png` from a custom integration — it only shows icons for integrations listed in the `home-assistant/brands` repo. Shipping a PR there takes weeks of review and requires hosting stable URLs. Tracking as a separate chore; a placeholder `icon.png` bundled in the integration dir will auto-show once the brands PR lands.
+
+- [x] **#26** *(1.4.1-dev.46)* — Supervisor-discovery path: no URL prompt for local add-on.
+  Added `"hassio": true` to `manifest.json` + `async_step_hassio` in `config_flow.py`. Server POSTs to `http://supervisor/discovery` on startup (`supervisor_discovery.py`) and DELETEs on shutdown. HA now surfaces the add-on as a *Discovered* integration with a one-click Confirm — the user never sees the URL prompt. Manual `async_step_user` remains as a fallback for people running the server standalone. Unique-id set from the resolved base URL so repeated discoveries dedupe cleanly against manual setups.
+
+- [ ] **#27** — Merge targets into the native ESPHome integration instead of separate devices.
+  **Deferred to 1.5.** Requires setting `connections={(CONNECTION_NETWORK_MAC, mac)}` on each target's `DeviceInfo` so HA's device registry merges our target device with the ESPHome integration's device for the same MAC. Blocked by two plumbing items: (a) `/ui/api/targets` needs to return `mac_address` (computed server-side but not yet in the response payload), and (b) we need to decide whether to keep our per-target entities or strictly attach diagnostic entities to the existing ESPHome device. Low-risk refactor, but touches the wire contract + device identity — lands cleaner behind a 1.5 API version bump than a bug-fix turn.
+
+- [x] **#28** *(1.4.1-dev.46)* — Drop redundant firmware-version sensor; expose Schedule + Pinning instead.
+  Removed `TargetFirmwareVersionSensor` (the native ESPHome integration already reports running version). Added `TargetScheduleSensor` ("Once: 2026-04-20 18:30", cron expressions, "Paused", "No schedule") and `TargetPinnedVersionSensor` ("2025.9.3" or "Auto").
+
+- [x] **#29** *(1.4.1-dev.46)* — Worker disk / CPU / memory sensors.
+  Added five new worker sensors reading from `system_info`: `Disk usage` (%), `Disk free` (string), `CPU usage` (%), `CPU cores` (int), `Memory` (string). Kept the existing `Active jobs` sensor + `Online` connectivity binary sensor.
+
+- [x] **#30** *(1.4.1-dev.46)* — HA integration version matches add-on version.
+  `integration_installer.py` now reads `/app/VERSION` and rewrites `manifest.json`'s `version` field on copy. HA's *Installed integrations* list shows the same version as the add-on, so users can tell at a glance whether they're on the latest. Falls back to the hard-coded manifest version when VERSION is missing (dev checkouts / unit tests).
+
+- [x] **#31** *(1.4.1-dev.46)* — Prettier discovery confirm dialog.
+  Stripped the `._esphome-fleet._tcp.local.` mDNS service-type suffix from the discovered name before it hits the UI, and rewrote the dialog copy ("Home Assistant found an ESPHome Fleet server at http://…. Confirm or edit the URL to finish setup.") so it reads like a welcome screen rather than a debug dump.
+

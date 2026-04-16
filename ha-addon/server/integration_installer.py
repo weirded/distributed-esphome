@@ -35,6 +35,12 @@ DEFAULT_SOURCE_DIR = Path("/app/custom_integration/esphome_fleet")
 # (HI.9). Custom integrations live at /config/custom_components/<domain>.
 DEFAULT_DESTINATION_DIR = Path("/config/custom_components/esphome_fleet")
 
+# The add-on's VERSION file (bundled by the Dockerfile at /app/VERSION).
+# We substitute this into the integration's manifest.json on install so
+# HA's "Installed integrations" list shows the same version as the add-on
+# itself — #30.
+DEFAULT_VERSION_FILE = Path("/app/VERSION")
+
 
 def _read_manifest_version(manifest_path: Path) -> str | None:
     try:
@@ -49,9 +55,30 @@ def _read_manifest_version(manifest_path: Path) -> str | None:
         return None
 
 
+def _read_addon_version(version_file: Path) -> str | None:
+    try:
+        return version_file.read_text(encoding="utf-8").strip() or None
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.debug("Could not read %s", version_file, exc_info=True)
+        return None
+
+
+def _patch_manifest_version(manifest_path: Path, version: str) -> None:
+    """Rewrite manifest.json's `version` field in place."""
+    with manifest_path.open("r", encoding="utf-8") as fp:
+        data = json.load(fp)
+    data["version"] = version
+    with manifest_path.open("w", encoding="utf-8") as fp:
+        json.dump(data, fp, indent=2)
+        fp.write("\n")
+
+
 def install_integration(
     source_dir: Path = DEFAULT_SOURCE_DIR,
     destination_dir: Path = DEFAULT_DESTINATION_DIR,
+    version_file: Path = DEFAULT_VERSION_FILE,
 ) -> str:
     """Ensure the custom integration at *destination_dir* matches *source_dir*.
 
@@ -68,7 +95,14 @@ def install_integration(
         )
         return "skipped_no_source"
 
-    source_version = _read_manifest_version(source_dir / "manifest.json")
+    # #30: prefer the add-on's VERSION file so the integration manifest
+    # version moves in lockstep with each release / dev bump. Fall back
+    # to whatever is hardcoded in the source manifest only if VERSION is
+    # missing (e.g. running out of a dev checkout without the Dockerfile
+    # having copied it in).
+    source_version = _read_addon_version(version_file) or _read_manifest_version(
+        source_dir / "manifest.json"
+    )
     if source_version is None:
         logger.warning(
             "HA integration source %s has no readable manifest.json version — "
@@ -104,6 +138,7 @@ def install_integration(
         if destination_dir.exists():
             shutil.rmtree(destination_dir)
         shutil.copytree(source_dir, destination_dir)
+        _patch_manifest_version(destination_dir / "manifest.json", source_version)
     except Exception:
         logger.exception(
             "Failed to copy HA integration %s → %s; add-on will keep running",

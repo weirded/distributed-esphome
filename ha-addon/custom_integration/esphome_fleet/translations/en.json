@@ -10,8 +10,8 @@
         }
       },
       "discovery_confirm": {
-        "title": "Confirm discovered server",
-        "description": "Found {name}. Confirm or edit the URL.\nSuggested URL: {url}",
+        "title": "Set up {name}",
+        "description": "Home Assistant found an ESPHome Fleet server at {url}. Confirm or edit the URL to finish setup.",
         "data": {
           "base_url": "Base URL"
         }
@@ -21,7 +21,8 @@
       "invalid_url": "Enter a valid http(s) URL."
     },
     "abort": {
-      "already_configured": "This server is already configured."
+      "already_configured": "This server is already configured.",
+      "invalid_discovery_info": "The Supervisor discovery record was missing host or port."
     }
   },
   "services": {
