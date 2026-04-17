@@ -197,10 +197,14 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.6.md` — current release (editor + config management).
+- `dev-plans/WORKITEMS-1.6.md` — current release (power-user fleet management: git versioning, job history, archive viewer, device tags, disk management, worker constraints).
+- `dev-plans/WORKITEMS-future.md` — unscheduled items. Things we may do someday but haven't picked a release for yet.
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process.
+- `dev-plans/USER_PERSONA.md` — the target user "Pat." Scope / UX / copywriting tiebreaker when we're not sure something's worth the effort.
+
+**Release cadence is scope-driven, not time-boxed.** Ship a release when it delivers a meaningful chunk of functionality — never pad scope to fit a calendar and never compress it to meet one. Pull items forward from `WORKITEMS-future.md` or push them back into it based on whether they move the needle for Pat, not on how close to "done" they happen to be. The current `WORKITEMS-X.Y.md` is a commitment to a *coherent* release, not a deadline.
 
 **Turn** = one user prompt → one assistant response cycle. At the end of every turn:
 1. Run `bash scripts/bump-dev.sh` — auto-increments `-dev.N`. Never skip.
