@@ -48,6 +48,7 @@ import { Toaster } from './components/ui/sonner';
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, Job, Target, Worker } from './types';
 import { stripYaml } from './utils';
+import esphomeLogoUrl from './assets/esphome-logo.svg';
 import './theme.css';
 
 type TabName = 'devices' | 'queue' | 'workers' | 'schedules';
@@ -551,14 +552,28 @@ export default function App() {
   return (
     <>
       <header>
+        {/* #85: replaced the CDN-hotlinked ESPHome wordmark with just the
+            house glyph served locally, paired with our own "ESPHome Fleet"
+            wordmark rendered in the app's own type. Also removes the
+            dependency on a third-party CDN at page-load time (wordmark
+            was served from media.esphome.io). */}
         <img
-          src="https://media.esphome.io/logo/logo-text-on-dark.svg"
-          alt="ESPHome"
-          height={26}
+          src={esphomeLogoUrl}
+          alt="ESPHome Fleet"
+          height={30}
+          width={30}
           style={{ display: 'block', flexShrink: 0 }}
         />
-        <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-          Fleet
+        <span
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: 'var(--text)',
+            whiteSpace: 'nowrap',
+            letterSpacing: '-0.01em',
+          }}
+        >
+          ESPHome Fleet
         </span>
         <span className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap">
           {serverInfo.addon_version ? `v${serverInfo.addon_version}` : 'v?'}

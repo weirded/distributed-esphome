@@ -12,8 +12,9 @@ test.beforeEach(async ({ page }) => {
 test('page loads and shows header', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('header')).toBeVisible();
-  await expect(page.getByText('Fleet', { exact: true })).toBeVisible();
-  await expect(page.getByText(/^v1\.3/)).toBeVisible();
+  // #85: wordmark is now "ESPHome Fleet" alongside the house glyph.
+  await expect(page.getByText('ESPHome Fleet', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^v\d+\.\d+/)).toBeVisible();
 });
 
 test('all three tabs are present', async ({ page }) => {
