@@ -34,7 +34,30 @@ def _constraints_for(version: str) -> Path | None:
     from getting locked out by this release. Roadmap (SECURITY_AUDIT
     F-18) is to flip this to a hard refusal once we ship constraints
     for every version we actually support.
+
+    **Linux-only scope.** The committed constraints files are generated
+    by `scripts/regen-esphome-constraints.sh` inside a `python:3.11-slim`
+    (linux/amd64) container. `pip-compile` there only resolves the
+    transitive deps for Linux — packages like `bleak` have a conditional
+    `pyobjc-core>=10.3` dep gated on `platform_system == "Darwin"` that
+    doesn't flow into the resolved graph on Linux and therefore isn't
+    committed to the `.txt`. Trying `pip install --require-hashes -r <file>`
+    on macOS then fails at install time with *"In --require-hashes mode,
+    all requirements must have their versions pinned with ==: pyobjc-core
+    from …"*. Linux workers (Docker containers, Raspberry Pi, x86_64
+    build hosts) are the primary deployment target; macOS / Windows
+    workers fall through to the WARN+unpinned path, preserving the
+    pre-SC.3 behavior they had anyway.
     """
+    if not sys.platform.startswith("linux"):
+        logger.info(
+            "Skipping hash-pinned install on %s — constraints files are "
+            "linux-only (pip-compile doesn't resolve platform-conditional "
+            "transitives like bleak→pyobjc-core on non-Darwin hosts). "
+            "Unpinned install will proceed. (SC.3)",
+            sys.platform,
+        )
+        return None
     candidate = ESPHOME_CONSTRAINTS_DIR / f"{version}.txt"
     return candidate if candidate.is_file() else None
 
