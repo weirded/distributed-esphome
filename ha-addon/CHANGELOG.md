@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0 (in development)
+
+*No user-visible changes yet — this release is actively being developed.*
+
 ## 1.5.0
 
 **Rebrand: now called ESPHome Fleet.** Same add-on, same Docker images, no migration needed — just a new name that better describes what the tool does. The HA sidebar entry, add-on store name, browser tab title, and add-on logs all read "ESPHome Fleet" instead of "ESPHome Distributed Build Server". The GitHub repo, Docker image names, and add-on slug are unchanged so existing installs upgrade in place with no action required.
