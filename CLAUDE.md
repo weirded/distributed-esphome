@@ -197,7 +197,7 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.5.md` — current release (UI quality + rebrand + HA native integration; formerly in-flight as 1.4.1, renamed per #70).
+- `dev-plans/WORKITEMS-1.6.md` — current release (editor + config management).
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process.

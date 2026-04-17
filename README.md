@@ -41,7 +41,7 @@ Then install **ESPHome Fleet** from the store.
 
 ```bash
 docker run -d \
-  --name distributed-esphome-server \
+  --name esphome-fleet-server \
   --network host \
   -v /path/to/esphome/configs:/config/esphome \
   -v esphome-dist-data:/data \

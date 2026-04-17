@@ -153,9 +153,21 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # De-dupe by URL — if the user already set this up manually,
         # don't create a second entry. Also prevents repeated discovery
-        # flows from piling up.
+        # flows from piling up. AU.7: if the existing entry has no
+        # token yet (set up pre-AU.7), update it in place with the one
+        # Supervisor just advertised so the coordinator self-heals on
+        # the next refresh instead of 401-looping until the user
+        # re-adds the integration by hand.
+        token = config.get("token")
+        discovered_token = token if isinstance(token, str) and token else None
         await self.async_set_unique_id(base_url.lower())
-        self._abort_if_unique_id_configured()
+        if discovered_token:
+            self._abort_if_unique_id_configured(
+                updates={CONF_BASE_URL: base_url, CONF_TOKEN: discovered_token},
+                reload_on_update=True,
+            )
+        else:
+            self._abort_if_unique_id_configured()
 
         # Still route through the confirm screen so the user sees a
         # one-click notification rather than an unexplained entry
@@ -163,10 +175,7 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # sidecar integrations.
         self._discovery_name = DEFAULT_TITLE
         self._discovery_url = base_url
-        # AU.7: Supervisor discovery advertises the add-on's token so
-        # the confirm-screen user doesn't have to paste it.
-        token = config.get("token")
-        self._discovery_token = token if isinstance(token, str) and token else None
+        self._discovery_token = discovered_token
         self.context["title_placeholders"] = {"name": DEFAULT_TITLE}
         return await self.async_step_discovery_confirm()
 
