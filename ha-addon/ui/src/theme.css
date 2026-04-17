@@ -8,9 +8,13 @@
 .streamer .sensitive { filter: blur(5px); transition: filter 0.2s; }
 .streamer .sensitive:hover { filter: blur(2px); }
 
-/* Preflight overrides — constrain logo height */
+/* Preflight overrides — constrain logo height. #85: bumped from 26px
+   (sized for the old ESPHome wordmark) to 40px now that the header
+   uses the square "house" glyph — 40px reads as a prominent brand
+   mark next to the 20px "ESPHome Fleet" wordmark while still leaving
+   ~6px of vertical breathing room inside the 52px-tall header. */
 header img {
-  height: 26px;
+  height: 40px;
   width: auto;
   max-width: none;
 }

@@ -560,8 +560,11 @@ export default function App() {
         <img
           src={esphomeLogoUrl}
           alt="ESPHome Fleet"
-          height={30}
-          width={30}
+          /* actual size is driven by `header img { height: 40px }` in
+             theme.css — attributes here are just intrinsic-aspect hints
+             for the browser (square → width = height). */
+          height={40}
+          width={40}
           style={{ display: 'block', flexShrink: 0 }}
         />
         <span
