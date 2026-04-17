@@ -70,8 +70,47 @@ export function buildWsUrl(path: string): string {
   return `${proto}//${location.host}${a.pathname}`;
 }
 
+// AU.7: when the UI is loaded via direct-port (8765) — e.g. prod smoke
+// tests or power users bypassing Ingress — `/ui/api/*` now requires a
+// Bearer. If the initial URL carries `?token=X`, stash it in
+// sessionStorage and attach it to every api request. When served via
+// Ingress, no token arrives, no token is sent, and Supervisor-peer
+// trust handles auth. Idempotent: the lookup runs once on first call.
+let _authToken: string | null | undefined;
+function _getAuthToken(): string | null {
+  if (_authToken === undefined) {
+    try {
+      const url = new URL(window.location.href);
+      const tokenFromUrl = url.searchParams.get('token');
+      if (tokenFromUrl) {
+        sessionStorage.setItem('esphome_fleet_token', tokenFromUrl);
+        // Remove ?token=… from the visible URL so the user doesn't bookmark
+        // or share a copy with the credential baked in.
+        url.searchParams.delete('token');
+        window.history.replaceState({}, '', url.toString());
+      }
+      _authToken = sessionStorage.getItem('esphome_fleet_token');
+    } catch {
+      _authToken = null;
+    }
+  }
+  return _authToken;
+}
+
 export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const r = await fetch(path, opts);
+  // Attach the AU.7 Bearer if we have one (direct-port smoke tests,
+  // external tooling pasting a `?token=` URL). Ingress access leaves
+  // this path a no-op.
+  const token = _getAuthToken();
+  let finalOpts = opts;
+  if (token) {
+    const headers = new Headers(opts.headers);
+    if (!headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    finalOpts = { ...opts, headers };
+  }
+  const r = await fetch(path, finalOpts);
   // Detect server version changes from response header
   const sv = r.headers.get('X-Server-Version');
   if (sv && _initialAddonVersion && sv !== _initialAddonVersion && !_reloadScheduled) {
