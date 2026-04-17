@@ -41,6 +41,11 @@ docker run --rm \
         apt-get update -qq && apt-get install -qq -y --no-install-recommends gcc libffi-dev libssl-dev git >/dev/null
         pip install --quiet pip-tools
         echo "  ▶ ha-addon/server/requirements.lock"
+        # NOTE: --upgrade was attempted in 1.4.1-dev.55 to unstick
+        # ESPHome at an old version, but it pulled in pyobjc-core
+        # (a macOS-only transitive) WITHOUT the sys_platform == "darwin"
+        # marker, breaking the linux/amd64 Docker build. Stays off until
+        # we solve the platform-marker leak. #51 reopened.
         pip-compile \
             --generate-hashes \
             --resolver=backtracking \

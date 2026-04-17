@@ -7,7 +7,7 @@ assignees: weirded
 
 ---
 
-**distributed-esphome version: ** 
+**ESPHome Fleet version:** 
 
 **Describe the bug**
 A clear and concise description of what the bug is.

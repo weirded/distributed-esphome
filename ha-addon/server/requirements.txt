@@ -5,6 +5,11 @@ apscheduler>=3.10,<4
 aioesphomeapi>=18.0
 zeroconf>=0.131
 pyyaml>=6.0
-esphome>=2024.1.0
+# SE.1: esphome was dropped from the server image in 1.4.1. At first
+# boot, scanner.ensure_esphome_installed lazy-installs the HA ESPHome
+# add-on's version into /data/esphome-versions/<ver>/ via the shared
+# VersionManager. This eliminates #51 (bundle upgrade friction) + #56
+# (macOS-only transitives leaking in) + #20 (upstream API changes
+# invisible until re-bump) in one go. The image is ~200 MB smaller.
 requests>=2.31
 icmplib>=3.0

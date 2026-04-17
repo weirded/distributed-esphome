@@ -73,7 +73,7 @@ test('theme toggle switches between dark and light', async ({ page }) => {
   const html = page.locator('html');
 
   // Click theme toggle
-  const toggle = page.locator('header span[title*="Switch to"]');
+  const toggle = page.locator('header button[title*="Switch to"]');
   await toggle.click();
 
   // Should now be light mode

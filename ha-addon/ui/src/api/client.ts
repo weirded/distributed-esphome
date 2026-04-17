@@ -1,6 +1,83 @@
 import { toast } from 'sonner';
 import type { Device, EsphomeVersions, Job, ServerInfo, Target, Worker } from '../types';
 
+// ---------------------------------------------------------------------------
+// Response shapes (QS.9)
+//
+// Named at module top so the wire contract is self-documenting and so callers
+// importing them get IntelliSense. Used as the type argument to
+// `parseResponse<T>()` instead of inline `as { ... }` casts.
+// ---------------------------------------------------------------------------
+
+export interface CompileResponse { enqueued: number }
+export interface CancelResponse { cancelled: number }
+export interface RetryResponse { retried: number }
+export interface RemoveResponse { removed: number }
+export interface ClearResponse { cleared: number }
+export interface ScheduleResponse { schedule_enabled: boolean }
+export interface SaveTargetResponse { renamed_to?: string | null }
+export interface CreateTargetResponse { target?: string }
+export interface RenameTargetResponse { new_filename: string }
+export interface ApiKeyResponse { key?: string }
+export interface JobLogResponse { log: string; offset: number; finished: boolean }
+export interface ValidateResponse { success?: boolean; output?: string; error?: string }
+export interface SecretKeysResponse { keys?: string[] }
+export interface EsphomeSchemaResponse { components?: string[] }
+
+// ---------------------------------------------------------------------------
+// Response helpers (QS.8 + QS.10)
+//
+// `parseResponse` does the standard error-handling pattern that was repeated
+// ~30 times in this file: parse JSON, throw with the server's `error` message
+// when present, fall back to the HTTP status code. Reduces ~150 lines of
+// boilerplate and ensures every caller surfaces server-side error detail
+// (QS.10 — previously getTargets/getDevices/etc. threw "Failed to fetch X"
+// even when the server returned a useful message).
+//
+// `expectOk` is the bodyless variant — for endpoints that return 200/204 with
+// no JSON body that callers care about.
+// ---------------------------------------------------------------------------
+
+// #84: typed error so callers can distinguish 401 (session expired) from
+// other failures. Previously every non-OK response threw a plain `Error`
+// whose message was the only signal — SWR hooks couldn't tell a real
+// empty result apart from "you're logged out" and the Devices/Workers/
+// Queue tabs ended up rendering "No devices found" after the session
+// expired. Keep `Error` as the base so callers that only care about
+// `.message` still work unchanged.
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+export function isUnauthorizedError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
+}
+
+async function _readError(r: Response, fallback: string): Promise<string> {
+  // Try to read the server-provided error string. Falls back to the supplied
+  // tag (e.g. "fetching workers") + status code when the body isn't JSON or
+  // doesn't contain `error`.
+  try {
+    const data = await r.json() as { error?: string };
+    if (data && typeof data.error === 'string' && data.error) return data.error;
+  } catch { /* not JSON or empty body */ }
+  return `${fallback} (HTTP ${r.status})`;
+}
+
+async function parseResponse<T = unknown>(r: Response, errorTag: string): Promise<T> {
+  if (!r.ok) throw new ApiError(await _readError(r, errorTag), r.status);
+  return r.json() as Promise<T>;
+}
+
+async function expectOk(r: Response, errorTag: string): Promise<void> {
+  if (!r.ok) throw new ApiError(await _readError(r, errorTag), r.status);
+}
+
 // Version sentinel for auto-reload detection
 let _initialAddonVersion: string | null = null;
 let _reloadScheduled = false;
@@ -13,8 +90,47 @@ export function buildWsUrl(path: string): string {
   return `${proto}//${location.host}${a.pathname}`;
 }
 
+// AU.7: when the UI is loaded via direct-port (8765) — e.g. prod smoke
+// tests or power users bypassing Ingress — `/ui/api/*` now requires a
+// Bearer. If the initial URL carries `?token=X`, stash it in
+// sessionStorage and attach it to every api request. When served via
+// Ingress, no token arrives, no token is sent, and Supervisor-peer
+// trust handles auth. Idempotent: the lookup runs once on first call.
+let _authToken: string | null | undefined;
+function _getAuthToken(): string | null {
+  if (_authToken === undefined) {
+    try {
+      const url = new URL(window.location.href);
+      const tokenFromUrl = url.searchParams.get('token');
+      if (tokenFromUrl) {
+        sessionStorage.setItem('esphome_fleet_token', tokenFromUrl);
+        // Remove ?token=… from the visible URL so the user doesn't bookmark
+        // or share a copy with the credential baked in.
+        url.searchParams.delete('token');
+        window.history.replaceState({}, '', url.toString());
+      }
+      _authToken = sessionStorage.getItem('esphome_fleet_token');
+    } catch {
+      _authToken = null;
+    }
+  }
+  return _authToken;
+}
+
 export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const r = await fetch(path, opts);
+  // Attach the AU.7 Bearer if we have one (direct-port smoke tests,
+  // external tooling pasting a `?token=` URL). Ingress access leaves
+  // this path a no-op.
+  const token = _getAuthToken();
+  let finalOpts = opts;
+  if (token) {
+    const headers = new Headers(opts.headers);
+    if (!headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    finalOpts = { ...opts, headers };
+  }
+  const r = await fetch(path, finalOpts);
   // Detect server version changes from response header
   const sv = r.headers.get('X-Server-Version');
   if (sv && _initialAddonVersion && sv !== _initialAddonVersion && !_reloadScheduled) {
@@ -37,51 +153,50 @@ export function getInitialAddonVersion(): string | null {
 }
 
 export async function getServerInfo(): Promise<ServerInfo> {
-  const r = await apiFetch('./ui/api/server-info');
-  if (!r.ok) throw new Error('Failed to fetch server info');
-  return r.json();
+  return parseResponse<ServerInfo>(await apiFetch('./ui/api/server-info'), 'fetching server info');
 }
 
 export async function getEsphomeVersions(): Promise<EsphomeVersions> {
-  const r = await apiFetch('./ui/api/esphome-versions');
-  if (!r.ok) throw new Error('Failed to fetch ESPHome versions');
-  return r.json();
+  return parseResponse<EsphomeVersions>(await apiFetch('./ui/api/esphome-versions'), 'fetching ESPHome versions');
+}
+
+export async function refreshEsphomeVersions(): Promise<EsphomeVersions> {
+  return parseResponse<EsphomeVersions>(
+    await apiFetch('./ui/api/esphome-versions/refresh', { method: 'POST' }),
+    'refreshing ESPHome versions',
+  );
+}
+
+/** SE.8: retry the server-side ESPHome install — wired to the banner's
+ * Retry button. Returns immediately; the UI polls /ui/api/server-info
+ * for the transition from installing/failed → ready. */
+export async function reinstallEsphome(): Promise<void> {
+  await expectOk(await apiFetch('./ui/api/esphome/reinstall', { method: 'POST' }),
+    'retrying ESPHome install');
 }
 
 export async function setEsphomeVersion(version: string): Promise<void> {
-  const r = await apiFetch('./ui/api/esphome-version', {
+  await expectOk(await apiFetch('./ui/api/esphome-version', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ version }),
-  });
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  }), 'setting ESPHome version');
 }
 
 export async function getTargets(): Promise<Target[]> {
-  const r = await apiFetch('./ui/api/targets');
-  if (!r.ok) throw new Error('Failed to fetch targets');
-  return r.json();
+  return parseResponse<Target[]>(await apiFetch('./ui/api/targets'), 'fetching targets');
 }
 
 export async function getDevices(): Promise<Device[]> {
-  const r = await apiFetch('./ui/api/devices');
-  if (!r.ok) throw new Error('Failed to fetch devices');
-  return r.json();
+  return parseResponse<Device[]>(await apiFetch('./ui/api/devices'), 'fetching devices');
 }
 
 export async function getWorkers(): Promise<Worker[]> {
-  const r = await apiFetch('./ui/api/workers');
-  if (!r.ok) throw new Error('Failed to fetch workers');
-  return r.json();
+  return parseResponse<Worker[]>(await apiFetch('./ui/api/workers'), 'fetching workers');
 }
 
 export async function getQueue(): Promise<Job[]> {
-  const r = await apiFetch('./ui/api/queue');
-  if (!r.ok) throw new Error('Failed to fetch queue');
-  return r.json();
+  return parseResponse<Job[]>(await apiFetch('./ui/api/queue'), 'fetching queue');
 }
 
 /**
@@ -98,77 +213,80 @@ export async function compile(
   targets: string[] | 'all' | 'outdated',
   pinnedClientId?: string,
   esphomeVersion?: string,
-): Promise<{ enqueued: number }> {
+  downloadOnly?: boolean,
+): Promise<CompileResponse> {
   const body: Record<string, unknown> = { targets };
   if (pinnedClientId) body.pinned_client_id = pinnedClientId;
   if (esphomeVersion) body.esphome_version = esphomeVersion;
-  const r = await apiFetch('./ui/api/compile', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error((data as { error?: string }).error || String(r.status));
-  return data as { enqueued: number };
+  if (downloadOnly) body.download_only = true;
+  return parseResponse<CompileResponse>(
+    await apiFetch('./ui/api/compile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+    'enqueuing compile',
+  );
 }
 
-export async function cancelJobs(ids: string[]): Promise<{ cancelled: number }> {
-  const r = await apiFetch('./ui/api/cancel', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_ids: ids }),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error((data as { error?: string }).error || String(r.status));
-  return data as { cancelled: number };
+export async function cancelJobs(ids: string[]): Promise<CancelResponse> {
+  return parseResponse<CancelResponse>(
+    await apiFetch('./ui/api/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_ids: ids }),
+    }),
+    'cancelling jobs',
+  );
 }
 
-export async function retryJobs(ids: string[] | 'all_failed'): Promise<{ retried: number }> {
-  const r = await apiFetch('./ui/api/retry', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_ids: ids }),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error((data as { error?: string }).error || String(r.status));
-  return data as { retried: number };
+export async function retryJobs(ids: string[] | 'all_failed'): Promise<RetryResponse> {
+  return parseResponse<RetryResponse>(
+    await apiFetch('./ui/api/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_ids: ids }),
+    }),
+    'retrying jobs',
+  );
 }
 
-export async function retryAllFailed(): Promise<{ retried: number }> {
+export async function retryAllFailed(): Promise<RetryResponse> {
   return retryJobs('all_failed');
 }
 
-export async function removeJobs(ids: string[]): Promise<{ removed: number }> {
-  const r = await apiFetch('./ui/api/queue/remove', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error((data as { error?: string }).error || String(r.status));
-  return data as { removed: number };
+export async function removeJobs(ids: string[]): Promise<RemoveResponse> {
+  return parseResponse<RemoveResponse>(
+    await apiFetch('./ui/api/queue/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+    'removing jobs',
+  );
 }
 
 export async function clearQueue(
   states: string[],
   requireOtaSuccess?: boolean,
-): Promise<{ cleared: number }> {
+): Promise<ClearResponse> {
   const body: Record<string, unknown> = { states };
   if (requireOtaSuccess) body.require_ota_success = true;
-  const r = await apiFetch('./ui/api/queue/clear', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error((data as { error?: string }).error || String(r.status));
-  return data as { cleared: number };
+  return parseResponse<ClearResponse>(
+    await apiFetch('./ui/api/queue/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+    'clearing queue',
+  );
 }
 
 export async function getTargetContent(filename: string): Promise<string> {
-  const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`);
-  if (!r.ok) throw new Error(String(r.status));
-  const data = await r.json() as { content?: string };
+  const data = await parseResponse<{ content?: string }>(
+    await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`),
+    'fetching target content',
+  );
   return data.content || '';
 }
 
@@ -181,69 +299,61 @@ export async function saveTargetContent(
   filename: string,
   content: string,
 ): Promise<{ renamedTo: string | null }> {
-  const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  const data = await r.json().catch(() => ({})) as { error?: string; renamed_to?: string };
-  if (!r.ok) {
-    throw new Error(data.error || String(r.status));
-  }
+  const data = await parseResponse<SaveTargetResponse>(
+    await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    }),
+    'saving target content',
+  );
   return { renamedTo: data.renamed_to ?? null };
 }
 
 export async function disableWorker(id: string, disabled: boolean): Promise<void> {
-  const r = await apiFetch(`./ui/api/workers/${id}/disable`, {
+  await expectOk(await apiFetch(`./ui/api/workers/${id}/disable`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ disabled }),
-  });
-  if (!r.ok) throw new Error('Failed to update worker');
+  }), 'updating worker');
 }
 
 export async function setWorkerParallelJobs(id: string, maxParallelJobs: number): Promise<void> {
-  const r = await apiFetch(`./ui/api/workers/${id}/parallel-jobs`, {
+  await expectOk(await apiFetch(`./ui/api/workers/${id}/parallel-jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ max_parallel_jobs: maxParallelJobs }),
-  });
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  }), 'setting worker parallel-jobs');
 }
 
 export async function cleanWorkerCache(id: string): Promise<void> {
-  const r = await apiFetch(`./ui/api/workers/${id}/clean`, { method: 'POST' });
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  await expectOk(
+    await apiFetch(`./ui/api/workers/${id}/clean`, { method: 'POST' }),
+    'cleaning worker cache',
+  );
 }
 
 export async function removeWorker(id: string): Promise<void> {
-  const r = await apiFetch(`./ui/api/workers/${id}`, { method: 'DELETE' });
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  await expectOk(
+    await apiFetch(`./ui/api/workers/${id}`, { method: 'DELETE' }),
+    'removing worker',
+  );
 }
 
-export async function getJobLog(
-  jobId: string,
-  offset: number,
-): Promise<{ log: string; offset: number; finished: boolean }> {
-  const r = await apiFetch(`./ui/api/jobs/${jobId}/log?offset=${offset}`);
-  if (!r.ok) throw new Error(String(r.status));
-  return r.json();
+export async function getJobLog(jobId: string, offset: number): Promise<JobLogResponse> {
+  return parseResponse<JobLogResponse>(
+    await apiFetch(`./ui/api/jobs/${jobId}/log?offset=${offset}`),
+    'fetching job log',
+  );
 }
 
 export async function getApiKey(filename: string): Promise<string> {
+  // Fetched separately rather than via parseResponse because the success
+  // branch needs to validate the `key` field is actually present (QS.4).
   const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/api-key`);
-  const data = await r.json() as { key?: string; error?: string };
-  if (!r.ok) throw new Error(data.error || String(r.status));
-  return data.key!;
+  const data = await parseResponse<ApiKeyResponse>(r, 'fetching API key');
+  if (!data.key) throw new Error('Server did not return an API key');
+  return data.key;
 }
 
 /**
@@ -254,27 +364,41 @@ export async function getApiKey(filename: string): Promise<string> {
  * any worker could pick it up; now it runs directly on the server.
  */
 export async function validateConfig(target: string): Promise<{ success: boolean; output: string }> {
+  // Bespoke handling: validate may return non-OK status with a useful `output`
+  // body (e.g. "config has 3 errors..."). We fall through to .output on error.
+  // CR.5: parsing the body might itself throw (non-JSON on a 500, truncated
+  // response, etc.). Isolate the parse so we always surface a meaningful
+  // error string rather than a swallowed `SyntaxError: Unexpected token`.
   const r = await apiFetch('./ui/api/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ target }),
   });
-  const data = await r.json() as { success?: boolean; output?: string; error?: string };
-  if (!r.ok) throw new Error(data.error || data.output || String(r.status));
+  let data: ValidateResponse;
+  try {
+    data = await r.json() as ValidateResponse;
+  } catch {
+    if (!r.ok) throw new Error(`validation failed (HTTP ${r.status})`);
+    throw new Error('validate response was not valid JSON');
+  }
+  if (!r.ok) throw new Error(data.error || data.output || `validation failed (HTTP ${r.status})`);
   return { success: !!data.success, output: data.output || '' };
 }
 
+// CR.5: `getSecretKeys` and `getEsphomeSchema` used to silently return []
+// on any error, which looked like "no autocomplete suggestions" to the user
+// — the editor appeared to work but autocomplete was dead. Throw instead
+// so the SWR `onError` path (QS.7's `logSwrError`) logs it with the key
+// attached and the caller can surface a real error state.
 export async function getSecretKeys(): Promise<string[]> {
   const r = await apiFetch('./ui/api/secret-keys');
-  if (!r.ok) return [];
-  const data = await r.json() as { keys?: string[] };
+  const data = await parseResponse<SecretKeysResponse>(r, 'getSecretKeys');
   return data.keys || [];
 }
 
 export async function getEsphomeSchema(): Promise<string[]> {
   const r = await apiFetch('./ui/api/esphome-schema');
-  if (!r.ok) return [];
-  const data = await r.json() as { components?: string[] };
+  const data = await parseResponse<EsphomeSchemaResponse>(r, 'getEsphomeSchema');
   return data.components || [];
 }
 
@@ -285,24 +409,24 @@ export interface ArchivedConfig {
 }
 
 export async function getArchivedConfigs(): Promise<ArchivedConfig[]> {
-  const r = await apiFetch('./ui/api/archive');
-  return await r.json() as ArchivedConfig[];
+  return parseResponse<ArchivedConfig[]>(
+    await apiFetch('./ui/api/archive'),
+    'fetching archived configs',
+  );
 }
 
 export async function restoreArchivedConfig(filename: string): Promise<void> {
-  const r = await apiFetch(`./ui/api/archive/${encodeURIComponent(filename)}/restore`, { method: 'POST' });
-  if (!r.ok) {
-    const data = await r.json() as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  await expectOk(
+    await apiFetch(`./ui/api/archive/${encodeURIComponent(filename)}/restore`, { method: 'POST' }),
+    'restoring archived config',
+  );
 }
 
 export async function deleteArchivedConfig(filename: string): Promise<void> {
-  const r = await apiFetch(`./ui/api/archive/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-  if (!r.ok) {
-    const data = await r.json() as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  await expectOk(
+    await apiFetch(`./ui/api/archive/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
+    'deleting archived config',
+  );
 }
 
 /**
@@ -318,56 +442,53 @@ export async function createTarget(
 ): Promise<string> {
   const body: Record<string, string> = { filename };
   if (source) body.source = source;
-  const r = await apiFetch('./ui/api/targets', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json().catch(() => ({})) as { target?: string; error?: string };
-  if (!r.ok) throw new Error(data.error || String(r.status));
+  const data = await parseResponse<CreateTargetResponse>(
+    await apiFetch('./ui/api/targets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+    'creating target',
+  );
   if (!data.target) throw new Error('Server did not return a target name');
   return data.target;
 }
 
 export async function deleteTarget(filename: string, archive = true): Promise<void> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}?archive=${archive}`,
-    { method: 'DELETE' },
+  await expectOk(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}?archive=${archive}`,
+      { method: 'DELETE' },
+    ),
+    'deleting target',
   );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
 }
 
 export async function restartDevice(filename: string): Promise<void> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}/restart`,
-    { method: 'POST' },
+  await expectOk(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}/restart`,
+      { method: 'POST' },
+    ),
+    'restarting device',
   );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
 }
 
 export async function renameTarget(
   filename: string,
   newName: string,
-): Promise<{ new_filename: string }> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}/rename`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ new_name: newName }),
-    },
+): Promise<RenameTargetResponse> {
+  return parseResponse<RenameTargetResponse>(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}/rename`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: newName }),
+      },
+    ),
+    'renaming target',
   );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
-  return r.json() as Promise<{ new_filename: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,58 +499,53 @@ export async function updateTargetMeta(
   filename: string,
   meta: Record<string, unknown>,
 ): Promise<void> {
-  const r = await apiFetch(
+  await expectOk(await apiFetch(
     `./ui/api/targets/${encodeURIComponent(filename)}/meta`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(meta),
     },
-  );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  ), 'updating target metadata');
 }
 
 export async function setTargetSchedule(
   filename: string,
   cron: string,
   tz?: string,
-): Promise<{ schedule_enabled: boolean }> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tz ? { cron, tz } : { cron }),
-    },
+): Promise<ScheduleResponse> {
+  const data = await parseResponse<Partial<ScheduleResponse>>(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tz ? { cron, tz } : { cron }),
+      },
+    ),
+    'setting schedule',
   );
-  const data = await r.json() as { schedule_enabled?: boolean; error?: string };
-  if (!r.ok) throw new Error(data.error || String(r.status));
   return { schedule_enabled: data.schedule_enabled ?? true };
 }
 
 export async function deleteTargetSchedule(filename: string): Promise<void> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
-    { method: 'DELETE' },
+  await expectOk(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}/schedule`,
+      { method: 'DELETE' },
+    ),
+    'deleting schedule',
   );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
 }
 
-export async function toggleTargetSchedule(
-  filename: string,
-): Promise<{ schedule_enabled: boolean }> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}/schedule/toggle`,
-    { method: 'POST' },
+export async function toggleTargetSchedule(filename: string): Promise<ScheduleResponse> {
+  const data = await parseResponse<Partial<ScheduleResponse>>(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}/schedule/toggle`,
+      { method: 'POST' },
+    ),
+    'toggling schedule',
   );
-  const data = await r.json() as { schedule_enabled?: boolean; error?: string };
-  if (!r.ok) throw new Error(data.error || String(r.status));
   return { schedule_enabled: data.schedule_enabled ?? false };
 }
 
@@ -437,51 +553,36 @@ export async function toggleTargetSchedule(
 // Version pinning
 // ---------------------------------------------------------------------------
 
-export async function pinTargetVersion(
-  filename: string,
-  version: string,
-): Promise<void> {
-  const r = await apiFetch(
+export async function pinTargetVersion(filename: string, version: string): Promise<void> {
+  await expectOk(await apiFetch(
     `./ui/api/targets/${encodeURIComponent(filename)}/pin`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version }),
     },
-  );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  ), 'pinning version');
 }
 
 export async function unpinTargetVersion(filename: string): Promise<void> {
-  const r = await apiFetch(
-    `./ui/api/targets/${encodeURIComponent(filename)}/pin`,
-    { method: 'DELETE' },
+  await expectOk(
+    await apiFetch(
+      `./ui/api/targets/${encodeURIComponent(filename)}/pin`,
+      { method: 'DELETE' },
+    ),
+    'unpinning version',
   );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
 }
 
-export async function setTargetScheduleOnce(
-  filename: string,
-  datetime: string,
-): Promise<void> {
-  const r = await apiFetch(
+export async function setTargetScheduleOnce(filename: string, datetime: string): Promise<void> {
+  await expectOk(await apiFetch(
     `./ui/api/targets/${encodeURIComponent(filename)}/schedule/once`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ datetime }),
     },
-  );
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({})) as { error?: string };
-    throw new Error(data.error || String(r.status));
-  }
+  ), 'setting one-time schedule');
 }
 
 export interface ScheduleHistoryEntry {
@@ -492,6 +593,8 @@ export interface ScheduleHistoryEntry {
 
 export async function getScheduleHistory(): Promise<Record<string, ScheduleHistoryEntry[]>> {
   const r = await apiFetch('./ui/api/schedule-history');
-  if (!r.ok) return {};
-  return r.json() as Promise<Record<string, ScheduleHistoryEntry[]>>;
+  // CR.5/UI-6: route through parseResponse so SWR's onError path logs
+  // the failure with the endpoint name attached, instead of silently
+  // reporting an empty map.
+  return parseResponse<Record<string, ScheduleHistoryEntry[]>>(r, 'getScheduleHistory');
 }

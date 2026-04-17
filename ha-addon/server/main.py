@@ -1,10 +1,11 @@
-"""aiohttp application entry point for the ESPHome Distributed Build Server."""
+"""aiohttp application entry point for ESPHome Fleet (formerly Distributed Build Server)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -89,6 +90,50 @@ _SECURITY_HEADERS = {
     "Permissions-Policy": "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()",
     "X-Frame-Options": "SAMEORIGIN",  # legacy fallback for browsers that ignore CSP frame-ancestors
 }
+
+
+@web.middleware
+async def compression_middleware(request: web.Request, handler):
+    """SP.1: opportunistic gzip on UI JSON responses.
+
+    Scope: /ui/api/* responses that are plain `web.Response` (what
+    `web.json_response()` returns). A typical /ui/api/targets response on
+    a 50-device fleet is ~40-50 KB; gzip cuts it to ~5-10 KB. Adds up
+    across 1 Hz polls for devices/queue/workers over slow uplinks (HA
+    Ingress from mobile / VPN).
+
+    Explicitly skipped:
+      - /api/v1/* (worker tier). Worker↔server runs on a local network
+        and the job-claim response carries a base64-encoded tarball of
+        the whole config dir (~46 MB for a full ESPHome workspace);
+        synchronously gzipping that blocks the event loop and saves
+        little on a LAN.
+      - FileResponse (static/). aiohttp's file handler has its own
+        Range/cache/compression logic that conflicts with
+        enable_compression's `assert self._payload_writer is not None`.
+      - WebSocketResponse, status 204/304, and empty-body responses —
+        nothing meaningful to compress, and aiohttp's second assert
+        `self._body is not None` fires on them otherwise.
+    """
+    response = await handler(request)
+    if not request.path.startswith("/ui/api/"):
+        return response
+    if type(response) is not web.Response:
+        return response
+    if response.headers.get("Content-Encoding"):
+        return response
+    if response.status in (204, 304):
+        return response
+    body = response.body
+    if body is None:
+        return response
+    if isinstance(body, (bytes, bytearray)) and len(body) == 0:
+        return response
+    try:
+        response.enable_compression()
+    except Exception:
+        logger.debug("enable_compression failed; sending uncompressed", exc_info=True)
+    return response
 
 
 @web.middleware
@@ -201,22 +246,30 @@ async def auth_middleware(request: web.Request, handler):
 
 async def timeout_checker(app: web.Application) -> None:
     """Background task: check for timed-out jobs every 30 seconds.
-    Also prunes terminal jobs older than 1 hour to keep the queue tidy."""
+
+    Bug #18: no longer auto-prunes terminal jobs. The queue is the
+    user's record of what the system did; time-based pruning used to
+    erase overnight compile history before the user had a chance to
+    see it. Users clear the queue explicitly via the Queue tab's Clear
+    dropdown.
+    """
     queue: JobQueue = app["queue"]
-    prune_counter = 0
+    registry: WorkerRegistry = app["registry"]
+    cfg: AppConfig = app["config"]
     while True:
         await asyncio.sleep(30)
         try:
-            timed_out = await queue.check_timeouts()
+            # Bug #17: short-circuit re-queue for jobs whose worker went
+            # offline mid-job. Previously these sat stalled for the full
+            # JOB_TIMEOUT (600s default) before the elapsed-time check
+            # noticed. Now check_timeouts also re-queues WORKING jobs
+            # whose assigned worker has no recent heartbeat.
+            def _is_online(cid: str) -> bool:
+                return registry.is_online(cid, threshold_secs=cfg.worker_offline_threshold)
+
+            timed_out = await queue.check_timeouts(is_worker_online=_is_online)
             if timed_out:
                 logger.info("Timeout checker: processed %d timed-out jobs", len(timed_out))
-            # Prune old finished jobs every ~5 minutes (every 10th cycle)
-            prune_counter += 1
-            if prune_counter >= 10:
-                prune_counter = 0
-                pruned = await queue.prune_old_terminal(max_age_seconds=3600)
-                if pruned:
-                    logger.info("Pruned %d old terminal jobs", pruned)
         except Exception:
             logger.exception("Error in timeout checker")
 
@@ -295,9 +348,20 @@ async def ha_entity_poller(app: web.Application) -> None:
                                 )
                         else:
                             body = await resp.text()
+                            # #11: 5xx is almost always HA Core or the
+                            # Supervisor proxy bouncing; suggest the right
+                            # remedy instead of pointing at the (correctly-set)
+                            # homeassistant_api flag.
+                            hint = (
+                                " — HA Core may be restarting; will retry on the next poll"
+                                if 500 <= resp.status < 600 else
+                                " — check homeassistant_api: true in config.yaml"
+                                if resp.status in (401, 403) else
+                                ""
+                            )
                             _log_poll_warning(
                                 f"template_http_{resp.status}",
-                                "HA template API returned HTTP %d: %.200s", resp.status, body,
+                                "HA template API returned HTTP %d%s: %.200s", resp.status, hint, body,
                             )
                 except Exception:
                     _log_poll_warning(
@@ -397,10 +461,20 @@ async def ha_entity_poller(app: web.Application) -> None:
                     timeout=timeout,
                 ) as resp:
                     if resp.status != 200:
+                        # #11: differentiate the hint by status class so 5xx
+                        # (HA Core / Supervisor proxy bouncing) doesn't tell
+                        # the user to "check homeassistant_api" when their
+                        # config is fine.
+                        hint = (
+                            " — HA Core may be restarting; will retry on the next poll"
+                            if 500 <= resp.status < 600 else
+                            " — check homeassistant_api: true in config.yaml"
+                            if resp.status in (401, 403) else
+                            ""
+                        )
                         _log_poll_warning(
                             f"states_http_{resp.status}",
-                            "HA states returned HTTP %d — check homeassistant_api: true in config.yaml",
-                            resp.status,
+                            "HA states returned HTTP %d%s", resp.status, hint,
                         )
                         continue
                     states: list[dict] = await resp.json()
@@ -777,6 +851,55 @@ async def _fetch_ha_esphome_version(session: aiohttp.ClientSession) -> Optional[
     return None
 
 
+_PRE_RELEASE_ORDER = {"dev": -4, "a": -3, "b": -2, "rc": -1}
+
+
+def _esphome_version_key(v: str) -> tuple:
+    """PEP440-ish sort key for ESPHome version strings.
+
+    Each dot-separated segment is parsed into ``(main_num, stage_rank,
+    stage_num)``: the leading integer, a pre-release tier (dev < a < b <
+    rc < stable, encoded as -4/-3/-2/-1/0), and the integer that follows
+    the tier tag (e.g. ``b3`` → stage_num 3). Stable segments are
+    ``(N, 0, 0)``.
+
+    Keyed uniformly per segment so the tuple shapes always match,
+    guaranteeing:
+      - ``b3 > b2`` (bug #16 regression: earlier version discarded the
+        number after the pre-release tag, so b3 and b2 produced the same
+        key and relative order fell back to Python's stable sort, which
+        preserved PyPI's alphabetical input order — putting b2 *above*
+        b3 in descending sort).
+      - Stable outranks any pre-release with the same base (``2026.3.0 >
+        2026.3.0b3``). Early implementations dropped the stage tuple for
+        bare-digit segments, so the stable key was a strict prefix of
+        the pre-release key and sorted *below* it.
+    """
+    parts: list[tuple] = []
+    for seg in v.split("."):
+        if seg.isdigit():
+            parts.append((int(seg), 0, 0))
+            continue
+        # e.g. "0b3" → main=0, tag="b", stage_num=3
+        m = re.match(r"(\d+)(.*)", seg)
+        if not m:
+            # Non-numeric segment (e.g. "dev") — keep it lexicographic.
+            # Cast to avoid mixed-type tuple comparisons downstream.
+            parts.append((0, 0, hash(seg)))
+            continue
+        main_num = int(m.group(1))
+        suffix = m.group(2).lower()
+        for tag, rank in _PRE_RELEASE_ORDER.items():
+            if suffix.startswith(tag):
+                tail = suffix[len(tag):]
+                stage_num = int(tail) if tail.isdigit() else 0
+                parts.append((main_num, rank, stage_num))
+                break
+        else:
+            parts.append((main_num, 0, 0))
+    return tuple(parts)
+
+
 async def _fetch_pypi_versions(session: aiohttp.ClientSession) -> list[str]:
     """Return ALL ESPHome versions from PyPI, newest first.
 
@@ -791,34 +914,7 @@ async def _fetch_pypi_versions(session: aiohttp.ClientSession) -> list[str]:
             if resp.status == 200:
                 data = await resp.json()
                 releases = list(data.get("releases", {}).keys())
-
-                def _version_key(v: str) -> tuple:
-                    # PEP440-ish sort: split on dots, parse numeric parts,
-                    # treat beta/alpha/rc as less-than the stable release.
-                    parts: list[object] = []
-                    for seg in v.split("."):
-                        if seg.isdigit():
-                            parts.append((0, int(seg)))
-                        else:
-                            # e.g. "0b1" → numeric prefix 0, beta suffix "b1"
-                            import re  # noqa: PLC0415
-                            m = re.match(r"(\d+)(.*)", seg)
-                            if m:
-                                parts.append((0, int(m.group(1))))
-                                suffix = m.group(2).lower()
-                                # a < b < rc < (empty=stable)
-                                order = {"a": -3, "b": -2, "rc": -1, "dev": -4}
-                                for tag, rank in order.items():
-                                    if suffix.startswith(tag):
-                                        parts.append((rank, 0))
-                                        break
-                                else:
-                                    parts.append((0, 0))
-                            else:
-                                parts.append((0, seg))
-                    return tuple(parts)
-
-                releases.sort(key=_version_key, reverse=True)
+                releases.sort(key=_esphome_version_key, reverse=True)
                 return releases
     except Exception:
         logger.debug("Failed to fetch PyPI esphome versions", exc_info=True)
@@ -849,12 +945,19 @@ async def pypi_version_refresher(app: web.Application) -> None:
                 old_detected = app["_rt"].get("esphome_detected_version")
                 if new_detected and new_detected != old_detected:
                     app["_rt"]["esphome_detected_version"] = new_detected
-                    from scanner import set_esphome_version  # noqa: PLC0415
+                    from scanner import set_esphome_version, ensure_esphome_installed  # noqa: PLC0415
                     set_esphome_version(new_detected)
                     if old_detected is None:
                         logger.info("ESPHome add-on version detected: %s", new_detected)
                     else:
                         logger.info("ESPHome add-on version changed: %s → %s", old_detected, new_detected)
+                    # SE.4: lazy-install the newly-detected version in the
+                    # background so the server's venv tracks whatever the HA
+                    # ESPHome add-on is on. VersionManager is a fast cache
+                    # hit if the version is already installed. run_in_executor
+                    # returns an already-scheduled Future — fire-and-forget.
+                    loop = asyncio.get_running_loop()
+                    loop.run_in_executor(None, ensure_esphome_installed, new_detected)
 
                 # Refresh PyPI list periodically
                 pypi_countdown -= check_interval
@@ -887,6 +990,23 @@ async def serve_index(request: web.Request) -> web.Response:
     from constants import HEADER_X_INGRESS_PATH  # noqa: PLC0415
     ingress_path = request.headers.get(HEADER_X_INGRESS_PATH, "")
     if ingress_path:
+        # SA.1 / F-15: defence-in-depth. The header is Supervisor-supplied
+        # on the HA happy path, but we're injecting it directly into the
+        # `<base href="...">` attribute, so strip anything that isn't a
+        # URL-safe path character before interpolation. Keeps `"`/`<`/`>`
+        # / JS/HTML special characters out of the attribute even if an
+        # upstream proxy or misconfigured reverse proxy lets a crafted
+        # header through.
+        import re  # noqa: PLC0415
+        ingress_path = re.sub(r"[^/A-Za-z0-9._-]", "", ingress_path)
+        if not ingress_path:
+            # Nothing left after sanitization — fall back to the default
+            # `<base href="./">` rather than injecting an empty attribute.
+            return web.Response(
+                text=html,
+                content_type="text/html",
+                charset="utf-8",
+            )
         # Ensure trailing slash for base href
         if not ingress_path.endswith("/"):
             ingress_path += "/"
@@ -916,7 +1036,27 @@ def create_app() -> web.Application:
 
     device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
 
-    app = web.Application(middlewares=[security_headers_middleware, version_header_middleware, auth_middleware])
+    # FD.5: firmware upload needs a body budget larger than aiohttp's
+    # 1 MB default. ESP32 `firmware.factory.bin` is 1-4 MB typically;
+    # cyd-office-info hit this limit at 1.05 MB with the 1 MB default.
+    # 16 MB is well above any plausible ESP firmware size.
+    FIRMWARE_MAX_SIZE = 16 * 1024 * 1024
+    # AU.2: ha_auth_middleware attaches request["ha_user"] for /ui/api/*
+    # and (when require_ha_auth is on) 401s unauthenticated direct-port
+    # calls. Kept separate from the worker-tier auth_middleware so the
+    # two auth contracts don't collide — both run, each is a no-op for
+    # paths outside its scope.
+    from ha_auth import ha_auth_middleware  # noqa: PLC0415
+    app = web.Application(
+        client_max_size=FIRMWARE_MAX_SIZE,
+        middlewares=[
+            compression_middleware,
+            security_headers_middleware,
+            version_header_middleware,
+            auth_middleware,
+            ha_auth_middleware,
+        ],
+    )
     app["config"] = cfg
     app["queue"] = queue
     app["registry"] = registry
@@ -959,9 +1099,18 @@ def create_app() -> web.Application:
 
     # Startup/shutdown hooks
     async def on_startup(app: web.Application) -> None:
-        logger.info("Starting ESPHome Distributed Build Server")
+        logger.info("Starting ESPHome Fleet")
         logger.info("Config dir: %s", cfg.config_dir)
         logger.info("Token configured: %s", bool(cfg.token))
+
+        # HI.8: auto-install the bundled HA custom integration into
+        # /config/custom_components/esphome_fleet on every boot.
+        # Failures are logged and swallowed so the add-on keeps running.
+        try:
+            from integration_installer import install_integration  # noqa: PLC0415
+            install_integration()
+        except Exception:
+            logger.exception("HA integration auto-install raised unexpectedly")
 
         # Use the locally installed ESPHome package version as the initial
         # active version.  The pypi_version_refresher background task will
@@ -974,11 +1123,28 @@ def create_app() -> web.Application:
         from scanner import (  # noqa: PLC0415
             scan_configs, build_name_to_target_map,
             set_esphome_version, _get_installed_esphome_version,
+            ensure_esphome_installed,
         )
 
         selected = _get_installed_esphome_version()
         set_esphome_version(selected)
         logger.info("Active ESPHome version: %s (background task will refine from HA Supervisor)", selected)
+
+        # SE.2: kick off the lazy-install of ESPHome into the server's
+        # venv cache. While SE.1 hasn't shipped yet (ESPHome is still
+        # bundled in requirements.txt), this is effectively a no-op on
+        # the hot path — VersionManager.ensure_version is a fast cache
+        # hit if the version is already installed. Once SE.1 lands and
+        # the bundled package is gone, this becomes the primary install
+        # path. Runs in an executor so it never blocks aiohttp startup.
+        async def _install_esphome_background() -> None:
+            target = _get_installed_esphome_version()
+            if target in ("unknown", "installing"):
+                # No point trying to install a phantom version.
+                return
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, ensure_esphome_installed, target)
+        app["esphome_install_task"] = asyncio.create_task(_install_esphome_background())
 
         # Update device poller with known targets
         targets = scan_configs(cfg.config_dir)
@@ -987,6 +1153,31 @@ def create_app() -> web.Application:
 
         # Start device poller
         await device_poller.start(app)
+
+        # HI.7: advertise ourselves on mDNS so the HA custom
+        # integration's zeroconf config-flow discovers us.
+        try:
+            from zeroconf.asyncio import AsyncZeroconf  # noqa: PLC0415
+            from mdns_advertiser import FleetAdvertiser  # noqa: PLC0415
+            app["_rt"]["mdns_zeroconf"] = AsyncZeroconf()
+            advertiser = FleetAdvertiser(app["_rt"]["mdns_zeroconf"], cfg.port)
+            await advertiser.start()
+            app["_rt"]["mdns_advertiser"] = advertiser
+        except Exception:
+            logger.exception("Failed to start mDNS advertiser (HI.7)")
+
+        # #26: register ourselves with Supervisor's /discovery API so the
+        # custom integration can auto-configure without a URL prompt.
+        # AU.7: the payload now includes `token` so the integration's
+        # coordinator can authenticate against `/ui/api/*` without asking
+        # the user to paste credentials.
+        try:
+            from supervisor_discovery import register_discovery  # noqa: PLC0415
+            app["_rt"]["supervisor_discovery_uuid"] = await register_discovery(
+                cfg.port, token=cfg.token,
+            )
+        except Exception:
+            logger.debug("Supervisor discovery registration raised", exc_info=True)
 
         # Start background tasks
         app["timeout_checker_task"] = asyncio.create_task(timeout_checker(app))
@@ -1028,7 +1219,7 @@ def create_app() -> web.Application:
             logger.info("Started local worker (PID %d, %s slots)", proc.pid, local_slots)
 
     async def on_shutdown(app: web.Application) -> None:
-        logger.info("Shutting down ESPHome Distributed Build Server")
+        logger.info("Shutting down ESPHome Fleet")
 
         # Stop local worker
         proc = app.get("local_worker_proc")
@@ -1040,7 +1231,7 @@ def create_app() -> web.Application:
                 proc.kill()
             logger.info("Local worker stopped")
 
-        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task"):
+        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task", "esphome_install_task"):
             task = app.get(task_name)
             if task:
                 task.cancel()
@@ -1052,6 +1243,30 @@ def create_app() -> web.Application:
         # #87: stop APScheduler
         import scheduler as scheduler_module  # noqa: PLC0415
         scheduler_module.stop()
+
+        # #26: deregister from Supervisor discovery so a fresh install
+        # after a reinstall gets a clean discovery flow.
+        discovery_uuid = app["_rt"].get("supervisor_discovery_uuid")
+        if discovery_uuid:
+            try:
+                from supervisor_discovery import unregister_discovery  # noqa: PLC0415
+                await unregister_discovery(discovery_uuid)
+            except Exception:
+                logger.debug("Supervisor discovery unregister failed", exc_info=True)
+
+        # HI.7: tear down mDNS advertiser.
+        advertiser = app["_rt"].get("mdns_advertiser")
+        if advertiser is not None:
+            try:
+                await advertiser.stop()
+            except Exception:
+                logger.debug("mDNS advertiser stop failed", exc_info=True)
+        zc = app["_rt"].get("mdns_zeroconf")
+        if zc is not None:
+            try:
+                await zc.async_close()
+            except Exception:
+                logger.debug("mDNS Zeroconf close failed", exc_info=True)
 
         await device_poller.stop()
 

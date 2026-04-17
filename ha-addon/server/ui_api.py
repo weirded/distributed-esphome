@@ -29,6 +29,35 @@ logger = logging.getLogger(__name__)
 
 routes = web.RouteTableDef()
 
+
+def _broadcast_ws(event_type: str, **payload: object) -> None:
+    """Fire a state-change event on the WebSocket bus (#41).
+
+    Thin wrapper around :func:`event_bus.broadcast` so call sites don't
+    have to import/except. Silent no-op on any failure — the 30 s HA
+    coordinator poll still catches the change.
+    """
+    try:
+        from event_bus import broadcast  # noqa: PLC0415
+        broadcast(event_type, **payload)
+    except Exception:
+        logger.debug("event_bus broadcast failed", exc_info=True)
+
+
+def _who(request: web.Request) -> str:
+    """AU.4: attribution suffix for mutation log lines.
+
+    Returns ``" by <name>"`` when the ha_auth_middleware resolved an HA
+    user on this request, empty string otherwise. Used to tack a "by
+    stefan" onto log lines like ``Pinned foo.yaml to 2026.4.0`` so
+    operators can trace who enqueued what.
+    """
+    user = request.get("ha_user")
+    if not user:
+        return ""
+    name = user.get("name")
+    return f" by {name}" if name else ""
+
 # Module-level cache: populated once per server lifetime (components don't
 # change until ESPHome is upgraded, which restarts the add-on).
 _esphome_components_cache: list[str] | None = None
@@ -74,8 +103,37 @@ async def get_esphome_schema(request: web.Request) -> web.Response:
     if _esphome_components_cache is None:
         try:
             from pathlib import Path as _Path  # noqa: PLC0415
-            import esphome.loader as _loader  # noqa: PLC0415
-            comps_path = _Path(_loader.__file__).parent / "components"
+            import scanner as _scanner  # noqa: PLC0415
+
+            # SE.5: walk the venv's components directory directly instead of
+            # importing esphome.loader. This sidesteps the chicken-and-egg
+            # problem where the venv is on sys.path but Python has already
+            # cached a half-resolved `esphome` module object from an earlier
+            # failed import. When the venv isn't ready yet, fall through to
+            # the old import-based path (covers pre-SE.1 bundled package +
+            # the test harness).
+            comps_path = None
+            if _scanner._esphome_ready.is_set() and _scanner._server_esphome_venv:
+                import sys as _sys  # noqa: PLC0415
+                candidate = (
+                    _scanner._server_esphome_venv / "lib"
+                    / f"python{_sys.version_info.major}.{_sys.version_info.minor}"
+                    / "site-packages" / "esphome" / "components"
+                )
+                if candidate.is_dir():
+                    comps_path = candidate
+            if comps_path is None:
+                try:
+                    import esphome.loader as _loader  # noqa: PLC0415
+                    comps_path = _Path(_loader.__file__).parent / "components"
+                except ImportError:
+                    # Install still in flight and no bundled package —
+                    # return an empty list; autocomplete briefly off.
+                    logger.info(
+                        "ESPHome still installing — components list empty until venv is ready"
+                    )
+                    return web.json_response({"components": []})
+
             names = sorted({
                 p.stem
                 for p in comps_path.iterdir()
@@ -132,6 +190,15 @@ async def get_server_info(request: web.Request) -> web.Response:
     server_ip = ip_addrs[0] if ip_addrs else (addrs[0] if addrs else None)
 
     from constants import MIN_IMAGE_VERSION  # noqa: PLC0415
+    # SE.8: surface the server's ESPHome install status so the UI can
+    # render a top-of-app banner during the first-boot install window.
+    import scanner as _scanner  # noqa: PLC0415
+    if _scanner._esphome_ready.is_set():
+        esphome_install_status = "ready"
+    elif _scanner._esphome_install_failed:
+        esphome_install_status = "failed"
+    else:
+        esphome_install_status = "installing"
     return web.json_response({
         "token": cfg.token,
         "port": cfg.port,
@@ -140,6 +207,9 @@ async def get_server_info(request: web.Request) -> web.Response:
         "server_client_version": addon_version,
         "addon_version": addon_version,
         "min_image_version": MIN_IMAGE_VERSION,
+        # SE.8: ESPHome install lifecycle fields for the UI banner.
+        "esphome_install_status": esphome_install_status,
+        "esphome_server_version": _scanner.get_esphome_version(),
     })
 
 
@@ -336,6 +406,11 @@ async def get_targets(request: web.Request) -> web.Response:
             "ha_configured": ha_configured,
             "ha_connected": ha_connected,
             "ha_device_id": ha_device_id,
+            # #27: surface MAC so the HA custom integration can merge its
+            # target-device with the native ESPHome integration's device
+            # via DeviceInfo `connections={(CONNECTION_NETWORK_MAC, mac)}`.
+            # Populated by the device poller (mDNS TXT or native API).
+            "mac_address": device_mac,
             # #10 — network facts surfaced by the toggleable Net/IP Mode/IPv6/AP columns
             "network_type": meta.get("network_type"),
             "network_static_ip": meta.get("network_static_ip", False),
@@ -360,15 +435,29 @@ async def get_targets(request: web.Request) -> web.Response:
 
 @routes.get("/ui/api/queue")
 async def get_queue(request: web.Request) -> web.Response:
-    """Return current job queue state."""
+    """Return current job queue state.
+
+    SP.2: `log` is stripped from EVERY job in the list response. Previously
+    only pending/working jobs had their log blanked; terminal jobs carried
+    up to 512 KB of log text each, and 10 finished jobs on a 1 Hz SWR poll
+    = ~5 MB/s steady-state. The log modal and WebSocket tail both fetch
+    per-job via /ui/api/jobs/{id}/log, so the list endpoint doesn't need it.
+    """
+    from firmware_storage import list_variants  # noqa: PLC0415
     queue = request.app["queue"]
     jobs = []
     for job in queue.get_all():
         d = job.to_dict()
-        # Don't send full log in poll response for active jobs — browser fetches
-        # live logs via WebSocket instead
-        if d["state"] in ("pending", "working"):
-            d["log"] = None
+        d["log"] = None
+        # #69: surface the available firmware variants up front so the
+        # Queue-tab Download dropdown knows whether to show Factory,
+        # OTA, or both without a second round trip. Cheap — just a dir
+        # scan when has_firmware is true; skipped for every other job
+        # row so the list endpoint stays small.
+        if job.has_firmware:
+            d["firmware_variants"] = list_variants(job.id)
+        else:
+            d["firmware_variants"] = []
         jobs.append(d)
     return web.json_response(jobs)
 
@@ -388,6 +477,112 @@ async def get_job_log(request: web.Request) -> web.Response:
         full_log = ""
     chunk = full_log[offset:]
     return web.json_response({"log": chunk, "offset": len(full_log), "finished": finished})
+
+
+@routes.get("/ui/api/jobs/{id}/firmware")
+async def download_job_firmware(request: web.Request) -> web.Response:
+    """FD.6 / #69 — download one variant of a job's firmware binary.
+
+    Query params:
+      - ``variant``: ``factory`` (first-flash image, ESP32) or ``ota``
+        (smaller OTA-safe image, ESP32 + ESP8266). Defaults to the
+        first variant reported by ``list_variants`` so pre-#69 callers
+        (and pre-#69 legacy blobs) keep working without modification.
+      - ``gz``: ``1`` to gzip-compress the response body on the fly
+        and serve it with a ``.bin.gz`` filename. Useful for users
+        mirroring builds to a fleet — ~30-40% smaller wire size.
+    """
+    import gzip as _gzip  # noqa: PLC0415
+    job_id = request.match_info["id"]
+    queue = request.app["queue"]
+    job = queue.get(job_id)
+    if not job:
+        return web.json_response({"error": "Job not found"}, status=404)
+    if not job.has_firmware:
+        return web.json_response({"error": "Firmware not available"}, status=404)
+
+    from firmware_storage import firmware_path, list_variants, read_firmware  # noqa: PLC0415
+    available = list_variants(job_id)
+    if not available:
+        logger.warning(
+            "Job %s has_firmware=True but no variants found on disk", job_id,
+        )
+        return web.json_response({"error": "Firmware not available"}, status=404)
+
+    variant = request.rel_url.query.get("variant") or available[0]
+    if variant not in available:
+        return web.json_response(
+            {
+                "error": f"Variant {variant!r} not available",
+                "available": available,
+            },
+            status=404,
+        )
+
+    path = firmware_path(job_id, variant=variant)
+    if not path.is_file():
+        # list_variants said yes but the file vanished — race with
+        # a concurrent delete_firmware. 404 cleanly.
+        logger.warning(
+            "Job %s variant=%s listed but %s is missing", job_id, variant, path,
+        )
+        return web.json_response({"error": "Firmware not available"}, status=404)
+
+    stem = job.target.removesuffix(".yaml").removesuffix(".yml") or job.target
+    # Surface the variant in the filename so a user who downloads both
+    # doesn't end up with two indistinguishable `.bin`s in their
+    # browser's Downloads folder.
+    if variant == "firmware":
+        filename = f"{stem}-{job_id[:8]}.bin"  # legacy shape (no variant tag)
+    else:
+        filename = f"{stem}-{job_id[:8]}-{variant}.bin"
+
+    gz_requested = request.rel_url.query.get("gz") in ("1", "true", "yes")
+    if gz_requested:
+        # Read + gzip-compress in memory. Firmware binaries are 1-2MB so
+        # buffering is cheap, and a streaming compressor adds complexity
+        # without a material benefit at this scale. Use gzip.compress
+        # with the default compresslevel (9) — saves ~30-40% on typical
+        # ESP firmware at ~30ms CPU per job. Served with
+        # Content-Encoding: identity and a .gz filename so the browser
+        # saves the compressed bytes literally instead of auto-decoding.
+        raw = read_firmware(job_id, variant=variant)
+        if raw is None:
+            return web.json_response({"error": "Firmware not available"}, status=404)
+        compressed = _gzip.compress(raw)
+        return web.Response(
+            body=compressed,
+            headers={
+                "Content-Type": "application/gzip",
+                "Content-Disposition": f'attachment; filename="{filename}.gz"',
+                "Content-Encoding": "identity",
+            },
+        )
+
+    return web.FileResponse(
+        path=path,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@routes.get("/ui/api/jobs/{id}/firmware-variants")
+async def list_job_firmware_variants(request: web.Request) -> web.Response:
+    """#69 — enumerate the firmware variants stored for a job.
+
+    Driven by the Queue-tab Download dropdown: the UI polls this once
+    per job-row on modal open to know which options (Factory / OTA,
+    plus the .gz toggle) to render. Cheap to compute — just a dir scan.
+    """
+    from firmware_storage import list_variants  # noqa: PLC0415
+    job_id = request.match_info["id"]
+    queue = request.app["queue"]
+    job = queue.get(job_id)
+    if not job:
+        return web.json_response({"error": "Job not found"}, status=404)
+    return web.json_response({"variants": list_variants(job_id)})
 
 
 @routes.get("/ui/api/targets/{filename}/logs/ws")
@@ -412,6 +607,27 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
             break
 
     if not dev or not dev.ip_address:
+        # DL.4: the user-facing "Device not found" error is cryptic when
+        # the real issue is a scanner/name-mapping regression. Dump the
+        # poller's current view so operators can see whether the target
+        # is absent entirely (→ scanner failure, look for a DL.1 WARNING),
+        # present but without an IP (→ resolution issue, look at DL.2),
+        # or mapped under a slightly different device_name (→ name-
+        # normalization). Kept at INFO so it's visible without debug.
+        known = [
+            {
+                "name": d.name,
+                "compile_target": d.compile_target,
+                "ip_address": d.ip_address,
+                "online": d.online,
+            }
+            for d in device_poller.get_devices()
+        ]
+        logger.info(
+            "ws_device_log: no device for target %r. Poller knows %d "
+            "device(s): %s",
+            filename, len(known), known,
+        )
         await ws.send_str(f"Device not found or no IP address for {filename}\n")
         await ws.close()
         return ws
@@ -476,6 +692,47 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
         except Exception:
             pass
 
+    return ws
+
+
+@routes.get("/ui/api/ws/events")
+async def ws_events(request: web.Request) -> web.WebSocketResponse:
+    """State-change event stream (#41).
+
+    Any client (typically the HA custom integration's coordinator) can
+    connect and receive JSON events whenever something changes on the
+    server — queue mutations, worker registrations, device discoveries,
+    scanner picks-up-new-YAML. Enables real-time entity updates in HA
+    without waiting for the 30 s coordinator poll.
+
+    Protocol: server → client JSON messages of the form
+    ``{"type": "queue_changed"|"workers_changed"|"targets_changed"|
+    "devices_changed", ...}``. No client → server messages expected;
+    pings are handled by aiohttp's autoping.
+    """
+    import asyncio as _asyncio  # noqa: PLC0415
+    from event_bus import subscribe, unsubscribe  # noqa: PLC0415
+
+    ws = web.WebSocketResponse(heartbeat=30.0)
+    await ws.prepare(request)
+    queue = subscribe()
+    try:
+        # Send an immediate "hello" so clients can distinguish "connected,
+        # no events yet" from "not yet connected".
+        await ws.send_json({"type": "hello"})
+        while not ws.closed:
+            try:
+                message = await _asyncio.wait_for(queue.get(), timeout=60.0)
+            except _asyncio.TimeoutError:
+                # Autoping keeps the connection alive; this just lets us
+                # check ws.closed and exit cleanly if the peer vanished.
+                continue
+            try:
+                await ws.send_json(message)
+            except ConnectionError:
+                break
+    finally:
+        unsubscribe(queue)
     return ws
 
 
@@ -612,6 +869,39 @@ async def get_esphome_versions(request: web.Request) -> web.Response:
     })
 
 
+@routes.post("/ui/api/esphome-versions/refresh")
+async def refresh_esphome_versions(request: web.Request) -> web.Response:
+    """Force-refresh the PyPI ESPHome version list (bug #19).
+
+    Bypasses the 1-hour server-side TTL so that the Refresh button in the
+    header dropdown actually hits PyPI and returns the latest releases —
+    previously the UI just re-polled our cached list and showed the same
+    versions it already had.
+    """
+    # Import here to avoid a circular import at module load time.
+    from main import _fetch_pypi_versions  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+
+    async with aiohttp.ClientSession() as session:
+        versions = await _fetch_pypi_versions(session)
+
+    if versions:
+        request.app["_rt"]["esphome_available_versions"] = versions
+        request.app["_rt"]["esphome_versions_fetched_at"] = _time.monotonic()
+        logger.info("UI-triggered PyPI refresh: %d versions", len(versions))
+    else:
+        logger.warning("UI-triggered PyPI refresh returned no versions")
+
+    selected = get_esphome_version()
+    detected = request.app["_rt"].get("esphome_detected_version")
+    available = versions or request.app["_rt"].get("esphome_available_versions", [])
+    return web.json_response({
+        "selected": selected,
+        "detected": detected,
+        "available": available,
+    })
+
+
 @routes.post("/ui/api/esphome-version")
 async def set_esphome_version_handler(request: web.Request) -> web.Response:
     """Set the active ESPHome version for new compile jobs.
@@ -630,6 +920,38 @@ async def set_esphome_version_handler(request: web.Request) -> web.Response:
     set_esphome_version(version)
     logger.info("ESPHome version changed to %s via UI", version)
     return web.json_response({"ok": True, "version": version})
+
+
+@routes.post("/ui/api/esphome/reinstall")
+async def reinstall_esphome(request: web.Request) -> web.Response:
+    """SE.8: retry the server-side ESPHome lazy install.
+
+    Wired to the "Retry" button on the top-of-app install banner. The
+    handler schedules `ensure_esphome_installed` for the currently
+    selected version in an executor and returns immediately — the
+    install runs in the background; the UI polls /ui/api/server-info
+    for the transition from `failed` or `installing` → `ready`.
+    """
+    import asyncio as _asyncio  # noqa: PLC0415
+    import scanner as _scanner  # noqa: PLC0415
+
+    target_version = _scanner.get_esphome_version()
+    if target_version in ("unknown", "installing"):
+        return web.json_response(
+            {"error": "No target ESPHome version known yet"}, status=409,
+        )
+    # Clear the failure flag so get_esphome_version reports "installing"
+    # while this new attempt is in flight.
+    _scanner._esphome_install_failed = False
+    _scanner._esphome_ready.clear()
+
+    # run_in_executor returns a Future that's already scheduled; we don't
+    # need create_task around it. Fire-and-forget is fine since the UI
+    # polls server-info for the status transition.
+    loop = _asyncio.get_running_loop()
+    loop.run_in_executor(None, _scanner.ensure_esphome_installed, target_version)
+    logger.info("Retrying ESPHome %s install via /ui/api/esphome/reinstall", target_version)
+    return web.json_response({"ok": True, "version": target_version})
 
 
 @routes.post("/ui/api/validate")
@@ -668,11 +990,46 @@ async def validate_config(request: web.Request) -> web.Response:
     # pinned, install that version via the version manager and validate with
     # its binary — not the server's default. This ensures pinned devices
     # validate against the version they'll actually compile with.
+    # #48: compare the pin against the ACTUAL installed binary, not the
+    # tracked "selected" version (pypi_version_refresher updates the
+    # selected version from the HA Supervisor's ESPHome add-on, which can
+    # differ from the version bundled in our own container). Otherwise a
+    # pin matching the "selected" version silently skips the version-
+    # manager install and uses the wrong binary.
+    import scanner as _scanner  # noqa: PLC0415
+    from scanner import _get_installed_esphome_version  # noqa: PLC0415
     meta = read_device_meta(cfg.config_dir, target)
     pin = meta.get("pin_version")
-    esphome_bin = "esphome"  # default: server's installed version
+    # SE.6: default to the lazy-installed venv binary when ready. Pin
+    # code path below still runs VersionManager for pinned devices, so
+    # those remain decoupled from the server's tracked version.
+    if _scanner._esphome_ready.is_set() and _scanner._server_esphome_bin:
+        esphome_bin = _scanner._server_esphome_bin
+    else:
+        # Pre-SE.1 transitional / test-harness fallback: the bundled
+        # `esphome` binary on PATH.
+        esphome_bin = "esphome"
+    installed_binary_version = _get_installed_esphome_version()
 
-    if pin and pin != get_esphome_version():
+    # SE.6: when no pin is set and the venv isn't ready yet, return
+    # 503 so the UI can surface "please retry in a moment" instead of
+    # shelling into a binary that doesn't exist. Pinned-device path
+    # installs its own version via VersionManager regardless.
+    if not pin and not _scanner._esphome_ready.is_set():
+        # Last-chance: check if the bundled package provides `esphome`
+        # on PATH — covers the pre-SE.1 state where no lazy install is
+        # needed to validate.
+        import shutil as _shutil  # noqa: PLC0415
+        if _shutil.which("esphome") is None:
+            return web.json_response(
+                {
+                    "success": False,
+                    "output": "ESPHome still installing, please retry in a moment",
+                },
+                status=503,
+            )
+
+    if pin and pin != installed_binary_version:
         try:
             from pathlib import Path as _Path  # noqa: PLC0415
             import sys as _sys  # noqa: PLC0415
@@ -757,7 +1114,7 @@ async def pin_target_version(request: web.Request) -> web.Response:
     meta = read_device_meta(cfg.config_dir, filename)
     meta["pin_version"] = version
     write_device_meta(cfg.config_dir, filename, meta)
-    logger.info("Pinned %s to version %s", filename, version)
+    logger.info("Pinned %s to version %s%s", filename, version, _who(request))
     return web.json_response({"ok": True, "pinned_version": version})
 
 
@@ -773,7 +1130,7 @@ async def unpin_target_version(request: web.Request) -> web.Response:
     meta = read_device_meta(cfg.config_dir, filename)
     meta.pop("pin_version", None)
     write_device_meta(cfg.config_dir, filename, meta)
-    logger.info("Unpinned %s", filename)
+    logger.info("Unpinned %s%s", filename, _who(request))
     return web.json_response({"ok": True})
 
 @routes.post("/ui/api/targets/{filename}/meta")
@@ -803,7 +1160,7 @@ async def update_target_meta(request: web.Request) -> web.Response:
         else:
             meta[key] = value
     write_device_meta(cfg.config_dir, filename, meta)
-    logger.info("Updated metadata for %s: %s", filename, list(body.keys()))
+    logger.info("Updated metadata for %s: %s%s", filename, list(body.keys()), _who(request))
     return web.json_response({"ok": True})
 
 
@@ -863,7 +1220,7 @@ async def set_target_schedule(request: web.Request) -> web.Response:
     write_device_meta(cfg.config_dir, filename, meta)
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
-    logger.info("Schedule set for %s: %s (tz=%s)", filename, cron_expr, tz or "UTC")
+    logger.info("Schedule set for %s: %s (tz=%s)%s", filename, cron_expr, tz or "UTC", _who(request))
     return web.json_response({
         "ok": True,
         "schedule": cron_expr,
@@ -897,7 +1254,7 @@ async def delete_target_schedule(request: web.Request) -> web.Response:
     write_device_meta(cfg.config_dir, filename, meta)
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
-    logger.info("Schedule removed for %s", filename)
+    logger.info("Schedule removed for %s%s", filename, _who(request))
     return web.json_response({"ok": True})
 
 
@@ -917,7 +1274,7 @@ async def toggle_target_schedule(request: web.Request) -> web.Response:
     write_device_meta(cfg.config_dir, filename, meta)
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
-    logger.info("Schedule toggled for %s: enabled=%s", filename, meta["schedule_enabled"])
+    logger.info("Schedule toggled for %s: enabled=%s%s", filename, meta["schedule_enabled"], _who(request))
     return web.json_response({"ok": True, "schedule_enabled": meta["schedule_enabled"]})
 
 
@@ -963,7 +1320,7 @@ async def set_target_schedule_once(request: web.Request) -> web.Response:
     write_device_meta(cfg.config_dir, filename, meta)
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
-    logger.info("One-time schedule set for %s at %s", filename, dt_str)
+    logger.info("One-time schedule set for %s at %s%s", filename, dt_str, _who(request))
     return web.json_response({"ok": True, "schedule_once": dt_str})
 
 
@@ -989,6 +1346,11 @@ async def start_compile(request: web.Request) -> web.Response:
     # default from set_esphome_version when not provided. We do NOT mutate the
     # global default — this is a per-job override only.
     version_override = body.get("esphome_version")
+    # FD.2: compile-and-download mode. When true the worker runs
+    # `esphome compile` (no OTA), POSTs the produced binary back, and
+    # the user downloads it from the Queue tab. Mutually exclusive with
+    # validate_only (which isn't exposed through this endpoint anyway).
+    download_only = bool(body.get("download_only", False))
     cfg = _cfg(request)
     queue = request.app["queue"]
     device_poller = request.app.get("device_poller")
@@ -1054,6 +1416,7 @@ async def start_compile(request: web.Request) -> web.Response:
             esphome_version=effective_version,
             run_id=run_id,
             timeout_seconds=cfg.job_timeout,
+            download_only=download_only,
             ota_address=ota_addresses.get(target),
             pinned_client_id=pinned_client_id,
         )
@@ -1061,10 +1424,11 @@ async def start_compile(request: web.Request) -> web.Response:
             enqueued += 1
 
     logger.info(
-        "Compile run %s: enqueued %d jobs (version=%s%s%s)",
+        "Compile run %s: enqueued %d jobs (version=%s%s%s)%s",
         run_id, enqueued, job_version,
         " (override)" if version_override else "",
         f" pinned={pinned_client_id}" if pinned_client_id else "",
+        _who(request),
     )
     return web.json_response({"run_id": run_id, "enqueued": enqueued})
 
@@ -1131,7 +1495,8 @@ async def save_target_content(request: web.Request) -> web.Response:
     # Invalidate config cache so changes are picked up immediately
     from scanner import _config_cache  # noqa: PLC0415
     _config_cache.pop(filename, None)
-    logger.info("Saved %s (%d bytes)", filename, len(content))
+    logger.info("Saved %s (%d bytes)%s", filename, len(content), _who(request))
+    _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
 
@@ -1254,7 +1619,8 @@ async def delete_target(request: web.Request) -> web.Response:
     from scanner import _config_cache  # noqa: PLC0415
     _config_cache.pop(filename, None)
 
-    logger.info("Deleted config %s (archive=%s)", filename, archive)
+    logger.info("Deleted config %s (archive=%s)%s", filename, archive, _who(request))
+    _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
 
@@ -1406,7 +1772,8 @@ async def rename_target(request: web.Request) -> web.Response:
         name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(cfg.config_dir, targets)
         device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides, addr_sources)
 
-    logger.info("Renamed config %s → %s", filename, new_filename)
+    logger.info("Renamed config %s → %s%s", filename, new_filename, _who(request))
+    _broadcast_ws("targets_changed")
 
     queue = request.app["queue"]
     server_version = get_esphome_version()
@@ -1720,6 +2087,7 @@ async def set_worker_parallel_jobs(request: web.Request) -> web.Response:
             Path("/data/local_worker_slots").write_text(str(value))
         except Exception:
             pass
+    _broadcast_ws("workers_changed")
     return web.json_response({"ok": True, "max_parallel_jobs": value})
 
 
@@ -1733,6 +2101,7 @@ async def clean_worker_cache(request: web.Request) -> web.Response:
         return web.json_response({"error": "Worker not found"}, status=404)
     worker.pending_clean = True
     logger.info("Worker %s (%s): clean build cache requested", client_id, worker.hostname)
+    _broadcast_ws("workers_changed")
     return web.json_response({"ok": True})
 
 
@@ -1881,4 +2250,5 @@ async def cancel_jobs(request: web.Request) -> web.Response:
 
     queue = request.app["queue"]
     cancelled = await queue.cancel(job_ids)
+    logger.info("Cancelled %d of %d job(s)%s", cancelled, len(job_ids), _who(request))
     return web.json_response({"cancelled": cancelled})

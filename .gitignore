@@ -28,6 +28,7 @@ htmlcov/
 # Playwright MCP artifacts (screenshots + accessibility snapshots)
 .playwright-mcp/
 /*.png
+/ux-snapshot-*.yml
 
 # IDE
 .vscode/

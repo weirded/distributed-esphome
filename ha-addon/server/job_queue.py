@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,13 @@ class Job:
     ota_result: Optional[str] = None
     ota_only: bool = False  # skip compile, just re-run OTA upload
     validate_only: bool = False  # run esphome config (validation) instead of compile+OTA
+    # FD.1: run `esphome compile` (no OTA) and upload the resulting
+    # binary back to the server for download. Mutually exclusive with
+    # validate_only.
+    download_only: bool = False
+    # FD.1: set to True once the worker has POSTed the binary to
+    # /api/v1/jobs/{id}/firmware. Drives the Queue-tab Download button.
+    has_firmware: bool = False
     ota_address: Optional[str] = None  # override OTA target address (used after rename)
     pinned_client_id: Optional[str] = None  # only this client can claim the job
     # #23: True if this job is a coalesced "follow-up" — created while another
@@ -99,6 +106,8 @@ class Job:
             "ota_result": self.ota_result,
             "ota_only": self.ota_only,
             "validate_only": self.validate_only,
+            "download_only": self.download_only,
+            "has_firmware": self.has_firmware,
             "ota_address": self.ota_address,
             "pinned_client_id": self.pinned_client_id,
             "is_followup": self.is_followup,
@@ -132,6 +141,8 @@ class Job:
             ota_result=d.get("ota_result"),
             ota_only=d.get("ota_only", False),
             validate_only=d.get("validate_only", False),
+            download_only=d.get("download_only", False),
+            has_firmware=d.get("has_firmware", False),
             ota_address=d.get("ota_address"),
             pinned_client_id=d.get("pinned_client_id"),
             is_followup=d.get("is_followup", False),
@@ -144,6 +155,23 @@ class Job:
             return None
         end = self.finished_at or _utcnow()
         return (end - self.assigned_at).total_seconds()
+
+
+def _purge_firmware(job_ids: Iterable[str]) -> None:
+    """Remove .bin files for removed jobs (FD.7).
+
+    Imported lazily so unit tests that replace `DEFAULT_FIRMWARE_DIR`
+    via monkeypatch see the patched value.
+    """
+    try:
+        from firmware_storage import delete_firmware  # noqa: PLC0415
+    except Exception:
+        return
+    for jid in job_ids:
+        try:
+            delete_firmware(jid)
+        except Exception:
+            logger.debug("Firmware purge for %s raised", jid, exc_info=True)
 
 
 class JobQueue:
@@ -159,7 +187,15 @@ class JobQueue:
     # ------------------------------------------------------------------
 
     def _persist(self) -> None:
-        """Write current queue state to disk. Called after every mutation."""
+        """Write current queue state to disk. Called after every mutation.
+
+        Also broadcasts a ``queue_changed`` event (#41) so connected HA
+        integrations refresh within milliseconds instead of waiting on
+        their 30 s polling interval. The broadcast is cheap (no-op when
+        no subscribers are connected) and safe to fire on every call —
+        piggy-backing on the persist call site means we can't forget it
+        at a new mutation point.
+        """
         try:
             self._queue_file.parent.mkdir(parents=True, exist_ok=True)
             data = [job.to_dict() for job in self._jobs.values()]
@@ -168,6 +204,11 @@ class JobQueue:
             tmp.replace(self._queue_file)
         except Exception:
             logger.exception("Failed to persist queue to %s", self._queue_file)
+        try:
+            from event_bus import EVENT_QUEUE_CHANGED, broadcast  # noqa: PLC0415
+            broadcast(EVENT_QUEUE_CHANGED)
+        except Exception:
+            logger.debug("event_bus broadcast failed", exc_info=True)
 
     def load(self) -> None:
         """Load queue from disk on server startup, applying restart recovery rules."""
@@ -186,9 +227,7 @@ class JobQueue:
             )
             return
 
-        pruned = 0
         skipped = 0
-        cutoff = datetime.now(timezone.utc)
         for d in data:
             if not isinstance(d, dict):
                 logger.error("Skipping non-dict entry in queue file: %r", d)
@@ -212,26 +251,23 @@ class JobQueue:
                 job.state = JobState.PENDING
                 job.assigned_client_id = None
                 job.assigned_at = None
-            # Prune terminal jobs older than 1 hour on startup
-            if job.state in (JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED):
-                try:
-                    created = job.created_at
-                    if created.tzinfo is None:
-                        created = created.replace(tzinfo=timezone.utc)
-                    if (cutoff - created).total_seconds() > 3600:
-                        pruned += 1
-                        continue  # skip adding to queue
-                except Exception:
-                    pruned += 1
-                    continue
+            # Bug #18: no longer prune terminal jobs by age on startup.
+            # The user clears the queue explicitly from the UI; auto-
+            # deleting history on restart meant that a user who scheduled
+            # an overnight upgrade and hit a transient problem would come
+            # back in the morning to a queue that forgot what happened.
             self._jobs[job.id] = job
 
-        if pruned:
-            logger.info("Pruned %d old terminal jobs on startup", pruned)
-            self._persist()
         if skipped:
             logger.warning("Skipped %d unparseable job entries on startup", skipped)
-        logger.info("Loaded %d jobs from %s", len(self._jobs), self._queue_file)
+        logger.info("Loaded %d jobs from %s (persisted across restarts)", len(self._jobs), self._queue_file)
+        # FD.7: sweep orphan firmware binaries whose job no longer
+        # exists (add-on crashed mid-cleanup, etc.).
+        try:
+            from firmware_storage import reconcile_orphans  # noqa: PLC0415
+            reconcile_orphans(self._jobs.keys())
+        except Exception:
+            logger.debug("Firmware reconciliation skipped", exc_info=True)
 
     # ------------------------------------------------------------------
     # Public API
@@ -244,6 +280,7 @@ class JobQueue:
         run_id: str,
         timeout_seconds: int,
         validate_only: bool = False,
+        download_only: bool = False,
         ota_address: Optional[str] = None,
         pinned_client_id: Optional[str] = None,
     ) -> Optional[Job]:
@@ -325,6 +362,9 @@ class JobQueue:
                 del self._jobs[jid]
             if stale:
                 logger.debug("Removed %d stale job(s) for target %s", len(stale), target)
+                # FD.7: purge any firmware binaries the stale jobs owned
+                # so per-target coalescing doesn't leak disk storage.
+                _purge_firmware(stale)
 
             is_followup = active is not None and active.state == JobState.WORKING and not validate_only
             job = Job(
@@ -335,6 +375,7 @@ class JobQueue:
                 run_id=run_id,
                 timeout_seconds=timeout_seconds,
                 validate_only=validate_only,
+                download_only=download_only,
                 ota_address=ota_address,
                 pinned_client_id=pinned_client_id,
                 is_followup=is_followup,
@@ -464,7 +505,13 @@ class JobQueue:
             return True
 
     async def cancel(self, job_ids: list[str]) -> int:
-        """Cancel jobs by id; transitions any non-terminal job to CANCELLED."""
+        """Cancel jobs by id; transitions any non-terminal job to CANCELLED.
+
+        Bug #21: emits an INFO log line per cancelled job so the
+        `submit_result: job <uuid> in unexpected state CANCELLED` warning
+        that fires when a worker later tries to report on a job the user
+        already cancelled is unambiguously explainable in the log.
+        """
         async with self._lock:
             cancelled = 0
             for job_id in job_ids:
@@ -472,17 +519,41 @@ class JobQueue:
                 if job is None:
                     continue
                 if job.state not in (JobState.SUCCESS, JobState.FAILED, JobState.CANCELLED):
+                    prior_state = job.state
                     job.state = JobState.CANCELLED
                     job.finished_at = _utcnow()
                     job.log = (job.log or "") + "\nCancelled by user."
                     cancelled += 1
+                    logger.info(
+                        "Cancelled job %s (%s) from state %s%s",
+                        job_id,
+                        job.target,
+                        prior_state.value if hasattr(prior_state, "value") else prior_state,
+                        f" — worker {job.assigned_hostname or job.assigned_client_id} may still be compiling"
+                        if prior_state == JobState.WORKING
+                        else "",
+                    )
             if cancelled:
                 self._persist()
             return cancelled
 
-    async def check_timeouts(self) -> list[Job]:
+    async def check_timeouts(
+        self,
+        is_worker_online: "Callable[[str], bool] | None" = None,
+    ) -> list[Job]:
         """
-        Find timed-out jobs (WORKING past deadline).
+        Find timed-out or abandoned jobs (WORKING without a live worker).
+
+        A WORKING job is re-queued (or permanently failed after retries) if
+        either:
+          - elapsed since ``assigned_at`` ≥ ``timeout_seconds`` — the classic
+            "compile got stuck" case; or
+          - the assigned worker is no longer online (last heartbeat beyond
+            the registry's offline threshold) and *is_worker_online* is
+            provided — bug #17. A worker that sleeps / crashes mid-job used
+            to leave its jobs stalled for the full ``JOB_TIMEOUT`` (600s by
+            default); liveness short-circuit re-queues them as soon as the
+            registry notices the worker is gone.
 
         Re-enqueues as PENDING if retry_count < MAX_RETRIES, otherwise
         marks FAILED permanently.  Returns the list of affected jobs.
@@ -496,24 +567,46 @@ class JobQueue:
                 if job.assigned_at is None:
                     continue
                 elapsed = (now - job.assigned_at).total_seconds()
-                if elapsed < job.timeout_seconds:
+                timed_out = elapsed >= job.timeout_seconds
+                abandoned = (
+                    not timed_out
+                    and is_worker_online is not None
+                    and job.assigned_client_id is not None
+                    and not is_worker_online(job.assigned_client_id)
+                )
+                if not (timed_out or abandoned):
                     continue
 
                 job.retry_count += 1
-                logger.warning(
-                    "Job %s timed out after %.0fs (retry %d/%d)",
-                    job.id,
-                    elapsed,
-                    job.retry_count,
-                    MAX_RETRIES,
-                )
+                if abandoned:
+                    logger.warning(
+                        "Job %s abandoned after %.0fs — worker %s is offline (retry %d/%d)",
+                        job.id,
+                        elapsed,
+                        job.assigned_client_id,
+                        job.retry_count,
+                        MAX_RETRIES,
+                    )
+                else:
+                    logger.warning(
+                        "Job %s timed out after %.0fs (retry %d/%d)",
+                        job.id,
+                        elapsed,
+                        job.retry_count,
+                        MAX_RETRIES,
+                    )
                 if job.retry_count >= MAX_RETRIES:
                     job.state = JobState.FAILED
                     job.finished_at = now
-                    job.log = (job.log or "") + f"\nPermanently failed after {MAX_RETRIES} timeouts."
+                    reason = "timeouts" if timed_out else "offline-worker requeues"
+                    job.log = (job.log or "") + f"\nPermanently failed after {MAX_RETRIES} {reason}."
                 else:
-                    job.state = JobState.TIMED_OUT
-                    # Re-enqueue: reset to pending
+                    # CR.4: dropped the `job.state = JobState.TIMED_OUT`
+                    # write that used to sit here — the very next line
+                    # overwrote it with PENDING, and no persist/event ran
+                    # in between, so the transient TIMED_OUT value was
+                    # never observable. The retry path is semantically
+                    # "we abandoned this claim; re-enqueue as PENDING".
                     job.state = JobState.PENDING
                     job.assigned_client_id = None
                     job.assigned_at = None
@@ -665,24 +758,31 @@ class JobQueue:
             return len(to_remove)
 
     async def remove_jobs(self, job_ids: list[str]) -> int:
-        """Remove terminal jobs by ID. Returns count removed."""
+        """Remove terminal jobs by ID. Returns count removed.
+
+        FD.7: deletes the associated firmware binary (if any) alongside
+        the queue entry so storage tracks the queue.
+        """
         terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         async with self._lock:
-            removed = 0
+            removed_ids: list[str] = []
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
                 if job and job.state in terminal:
                     del self._jobs[job_id]
-                    removed += 1
-            if removed:
+                    removed_ids.append(job_id)
+            if removed_ids:
                 self._persist()
-            return removed
+        _purge_firmware(removed_ids)
+        return len(removed_ids)
 
     async def clear(self, states: list[str], require_ota_success: bool = False) -> int:
         """Remove terminal jobs whose state is in *states*. Returns count removed.
 
         If *require_ota_success* is True, jobs with ota_result == 'failed' are
         kept even if their state matches (so "Clear Succeeded" leaves OTA-failed jobs).
+
+        FD.7: firmware binaries for removed jobs are deleted from disk.
         """
         terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         target_states = {JobState(s) for s in states if JobState(s) in terminal}
@@ -698,4 +798,34 @@ class JobQueue:
                 del self._jobs[job_id]
             if to_remove:
                 self._persist()
-            return len(to_remove)
+        _purge_firmware(to_remove)
+        return len(to_remove)
+
+    async def mark_firmware_stored(self, job_id: str) -> bool:
+        """Record that a worker has uploaded the .bin for *job_id*.
+
+        Returns True when the flag was flipped. Called by the worker
+        firmware-upload endpoint (FD.5).
+        """
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.state != JobState.WORKING:
+                logger.warning(
+                    "Refusing firmware upload for job %s in state %s (not WORKING)",
+                    job_id, job.state.value,
+                )
+                return False
+            if not job.download_only:
+                logger.warning(
+                    "Refusing firmware upload for non-download-only job %s", job_id,
+                )
+                return False
+            job.has_firmware = True
+            self._persist()
+            return True
+
+    def active_job_ids(self) -> set[str]:
+        """Snapshot of current job ids — used by firmware-storage reconciliation."""
+        return set(self._jobs.keys())

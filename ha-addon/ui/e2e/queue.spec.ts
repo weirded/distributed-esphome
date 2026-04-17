@@ -28,7 +28,7 @@ test('queue search filters jobs', async ({ page }) => {
   const search = page.getByPlaceholder(/search/i);
   await search.fill('garage');
 
-  await expect(page.getByText('garage-door')).toBeVisible();
+  await expect(page.getByText('garage-door').first()).toBeVisible();
   await expect(page.getByText('bedroom-light')).not.toBeVisible();
 });
 

@@ -6,7 +6,28 @@ export interface ServerInfo {
   addon_version?: string;
   server_client_version?: string;
   min_image_version?: string;
+  /** SE.8 — server-side ESPHome lazy-install lifecycle. */
+  esphome_install_status?: 'installing' | 'ready' | 'failed';
+  /** Version the server is trying to install / has installed. */
+  esphome_server_version?: string;
 }
+
+/**
+ * Where a device's reachable address came from (QS.27). Produced by
+ * `scanner.get_device_address` + `device_poller.discover`. Surfaced
+ * in the Devices tab as a small gray suffix next to the IP.
+ *
+ * Keep in sync with `ha-addon/server/scanner.py::get_device_address`
+ * and `ha-addon/server/device_poller.py`.
+ */
+export type AddressSource =
+  | 'mdns'
+  | 'mdns_default'
+  | 'wifi_use_address'
+  | 'ethernet_use_address'
+  | 'openthread_use_address'
+  | 'wifi_static_ip'
+  | 'ethernet_static_ip';
 
 export interface EsphomeVersions {
   selected: string | null;
@@ -24,7 +45,7 @@ export interface Target {
   project_version?: string;
   ip_address?: string;
   /** How the IP was resolved — see Device.address_source for the value list. */
-  address_source?: string | null;
+  address_source?: AddressSource | null;
   running_version?: string;
   online?: boolean | null;
   needs_update?: boolean;
@@ -83,14 +104,34 @@ export interface Target {
   schedule_tz?: string | null;
   /** Comma-separated tags from YAML metadata comment. */
   tags?: string | null;
+  /**
+   * Chip MAC address, lower-case colon-separated (e.g.
+   * ``"aa:bb:cc:dd:ee:ff"``). Sourced from mDNS TXT or native API
+   * polling. #27 — the HA custom integration attaches this as a
+   * ``CONNECTION_NETWORK_MAC`` connection so the target device merges
+   * with the native ESPHome integration's device row.
+   */
+  mac_address?: string | null;
 }
 
+/**
+ * An ESPHome device discovered on the network (via mDNS) or reported by
+ * Home Assistant. Distinct from `Target` above: a Target is a YAML config
+ * we manage; a Device is something physically out there.
+ *
+ * `compile_target` links the two when we can match a discovered device to
+ * one of our YAMLs (by name or MAC). Unmanaged devices (real ESPHome
+ * hardware with no local YAML) have `compile_target: null` and still
+ * render on the Devices tab under the "Unmanaged" divider.
+ */
 export interface Device {
   name: string;
   mac_address?: string;
   ip_address?: string;
   running_version?: string;
   online?: boolean;
+  /** YAML filename of the managed Target this device corresponds to, or
+   *  null for unmanaged devices (no matching YAML). */
   compile_target?: string | null;
   last_seen?: string;
   compilation_time?: number;
@@ -101,7 +142,7 @@ export interface Device {
    * Surfaced under the IP in the Devices tab so users can see at a glance
    * how each device's address was determined.
    */
-  address_source?: string | null;
+  address_source?: AddressSource | null;
   /**
    * True when Home Assistant confirms this device exists (MAC in the HA
    * ESPHome-device MAC set, or a matching entity in the HA registry).
@@ -191,6 +232,17 @@ export interface Job {
   status_text?: string;
   ota_only?: boolean;
   validate_only?: boolean;
+  /** FD.1: compile-and-download mode — skips OTA, binary uploaded to server. */
+  download_only?: boolean;
+  /** FD.1: true once the worker has POSTed the .bin and it's available
+   *  from GET /ui/api/jobs/{id}/firmware. Drives the Queue tab's Download
+   *  button visibility. */
+  has_firmware?: boolean;
+  /** #69: variant names currently stored for this job (e.g. ["factory", "ota"]).
+   *  ESP32 produces both; ESP8266 produces only "ota". Legacy pre-#69 blobs
+   *  surface as ["firmware"]. Drives which entries the Download dropdown
+   *  renders. Empty when has_firmware is false. */
+  firmware_variants?: string[];
   ota_result?: string;
   log?: string;
 }

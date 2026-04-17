@@ -360,6 +360,7 @@ async def get_next_job(request: web.Request) -> web.Response:
         timeout_seconds=job.timeout_seconds,
         ota_only=job.ota_only,
         validate_only=job.validate_only,
+        download_only=job.download_only,
         ota_address=job.ota_address,
         server_timezone=server_tz,
     )
@@ -403,6 +404,120 @@ async def submit_job_result(request: web.Request) -> web.Response:
                 logger.exception("Failed to schedule post-OTA device refresh for %s", job.target)
 
     return web.json_response(OkResponse().model_dump())
+
+
+# Variant names workers may upload. Kept server-side as an authoritative
+# whitelist so stale/unexpected values can't create arbitrary filenames.
+# "firmware" = pre-#69 legacy shape (see firmware_storage.LEGACY_VARIANT).
+_UPLOADABLE_VARIANTS = ("factory", "ota", "firmware")
+
+
+async def _handle_firmware_upload(
+    request: web.Request, *, variant: str,
+) -> web.Response:
+    """Shared handler for ``POST /api/v1/jobs/{id}/firmware[/{variant}]``.
+
+    The legacy no-variant route (pre-#69 workers) funnels through this
+    with ``variant="firmware"``; the new variant-qualified route passes
+    ``"factory"`` or ``"ota"``. All state-safety checks (bug #24,
+    security audit F-08) run identically for both shapes.
+    """
+    job_id = request.match_info["id"]
+    queue = request.app["queue"]
+    caller_client_id = (
+        request.headers.get(HEADER_X_CLIENT_ID)
+        or request.rel_url.query.get("client_id")
+    )
+
+    if variant not in _UPLOADABLE_VARIANTS:
+        return _protocol_error("unknown_firmware_variant", status=400)
+
+    job = queue.get(job_id)
+    if job is None:
+        return _protocol_error("job_not_found", status=404)
+    if not job.download_only:
+        return _protocol_error("job_not_download_only", status=400)
+
+    # #24 (1): state check MUST run before any disk write. A stale
+    # worker (the one that was abandoned by bug #17's offline
+    # short-circuit) will fail this check and we refuse without
+    # touching disk.
+    from job_queue import JobState  # noqa: PLC0415
+    if job.state != JobState.WORKING:
+        logger.info(
+            "Refusing firmware upload for job %s (variant=%s) — state is %s "
+            "(stale worker %s; current assigned: %s)",
+            job_id, variant, job.state.value, caller_client_id, job.assigned_client_id,
+        )
+        return _protocol_error("job_not_working", status=409)
+
+    # #24 (2) / security audit F-08: worker identity must match the
+    # currently-assigned worker. Without this, an abandoned-then-late
+    # worker could still overwrite the successor's upload.
+    if (
+        caller_client_id
+        and job.assigned_client_id
+        and caller_client_id != job.assigned_client_id
+    ):
+        logger.warning(
+            "Refusing firmware upload for job %s (variant=%s) — caller %s is not the "
+            "assigned worker %s (stale upload after requeue?)",
+            job_id, variant, caller_client_id, job.assigned_client_id,
+        )
+        return _protocol_error("worker_identity_mismatch", status=409)
+
+    data = await request.read()
+    if not data:
+        return _protocol_error("empty_firmware_body", status=400)
+
+    from firmware_storage import save_firmware, delete_firmware  # noqa: PLC0415
+    try:
+        save_firmware(job_id, data, variant=variant)
+    except Exception:
+        logger.exception(
+            "Failed to save firmware for job %s (variant=%s)", job_id, variant,
+        )
+        return _protocol_error("firmware_save_failed", status=500)
+
+    ok = await queue.mark_firmware_stored(job_id)
+    if not ok:
+        # Genuine race: the job transitioned out of WORKING between
+        # our pre-write state check and mark_firmware_stored. Clean
+        # up EVERY variant written by this worker for this job — the
+        # queue rejected the whole job, not just one variant.
+        logger.info(
+            "Cleaned up out-of-order firmware upload for job %s (variant=%s) "
+            "(transitioned out of WORKING during write)", job_id, variant,
+        )
+        delete_firmware(job_id)
+        return _protocol_error("job_not_eligible", status=409)
+
+    return web.json_response(OkResponse().model_dump())
+
+
+@routes.post("/api/v1/jobs/{id}/firmware")
+async def upload_job_firmware_legacy(request: web.Request) -> web.Response:
+    """Legacy no-variant route (#69) — pre-#69 workers still hit this.
+
+    Stored as variant ``firmware`` (the pre-#69 blob name). Once the
+    worker auto-updates to the post-#69 client, subsequent uploads go
+    through ``/firmware/{variant}`` with the real variant name.
+    """
+    return await _handle_firmware_upload(request, variant="firmware")
+
+
+@routes.post("/api/v1/jobs/{id}/firmware/{variant}")
+async def upload_job_firmware(request: web.Request) -> web.Response:
+    """FD.5 (#69-extended) — worker uploads one variant of the compiled binary.
+
+    ``variant`` ∈ {``factory``, ``ota``}: ESP32 produces both; ESP8266
+    only produces ``ota``. Workers call this once per variant, so a
+    single job may carry multiple binaries in ``/data/firmware/``.
+    Body: raw bytes of the ``.bin``. All other semantics match the
+    legacy route — see ``_handle_firmware_upload``.
+    """
+    variant = request.match_info["variant"]
+    return await _handle_firmware_upload(request, variant=variant)
 
 
 @routes.post("/api/v1/jobs/{id}/status")

@@ -112,6 +112,43 @@ check_absent "UI-4" \
     '' \
     ha-addon/ui/src
 
+# (UI-6) No silent "return default on !r.ok" in api/client.ts (CR.5). When
+# a handler fails, the UI needs to see an error — not a blank list + a
+# feature silently off. Flag any line that returns an array/object literal
+# immediately after `if (!r.ok)`. Throw or toast instead.
+check_absent "UI-6" \
+    "api/client.ts silent error-swallowing — throw or toast, don't return default" \
+    'if \(!r\.ok\) return (\[|\{)' \
+    '' \
+    ha-addon/ui/src/api
+
+# (E2E-1) No `page.waitForTimeout(N)` in e2e specs (CR.6). Fixed sleeps
+# are flake factories — the test finishes slower than CI, or faster than
+# the page state settles. Always wait on an observable condition
+# (`expect.poll`, `toBeVisible`, `toHaveCount(0)`) instead. Allow-listed:
+# none — if there's ever a legitimate reason, add it to the allowlist
+# here with a short comment.
+check_absent "E2E-1" \
+    "page.waitForTimeout in e2e specs — replace with a DOM-state wait" \
+    'page\.waitForTimeout\(' \
+    '' \
+    ha-addon/ui/e2e ha-addon/ui/e2e-hass-4
+
+# (UI-7) Icon-only buttons need both aria-label and title (UX.12). Icon
+# controls are unlabeled by default — screen readers need aria-label, and
+# sighted hover needs a title. If you're reaching for one, you need both.
+# Narrow grep: any <button> or *Trigger opening tag that mentions
+# aria-label= but doesn't have title= on the same opening tag (or vice
+# versa) is flagged. Opening tags can span multiple lines (Prettier style),
+# so the single-line grep approximates the rule — full enforcement is
+# reviewed. This still catches the common case of adding aria-label and
+# forgetting title (or vice versa) on one line.
+check_absent "UI-7" \
+    "icon-only button has aria-label but no title (or vice versa) on the same line" \
+    '<(button|[A-Z][A-Za-z]*Trigger)\b[^>]*aria-label=[^>]*>[^<]*$' \
+    'title=' \
+    ha-addon/ui/src
+
 # -----------------------------------------------------------------------------
 # Python invariants
 # -----------------------------------------------------------------------------
@@ -202,6 +239,84 @@ for reqs in ha-addon/server/requirements.txt ha-addon/client/requirements.txt; d
             fail "PY-8" "$lock: package '$pkg' from $reqs is not pinned in the lockfile. Run: bash scripts/refresh-deps.sh"
         fi
     done < "$reqs"
+done
+
+# -----------------------------------------------------------------------------
+# (#56) requirements.lock must not carry macOS-only transitive deps. Regenerating
+# the lockfile on a Mac host (instead of via scripts/refresh-deps.sh's Docker
+# container on linux/amd64) pulls pyobjc-core + pyobjc-framework-* in as
+# platform-conditional transitives WITHOUT their sys_platform markers, which
+# then causes "error: PyObjC requires macOS to build" on every Linux Docker
+# build. Happened twice — 1.3.1-dev.9 and 1.4.1-dev.55. One-line guard: if any
+# of the tell-tale package names appears in the lockfile, fail CI with a
+# pointer to the proper regeneration path.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+for lock in ha-addon/server/requirements.lock ha-addon/client/requirements.lock; do
+    [[ -f "$lock" ]] || continue
+    if grep -qiE "^(pyobjc|appnope|pyobjc-core|pyobjc-framework-)" "$lock"; then
+        offenders=$(grep -iE "^(pyobjc|appnope|pyobjc-core|pyobjc-framework-)" "$lock" | head -5 | paste -sd, -)
+        fail "#56" "$lock: macOS-only deps leaked in [$offenders]. Regenerate via: bash scripts/refresh-deps.sh (inside Docker linux/amd64)."
+    fi
+done
+
+# -----------------------------------------------------------------------------
+# (SC.1) Every `uses: <org>/<repo>@…` in .github/workflows/*.yml must reference
+# a 40-char commit SHA (not a moving tag like @v6). Tag refs are an attack
+# vector — whoever controls the tag controls what our CI runs. SHA pins
+# freeze the exact commit Dependabot already understands how to bump.
+# Closes F-19. Any new workflow action needs to be resolved via:
+#     gh api repos/<org>/<repo>/git/ref/tags/<tag> --jq .object.sha
+# and the result committed with a trailing "# <tag>" comment.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+for wf in .github/workflows/*.yml; do
+    [[ -f "$wf" ]] || continue
+    # Extract every non-local "uses:" reference. Skip ./ (local composite
+    # actions) since they live in the same repo and don't have a remote SHA.
+    while IFS= read -r line; do
+        # "uses: org/repo@REF [# comment]" — pull the REF token.
+        ref="$(echo "$line" | awk -F'@' '{print $2}' | awk '{print $1}')"
+        [[ -z "$ref" ]] && continue
+        # Require 40-char lowercase hex (full SHA).
+        if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "SC.1" "$wf: uses-line does not SHA-pin: $line"
+        fi
+    done < <(grep -E "^\s*(- )?uses:[[:space:]]+[^./]" "$wf")
+done
+
+# -----------------------------------------------------------------------------
+# (#57) Workflow YAML sanity check. The SC.1 mass-rewrite in eec0511 jammed
+# two `uses:` directives onto one line because the replacement regex included
+# `\s*` in a trailing group and swallowed newlines. SC.1 still saw a valid
+# SHA on each broken line so the rule didn't catch it — all four workflows
+# failed at GitHub's workflow-load step instead.
+#
+# Primary guard: no line can contain two `uses:` tokens — that's always a
+# bug, and it's what actually regressed. Secondary (optional) guard: if
+# PyYAML is available in the current Python, also run yaml.safe_load on
+# each workflow as a broader sanity check. CI's Python has pyyaml; the
+# local dev shell's Homebrew python often doesn't — don't fail the whole
+# invariant run just because yaml isn't importable locally.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+yaml_available=0
+if python3 -c "import yaml" 2>/dev/null; then
+    yaml_available=1
+fi
+for wf in .github/workflows/*.yml; do
+    [[ -f "$wf" ]] || continue
+    # Primary: two `uses:` on one line = jammed-line regression.
+    if grep -En '(^|[^a-zA-Z_])uses:.*[^a-zA-Z_]uses:' "$wf" >/dev/null 2>&1; then
+        offender=$(grep -En '(^|[^a-zA-Z_])uses:.*[^a-zA-Z_]uses:' "$wf" | head -1)
+        fail "#57" "$wf: line has two \`uses:\` directives — jammed-line regression (see SC.1 commit eec0511). Offender: $offender"
+    fi
+    # Secondary: yaml.safe_load parse check, only when pyyaml is present.
+    if [[ $yaml_available -eq 1 ]]; then
+        if ! python3 -c "import sys, yaml; yaml.safe_load(open(sys.argv[1]))" "$wf" 2>/dev/null; then
+            fail "#57" "$wf: does not parse as valid YAML. Run: python3 -c 'import yaml; yaml.safe_load(open(\"$wf\"))' for the error."
+        fi
+    fi
 done
 
 # -----------------------------------------------------------------------------

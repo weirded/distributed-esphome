@@ -1,9 +1,12 @@
-name: "ESPHome Distributed Build Server"
-version: "1.4.0"
+name: "ESPHome Fleet"
+version: "1.5.0"
 slug: "esphome_dist_server"
-description: "Manage large fleets of ESPHome devices with distributed compilation, per-device version pinning, and scheduled OTA upgrades"
+description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
-arch: [aarch64, amd64, armhf, armv7, i386]
+# #10: dropped armhf, armv7, i386 — Supervisor flags them as deprecated, and
+# ESPHome compilation is a 64-bit-only game in practice. No real users on
+# 32-bit ARM or x86; the toolchains for new ESP32 variants don't ship for them.
+arch: [aarch64, amd64]
 startup: application
 boot: auto
 init: true
@@ -16,7 +19,7 @@ codeowners:
 ingress: true
 ingress_port: 8765
 panel_icon: mdi:progress-wrench
-panel_title: "ESPH Distributed"
+panel_title: "ESPHome Fleet"
 
 # Direct port: build workers (Docker) connect here with Bearer token auth
 ports:
@@ -31,6 +34,20 @@ host_network: true
 hassio_api: true
 # HA Core REST API access — needed to read entity states (device connectivity)
 homeassistant_api: true
+# AU.1: Supervisor /auth endpoint — lets the add-on validate HA user
+# credentials (Authorization: Bearer <HA long-lived access token>) on
+# direct-port requests so mutations can be attributed to the HA user,
+# and direct-port access can be locked down via the `require_ha_auth`
+# add-on option (AU.3).
+auth_api: true
+
+# #26: declare that we POST to Supervisor's /discovery with service
+# "esphome_fleet". Without this, Supervisor rejects the POST with 403
+# "Apps must list services they provide via discovery in their config!"
+# The service name matches the integration DOMAIN that `async_step_hassio`
+# on the integration side dispatches against.
+discovery:
+  - esphome_fleet
 
 # GitHub #45: exclude the local worker's ESPHome version cache + build
 # artifacts from HA backups. These are large (~50-200MB per target) and
@@ -39,6 +56,13 @@ backup_exclude:
   - esphome-versions
 
 map:
+  # HI.9: need write access to /config/custom_components/esphome_fleet/
+  # for the HA-integration auto-installer (HI.8) at startup. The new
+  # `homeassistant_config` key mounts at /homeassistant (NOT /config),
+  # which would break every existing `/config/esphome/...` path in the
+  # server + scanner. Stick with the old `config:rw` shorthand — it's
+  # deprecated but still works, and deprecation-warning is a smaller
+  # tax than a full path migration. Revisit when HA removes `config`.
   - config:rw
 options:
   token: ""
@@ -46,9 +70,17 @@ options:
   ota_timeout: 120
   worker_offline_threshold: 30
   device_poll_interval: 60
+  # AU.7: defaults to `true` in 1.5.0. The add-on's shared worker
+  # token now also grants system access to /ui/api/*, so the native
+  # HA integration authenticates transparently.
+  require_ha_auth: true
 schema:
   token: password
   job_timeout: int
   ota_timeout: int
   worker_offline_threshold: int
   device_poll_interval: int
+  # AU.3/AU.7: when true (the 1.5.0 default), direct-port /ui/api/*
+  # calls must carry a valid HA Bearer token or the add-on's own
+  # server token. Ingress-tunneled access is unaffected.
+  require_ha_auth: bool

@@ -1,45 +1,21 @@
 # Work Items — 1.7.0
 
-Theme: **ESPHome dashboard parity.** Every feature the stock ESPHome UI has, this has too. Serial flashing, tail logs after OTA, adopt discovered devices. Also: remote compilation for cloud-based build workers.
+Theme: **LLM-powered assistance.** Use LLMs to help write ESPHome YAML and to proactively surface breaking changes in new ESPHome releases against the user's actual device fleet.
 
-(Minimal "new device" + "duplicate device" landed in 1.4.0 — see `WORKITEMS-1.4.md`. The full wizard with platform/board/WiFi selection remains here if we decide it adds value over the minimal stub + editor flow.)
+## AI/LLM Editor
 
-## Web Serial Flashing
+- [ ] **1.4a Server config** — add-on options for LLM provider, API key, model, endpoint
+- [ ] **1.4b Completion endpoint** — `POST /ui/api/ai/complete` proxies to LLM with YAML context
+- [ ] **1.4c Inline ghost text** — display LLM suggestions as Monaco inline completions
+- [ ] **1.4d Chat endpoint** — `POST /ui/api/ai/chat` for natural language → YAML
+- [ ] **1.4e Chat panel in editor** — side panel for prompting, accept/reject generated changes
 
-The right integration target is **[`esphome/esp-web-tools`](https://github.com/esphome/esp-web-tools)** (the same package `web.esphome.io` is built on), **not** `espressif/esptool-js` directly. `esp-web-tools` wraps `esptool-js: ^0.5.7` in a drop-in `<esp-web-install-button>` custom element that takes a `manifest` attribute pointing at a JSON manifest describing the firmware binaries and offsets. We get the Chrome Web Serial flashing + progress UI + error handling for free; our job is just the manifest endpoint.
+## ESPHome Release Breaking-Change Analyzer
 
-**Prerequisite:** 1.4's firmware download work (CD section / 3.1a-c equivalents in 1.4) must land first — it's what produces the `.bin` files the manifest points at. Without it, there's nothing to flash.
+Given a target ESPHome release, use an LLM to analyze that release's notes against the components each managed device actually uses, and surface per-device breaking-change risk before the user upgrades.
 
-- [ ] **3.2a.1 Firmware manifest endpoint** — `GET /ui/api/targets/{f}/manifest.json` returns an `esp-web-tools`-shaped manifest: `{name, version, home_assistant_domain, new_install_prompt_erase, builds: [{chipFamily, parts: [{path, offset}]}]}`. `path` points at the existing firmware download endpoint from 1.4. Chip family is read from the target's YAML (`esphome.platform` + board → chip family mapping). Document the manifest format version we target in a module-level constant.
-- [ ] **3.2a.2 `<esp-web-install-button>` integration** — install `esp-web-tools` as a frontend dep. Drop the custom element into a new "Install via USB" modal (or the existing device row hamburger menu → "Flash via USB"). Wire its `manifest` attribute to the manifest endpoint from 3.2a.1. Handle the `state-changed` events it emits to surface progress in our own toast/log UI instead of its default rendering. Check bundle size impact — `esptool-js` + deps aren't tiny.
-- [ ] **3.2a.3 Chrome/Edge detection + graceful fallback** — Web Serial is Chromium-only. If `navigator.serial` is undefined, disable the button and show a tooltip explaining why (matches the **Disable, don't fail** design judgment rule). Playwright e2e test asserts the button is disabled on Firefox/WebKit.
-- [ ] **3.2a.4 E2E mocked test** — at minimum verify the button appears on device rows, opens the modal, and the manifest endpoint returns the correct shape. Actual flashing can't be e2e-tested without a real device — document this as a manual verification step in the release checklist.
-- [ ] **3.2b Server serial flashing** — list ports on HA host, esptool.py flash endpoint. Alternative to Web Serial for the HA host itself (where Chrome isn't an option). Keep this separate from 3.2a — different code path, different security model.
-
-## Web Serial Logs
-
-- [ ] **4.1d Web Serial logs** — browser-side USB serial log viewer (Web Serial API)
-
-## Live Log Tail After Update
-
-- [ ] **4.5 Auto-connect device logs after OTA** — when viewing a job's log modal, automatically connect to the device's native API log stream after OTA completes, like `esphome run` does (compile → upload → tail logs)
-
-## Thread / IPv6 Support
-
-- [ ] **4.6 Thread device IP display** (GitHub #17) — Thread devices use IPv6 and don't show an IP address in the dashboard. Display IPv6 addresses and add a wifi/thread indicator to the device row.
-
-## Device Adoption
-
-- [ ] **2.4 Device adoption/import** — discover unconfigured devices, adopt with project URL
-
-## Remote Compilation
-
-Allow compiling on VPS servers not on the local network. Builds on 1.4's firmware download infrastructure — the remote worker compiles and sends firmware back to the server, then a local agent (the HA add-on itself or a local worker) handles OTA separately.
-
-- [ ] **RC.1 Compile-only worker mode** — worker compiles and POSTs firmware binary to server instead of OTA-flashing; reuses 1.4's firmware storage
-- [ ] **RC.2 Server-side OTA** — server runs `esphome upload` or OTA protocol against local devices using stored firmware
-- [ ] **RC.3 Two-phase job lifecycle** — new job states for compile-complete-awaiting-OTA; UI shows firmware ready + OTA trigger button
-- [ ] **RC.4 GitHub Actions integration** — optional: trigger builds via GitHub Actions workflow
-
-## Open Bugs & Tweaks
-
+- [ ] **BC.1 Release notes fetcher** — pull ESPHome release notes from the GitHub releases API (fallback: esphome.io changelog); cache under `/data/esphome_releases/<version>.json`
+- [ ] **BC.2 Device component inventory** — for each managed device, extract the set of components/platforms in use from its parsed YAML (reuse the existing config cache / `scanner.py` parsing; do not hand-roll)
+- [ ] **BC.3 `POST /ui/api/ai/analyze-release`** — input: target version + optional device filter. Sends release notes + per-device component inventory to the configured LLM (reuses the 1.4a provider config). Returns `[{device, risk: none|low|high, affected_components, summary}]`
+- [ ] **BC.4 UI entry point** — "Check breaking changes" action on the ESPHome version picker and the Upgrade Outdated flow; results modal grouped by device with expandable per-component detail and a link to the relevant release-notes section
+- [ ] **BC.5 Result caching** — key by `(release_version, device_yaml_hash)` so re-opening the modal is instant and LLM calls only happen when something actually changed

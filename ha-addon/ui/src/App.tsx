@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ExternalLink, Eye, EyeOff, Moon, Sun } from 'lucide-react';
 import useSWR from 'swr';
 import {
   cancelJobs,
@@ -10,11 +11,13 @@ import {
   removeJobs,
   getDevices,
   getEsphomeVersions,
+  refreshEsphomeVersions,
   getInitialAddonVersion,
   getQueue,
   getServerInfo,
   getTargets,
   getWorkers,
+  isUnauthorizedError,
   removeWorker,
   renameTarget,
   setWorkerParallelJobs,
@@ -29,6 +32,7 @@ import {
   unpinTargetVersion,
 } from './api/client';
 import { ConnectWorkerModal } from './components/ConnectWorkerModal';
+import { EsphomeInstallBanner } from './components/EsphomeInstallBanner';
 import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
 import { NewDeviceModal } from './components/NewDeviceModal';
@@ -44,6 +48,7 @@ import { Toaster } from './components/ui/sonner';
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, Job, Target, Worker } from './types';
 import { stripYaml } from './utils';
+import esphomeLogoUrl from './assets/esphome-logo.svg';
 import './theme.css';
 
 type TabName = 'devices' | 'queue' | 'workers' | 'schedules';
@@ -101,44 +106,95 @@ async function applyScheduleVersion(
   }
 }
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<TabName>(
-    () => (sessionStorage.getItem('activeTab') as TabName) || 'devices',
-  );
-  // Deep compare prevents re-renders when polled data hasn't changed structurally
-  const deepCompare = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const _VALID_TABS: TabName[] = ['devices', 'queue', 'workers', 'schedules'];
 
-  const { data: serverInfo = { token: '', port: 8765 } } = useSWR(
+function _initialTab(): TabName {
+  // QS.27: URL query param wins over sessionStorage so deep-links like
+  // `?tab=queue` work reliably from HA sidebar links or bookmarks. HA
+  // Ingress strips the query string from the panel URL but users can
+  // still land here from the "Open web UI" direct-port link, from a
+  // bookmark, or from a row-deep-link shared by another user.
+  if (typeof window !== 'undefined') {
+    try {
+      const q = new URLSearchParams(window.location.search).get('tab');
+      if (q && (_VALID_TABS as string[]).includes(q)) {
+        return q as TabName;
+      }
+    } catch {
+      // malformed URL — fall through to sessionStorage
+    }
+  }
+  const stored = sessionStorage.getItem('activeTab');
+  if (stored && (_VALID_TABS as string[]).includes(stored)) {
+    return stored as TabName;
+  }
+  return 'devices';
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<TabName>(_initialTab);
+  // QS.6: SWR's default compare (stable-hash) already prevents re-renders
+  // when polled data is structurally unchanged. The custom JSON.stringify
+  // compare we used to have was strictly worse — O(n) serialization of the
+  // full response on every tick, breaks on undefined/circular, and hides
+  // legitimate key-order differences.
+  // QS.7: bubble errors to console instead of silently swallowing them —
+  // previously every SWR poll failure disappeared into a `() => {}` sink.
+  const logSwrError = useCallback((key: string) => (err: unknown) => {
+    console.error('SWR', key, err);
+  }, []);
+
+  const { data: serverInfo = { token: '', port: 8765 }, error: serverInfoError, mutate: mutateServerInfo } = useSWR(
     'serverInfo',
     getServerInfo,
-    { refreshInterval: 30_000, onError: () => {}, compare: deepCompare },
+    {
+      // SE.8: tighten the poll during an in-flight ESPHome install so the
+      // banner + /ui/api/esphome-version dropdown refresh promptly once
+      // the server transitions to `ready`. 30 s otherwise.
+      refreshInterval: (data) =>
+        data?.esphome_install_status === 'installing' ? 3_000 : 30_000,
+      onError: logSwrError('serverInfo'),
+    },
   );
   const { data: esphomeVersions = { selected: null, detected: null, available: [] }, mutate: mutateEsphomeVersions } = useSWR(
     'versions',
     getEsphomeVersions,
-    { refreshInterval: 15 * 60_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 15 * 60_000, onError: logSwrError('versions') },
   );
   // Poll at 1 Hz for live-feeling updates. Workers + queue are pure in-memory
   // reads. Targets/devices does a readdir + per-target stat() for mtime cache
   // checks (metadata resolution is cached and only re-fires when a file
   // changes), which is cheap on Linux but not free — if this becomes a
   // concern on large config dirs, add a server-side snapshot cache.
-  const { data: workers = [], mutate: mutateWorkers } = useSWR(
+  const { data: workers = [], error: workersError, mutate: mutateWorkers } = useSWR(
     'workers',
     getWorkers,
-    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: logSwrError('workers') },
   );
-  const { data: devicesAndTargets, mutate: mutateDevices } = useSWR(
+  const { data: devicesAndTargets, error: devicesError, mutate: mutateDevices } = useSWR(
     'devices',
     async () => { const [t, d] = await Promise.all([getTargets(), getDevices()]); return { targets: t, devices: d }; },
-    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: logSwrError('devices') },
   );
   const targets = devicesAndTargets?.targets ?? [];
   const devices = devicesAndTargets?.devices ?? [];
-  const { data: queue = [], mutate: mutateQueue } = useSWR(
+  const { data: queue = [], error: queueError, mutate: mutateQueue } = useSWR(
     'queue',
     getQueue,
-    { refreshInterval: 1_000, onError: () => {}, compare: deepCompare },
+    { refreshInterval: 1_000, onError: logSwrError('queue') },
+  );
+
+  // #84: if the session expired (or direct-port user has a stale/wrong
+  // ?token=), every protected endpoint now returns 401. The tabs would
+  // otherwise show "No devices found" / "No workers registered" etc.,
+  // which falsely implies the fleet is empty. Detect the 401 on any of
+  // the four always-polling SWR hooks and render a dedicated
+  // "Session expired" overlay instead.
+  const isUnauthenticated = (
+    isUnauthorizedError(serverInfoError) ||
+    isUnauthorizedError(workersError) ||
+    isUnauthorizedError(devicesError) ||
+    isUnauthorizedError(queueError)
   );
   // Exclude validation-only jobs from display (they run server-side and auto-prune)
   const displayQueue = useMemo(() => queue.filter(j => !j.validate_only), [queue]);
@@ -215,14 +271,29 @@ export default function App() {
 
   // ---- Tab navigation ----
 
-  function switchTab(name: TabName) {
+  const switchTab = useCallback((name: TabName) => {
     setActiveTab(name);
     sessionStorage.setItem('activeTab', name);
-  }
+    // QS.27: reflect the tab in the URL so copy-paste / browser-back
+    // navigation works. pushState (not setting window.location) avoids
+    // a full reload. Skip in HA Ingress where the `X-Ingress-Path`
+    // ownership means we shouldn't rewrite the URL.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', name);
+      window.history.replaceState(null, '', url);
+    } catch {
+      // non-browser env or malformed URL — sessionStorage carries it.
+    }
+  }, []);
 
   // ---- Actions ----
 
-  async function handleCompile(targets_: string[] | 'all' | 'outdated') {
+  // QS.20: handlers passed to DevicesTab / other child components are
+  // memoized so the columns hook (useDeviceColumns) can keep its memo cache
+  // across SWR polls. Without useCallback they'd be fresh refs every render
+  // and the columns block would rebuild on every 1Hz tick.
+  const handleCompile = useCallback(async (targets_: string[] | 'all' | 'outdated') => {
     try {
       const data = await compile(targets_);
       addToast(`Queued ${data.enqueued} device(s)`, 'success');
@@ -236,20 +307,21 @@ export default function App() {
     } catch (err) {
       addToast('Error: ' + (err as Error).message, 'error');
     }
-  }
+  }, [addToast, switchTab, mutateQueue, mutateDevices]);
 
   // #22: open the unified Upgrade modal. defaultMode controls whether it
   // opens on "Now" or "Schedule" tab.
-  function handleOpenUpgradeModal(target: string, defaultMode: 'now' | 'schedule' = 'now') {
+  const handleOpenUpgradeModal = useCallback((target: string, defaultMode: 'now' | 'schedule' = 'now') => {
     const t = targets.find(x => x.target === target);
     const displayName = t?.friendly_name || stripYaml(target);
     setUpgradeModalTarget({ target, displayName, defaultMode });
-  }
+  }, [targets]);
 
   async function handleUpgradeConfirm(params: {
     pinnedClientId: string | null;
     esphomeVersion: string | null;
     updatePin?: string | null;
+    downloadOnly?: boolean;
   }) {
     const ctx = upgradeModalTarget;
     if (!ctx) return;
@@ -259,13 +331,21 @@ export default function App() {
       if (params.updatePin) {
         await pinTargetVersion(ctx.target, params.updatePin);
       }
-      await compile([ctx.target], params.pinnedClientId ?? undefined, params.esphomeVersion ?? undefined);
+      await compile(
+        [ctx.target],
+        params.pinnedClientId ?? undefined,
+        params.esphomeVersion ?? undefined,
+        params.downloadOnly ?? false,
+      );
       const versionSuffix = params.esphomeVersion ? ` (ESPHome ${params.esphomeVersion})` : '';
       const workerSuffix = params.pinnedClientId
         ? ` on ${workers.find(w => w.client_id === params.pinnedClientId)?.hostname ?? params.pinnedClientId}`
         : '';
       const pinSuffix = params.updatePin ? ` (pin updated to ${params.updatePin})` : '';
-      addToast(`Queued ${ctx.displayName}${workerSuffix}${versionSuffix}${pinSuffix}`, 'success');
+      // FD.3: different toast verb when producing a downloadable binary
+      // so the user understands the device won't be OTA'd this round.
+      const verb = params.downloadOnly ? 'Compile-and-download queued for' : 'Queued';
+      addToast(`${verb} ${ctx.displayName}${workerSuffix}${versionSuffix}${pinSuffix}`, 'success');
       switchTab('queue');
       mutateQueue();
       mutateDevices();
@@ -426,7 +506,7 @@ export default function App() {
     }
   }
 
-  async function handleDeleteDevice(target: string, archive: boolean) {
+  const handleDeleteDevice = useCallback(async (target: string, archive: boolean) => {
     try {
       await deleteTarget(target, archive);
       addToast(`${archive ? 'Archived' : 'Deleted'} ${stripYaml(target)}`, 'success');
@@ -434,9 +514,9 @@ export default function App() {
     } catch (err) {
       addToast('Delete failed: ' + (err as Error).message, 'error');
     }
-  }
+  }, [addToast, mutateDevices]);
 
-  async function handleRenameDevice(oldTarget: string, newName: string) {
+  const handleRenameDevice = useCallback(async (oldTarget: string, newName: string) => {
     try {
       const result = await renameTarget(oldTarget, newName);
       addToast(`Renamed to ${stripYaml(result.new_filename)} — compiling new firmware...`, 'success');
@@ -446,7 +526,7 @@ export default function App() {
     } catch (err) {
       addToast('Rename failed: ' + (err as Error).message, 'error');
     }
-  }
+  }, [addToast, mutateDevices, mutateQueue, switchTab]);
 
   async function handleSelectEsphomeVersion(version: string) {
     try {
@@ -472,14 +552,31 @@ export default function App() {
   return (
     <>
       <header>
+        {/* #85: replaced the CDN-hotlinked ESPHome wordmark with just the
+            house glyph served locally, paired with our own "ESPHome Fleet"
+            wordmark rendered in the app's own type. Also removes the
+            dependency on a third-party CDN at page-load time (wordmark
+            was served from media.esphome.io). */}
         <img
-          src="https://media.esphome.io/logo/logo-text-on-dark.svg"
-          alt="ESPHome"
-          height={26}
+          src={esphomeLogoUrl}
+          alt="ESPHome Fleet"
+          /* actual size is driven by `header img { height: 40px }` in
+             theme.css — attributes here are just intrinsic-aspect hints
+             for the browser (square → width = height). */
+          height={40}
+          width={40}
           style={{ display: 'block', flexShrink: 0 }}
         />
-        <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-          Distributed Build
+        <span
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: 'var(--text)',
+            whiteSpace: 'nowrap',
+            letterSpacing: '-0.01em',
+          }}
+        >
+          ESPHome Fleet
         </span>
         <span className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap">
           {serverInfo.addon_version ? `v${serverInfo.addon_version}` : 'v?'}
@@ -489,35 +586,69 @@ export default function App() {
           onSelect={handleSelectEsphomeVersion}
           onRefresh={async () => {
             addToast('Refreshing ESPHome versions...', 'info');
-            await mutateEsphomeVersions();
-            addToast('ESPHome version list updated', 'success');
+            // Bug #19: force the server to re-fetch PyPI (bypassing the
+            // 1h TTL), then hand the response directly to SWR so the
+            // dropdown reflects the fresh list immediately instead of
+            // waiting for the background refresher to run.
+            try {
+              const fresh = await refreshEsphomeVersions();
+              await mutateEsphomeVersions(fresh, false);
+              addToast(`ESPHome version list updated (${fresh.available.length} versions)`, 'success');
+            } catch (err) {
+              addToast('Refresh failed: ' + (err as Error).message, 'error');
+            }
           }}
         />
-        <span
-          className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap"
-          style={{ cursor: 'pointer' }}
+        {/* QS.3: <span onClick> → <button> for Secrets, theme, streamer. */}
+        <button
+          type="button"
+          className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap cursor-pointer"
           onClick={() => setEditorTarget('secrets.yaml')}
           title="Edit secrets.yaml"
         >
           Secrets
-        </span>
-        <span
-          className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[13px] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
+        </button>
+        {/* QS.2/QS.15: aria-label on icon-only buttons; Lucide icons. */}
+        <button
+          type="button"
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-pressed={theme === 'light'}
+          className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
           onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {theme === 'dark' ? '☀' : '☾'}
-        </span>
-        <span
-          className={`inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[13px] cursor-pointer hover:bg-[var(--border)] ${streamerMode ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
+          {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+        </button>
+        <button
+          type="button"
+          aria-label={streamerMode ? 'Disable streamer mode' : 'Enable streamer mode (blur sensitive data)'}
+          aria-pressed={streamerMode}
+          className={`inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] cursor-pointer hover:bg-[var(--border)] ${streamerMode ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
           onClick={() => setStreamerMode(s => !s)}
           title={streamerMode ? 'Disable streamer mode' : 'Enable streamer mode (blur sensitive data)'}
         >
-          {streamerMode ? '🔒' : '👁'}
-        </span>
+          {streamerMode ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+        </button>
+        {/* #52: quick link to ESPHome Web for users who need to do a
+            serial / USB flash as a short-term workaround (e.g. first-
+            time provisioning, bricked device with no OTA path). Opens
+            in a new tab — web.esphome.io is a Google-hosted tool, HA
+            Ingress has no reason to tunnel it. */}
+        <a
+          href="https://web.esphome.io/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap hover:bg-[var(--border)]"
+          title="Open ESPHome Web (serial / USB flashing)"
+        >
+          ESPHome Web
+          <ExternalLink className="size-3" aria-hidden />
+        </a>
         <span className="spacer" />
         <span className="status-dot" title="Server online" />
       </header>
+
+      <EsphomeInstallBanner serverInfo={serverInfo} onRefresh={() => void mutateServerInfo()} />
 
       <nav className="sticky top-[52px] z-40 flex overflow-x-auto border-b border-[var(--border)] bg-[var(--surface)] px-5">
         {(['devices', 'queue', 'workers', 'schedules'] as TabName[]).map(tab => {
@@ -601,6 +732,35 @@ export default function App() {
         )}
       </main>
 
+      {isUnauthenticated && (
+        <div
+          role="alertdialog"
+          aria-labelledby="unauth-heading"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,0,0,0.55)] backdrop-blur-sm"
+        >
+          <div className="w-[min(440px,92vw)] rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 shadow-xl">
+            <h2 id="unauth-heading" className="mb-2 text-lg font-semibold text-[var(--text)]">
+              Session expired
+            </h2>
+            <p className="mb-4 text-sm text-[var(--text-muted)]">
+              ESPHome Fleet requires a valid Home Assistant session. Your
+              session likely timed out, or the <code>?token=</code> you used
+              for direct-port access is no longer valid. Reload to
+              re-authenticate through Home Assistant.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => location.reload()}
+                className="inline-flex h-9 items-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white hover:opacity-90"
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Toaster />
 
       <LogModal
@@ -649,7 +809,6 @@ export default function App() {
           // saves first (in handleSaveAndUpgrade) — this just changes what
           // happens AFTER the save.
           onCompile={(target) => handleOpenUpgradeModal(target)}
-          onRename={(target) => { setEditorTarget(null); setRenameModalTarget(target); }}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
           esphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? undefined}
         />

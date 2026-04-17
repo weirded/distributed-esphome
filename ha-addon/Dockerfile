@@ -1,11 +1,16 @@
-FROM python:3.11-slim
+# #7: use the BUILD_FROM arg set by the Supervisor from build.yaml. The
+# hardcoded `FROM python:3.11-slim` we had before ignored build.yaml's
+# per-arch selection — and tripped Supervisor's "build.yaml deprecated"
+# warning on every parse because nothing here took advantage of it.
+ARG BUILD_FROM=docker.io/library/python:3.11-slim
+FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
 ARG BUILD_VERSION
 
 LABEL \
-    io.hass.name="ESPHome Distributed Build Server" \
-    io.hass.description="Distributed ESPHome compilation coordinator" \
+    io.hass.name="ESPHome Fleet" \
+    io.hass.description="Manage fleets of ESPHome devices: distributed compile, version pinning, scheduled OTA upgrades" \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
@@ -26,6 +31,10 @@ COPY VERSION /app/VERSION
 # Same hash-pinned approach.
 COPY client/ /app/client/
 RUN pip install --no-cache-dir --require-hashes -r /app/client/requirements.lock
+
+# HI.8: bundle the HA custom integration so the add-on can auto-install
+# it into /config/custom_components/ on startup.
+COPY custom_integration/ /app/custom_integration/
 
 ENTRYPOINT []
 CMD ["python3", "/app/main.py"]

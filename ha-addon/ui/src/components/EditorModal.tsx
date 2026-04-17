@@ -1,7 +1,7 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
-import * as yaml from 'js-yaml';
+import { Check, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { getEsphomeSchema, getSecretKeys, getTargetContent, saveTargetContent } from '../api/client';
+import { getTargetContent, saveTargetContent } from '../api/client';
 import {
   Dialog,
   DialogContent,
@@ -10,85 +10,11 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Button } from './ui/button';
+// QS.22: Monaco glue (completion provider, YAML validation, initial pass)
+// lives in ./editor/. EditorModal stays a thin dialog + state wrapper.
+import { loadComponentList, setEsphomeVersion, setupEsphomeEditor } from './editor/monacoSetup';
+
 type ToastType = 'info' | 'success' | 'error';
-
-// ESPHome uses custom YAML tags that standard parsers reject. Register them so
-// js-yaml can parse ESPHome configs without throwing on !include, !secret, etc.
-const ESPHOME_SCHEMA = yaml.DEFAULT_SCHEMA.extend([
-  new yaml.Type('!include', { kind: 'scalar', construct: (data) => data }),
-  new yaml.Type('!secret', { kind: 'scalar', construct: (data) => data }),
-  new yaml.Type('!lambda', { kind: 'scalar', construct: (data) => data }),
-  new yaml.Type('!extend', { kind: 'mapping', construct: (data) => data }),
-  new yaml.Type('!remove', { kind: 'scalar', construct: () => null }),
-]);
-
-// Common sub-keys offered as a last-resort fallback when no component schema
-// is available (e.g. custom components not in schema.esphome.io).
-const COMMON_SUB_KEYS = [
-  'platform', 'name', 'id', 'pin', 'internal', 'disabled_by_default',
-  'on_value', 'on_state', 'filters', 'update_interval', 'unit_of_measurement',
-  'device_class', 'state_class', 'accuracy_decimals', 'icon', 'address',
-  'sda', 'scl', 'frequency', 'rx_pin', 'tx_pin', 'baud_rate',
-];
-
-// Per-component schema fetching lives in api/esphomeSchema.ts (C.5 — all
-// HTTP calls must live in the api/ layer, never in components).
-import { fetchComponentSchema } from '../api/esphomeSchema';
-
-interface ConfigVar {
-  name: string;
-  docs?: string;
-  required?: boolean;
-}
-
-function getConfigVars(schemaData: unknown, componentName: string): ConfigVar[] {
-  if (!schemaData || typeof schemaData !== 'object') return [];
-
-  const comp = (schemaData as Record<string, unknown>)[componentName];
-  if (!comp || typeof comp !== 'object') return [];
-
-  const schemas = (comp as Record<string, unknown>).schemas;
-  if (!schemas || typeof schemas !== 'object') return [];
-
-  const configSchema = (schemas as Record<string, unknown>).CONFIG_SCHEMA;
-  if (!configSchema || typeof configSchema !== 'object') return [];
-
-  const schema = (configSchema as Record<string, unknown>).schema;
-  if (!schema || typeof schema !== 'object') return [];
-
-  const configVars = (schema as Record<string, unknown>).config_vars;
-  if (!configVars || typeof configVars !== 'object') return [];
-
-  return Object.entries(configVars as Record<string, unknown>).map(([name, info]) => ({
-    name,
-    docs: (info && typeof info === 'object' && typeof (info as Record<string, unknown>).docs === 'string')
-      ? (info as Record<string, string>).docs
-      : '',
-    required: (info && typeof info === 'object')
-      ? (info as Record<string, unknown>).key === 'Required'
-      : false,
-  }));
-}
-
-// Walk up from the current line to find the nearest indent-0 YAML key, which
-// is the top-level component name the cursor is nested under.
-function findParentComponent(
-  model: import('monaco-editor').editor.ITextModel,
-  lineNumber: number,
-): string | null {
-  for (let i = lineNumber; i >= 1; i--) {
-    const line = model.getLineContent(i);
-    const trimmed = line.trimStart();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const indent = line.length - trimmed.length;
-    if (indent === 0) {
-      const colonIdx = trimmed.indexOf(':');
-      const key = colonIdx >= 0 ? trimmed.slice(0, colonIdx).trim() : trimmed.trim();
-      return key || null;
-    }
-  }
-  return null;
-}
 
 interface Props {
   target: string | null;
@@ -101,140 +27,14 @@ interface Props {
   onToast: (msg: string, type?: ToastType) => void;
   onValidate?: (target: string) => Promise<{ success: boolean; output: string } | null>;
   onCompile?: (target: string) => void;
-  onRename?: (target: string) => void;
   monacoTheme?: string;
   esphomeVersion?: string | null;
 }
 
-// Module-level variable that holds the ESPHome version currently in use.
-// Set each time the editor mounts so the async completion provider can read it
-// without needing a closure that captures a stale prop value.
-let _currentEsphomeVersion = 'dev';
-
-// Module-level component list cache — fetched once per page load from the
-// server's /ui/api/esphome-schema endpoint which reflects the actual installed
-// ESPHome package rather than a hardcoded subset.
-let _componentList: string[] = [];
-let _componentListPromise: Promise<string[]> | null = null;
-
-function loadComponentList(): Promise<string[]> {
-  if (_componentList.length > 0) return Promise.resolve(_componentList);
-  if (_componentListPromise) return _componentListPromise;
-  _componentListPromise = getEsphomeSchema()
-    .then(components => {
-      _componentList = components;
-      return components;
-    })
-    .catch(() => []);
-  return _componentListPromise;
-}
-
-// Collect YAML syntax error markers by actually parsing the content.
-// Uses an ESPHome-aware schema so custom tags (!include, !secret, !lambda,
-// !extend, !remove) don't themselves cause parse errors.
-function collectSyntaxMarkers(
-  model: import('monaco-editor').editor.ITextModel,
-  monaco: typeof import('monaco-editor'),
-): import('monaco-editor').editor.IMarkerData[] {
-  const markers: import('monaco-editor').editor.IMarkerData[] = [];
-  try {
-    yaml.loadAll(model.getValue(), undefined, { schema: ESPHOME_SCHEMA });
-  } catch (e: unknown) {
-    const err = e as { mark?: { line?: number; column?: number }; reason?: string; message?: string };
-    if (err.mark) {
-      const line = (err.mark.line ?? 0) + 1;
-      const col = (err.mark.column ?? 0) + 1;
-      markers.push({
-        severity: monaco.MarkerSeverity.Error,
-        message: err.reason || err.message || 'YAML syntax error',
-        startLineNumber: line,
-        startColumn: col,
-        endLineNumber: line,
-        endColumn: model.getLineLength(line) + 1,
-      });
-    }
-  }
-  return markers;
-}
-
-// Build Monaco markers: YAML syntax errors (errors) plus unknown top-level
-// keys (warnings, only when no syntax errors and component list is loaded).
-function validateYaml(
-  model: import('monaco-editor').editor.ITextModel,
-  monaco: typeof import('monaco-editor'),
-): void {
-  // Always check syntax first — if parsing fails, skip schema warnings since
-  // the document isn't even well-formed.
-  const syntaxMarkers = collectSyntaxMarkers(model, monaco);
-  if (syntaxMarkers.length > 0) {
-    monaco.editor.setModelMarkers(model, 'esphome', syntaxMarkers);
-    return;
-  }
-
-  // If the component list hasn't loaded yet, only report syntax errors.
-  if (_componentList.length === 0) {
-    monaco.editor.setModelMarkers(model, 'esphome', []);
-    return;
-  }
-
-  const componentSet = new Set(_componentList);
-  const schemaMarkers: import('monaco-editor').editor.IMarkerData[] = [];
-  const content = model.getValue();
-  const lines = content.split('\n');
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trimStart();
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('-')) continue;
-
-    const indent = line.length - trimmed.length;
-    if (indent !== 0) continue;
-
-    // Skip lines where the value starts with a YAML custom tag — these are valid
-    // ESPHome constructs (e.g. key: !secret foo, key: !include file.yaml)
-    const colonIdx = trimmed.indexOf(':');
-    if (colonIdx < 0) continue;
-    const afterColon = trimmed.slice(colonIdx + 1).trim();
-    if (afterColon.startsWith('!')) continue;
-
-    const key = trimmed.slice(0, colonIdx).trim();
-    if (key && !componentSet.has(key)) {
-      schemaMarkers.push({
-        severity: monaco.MarkerSeverity.Warning,
-        message: `Unknown component: "${key}"`,
-        startLineNumber: i + 1,
-        startColumn: 1,
-        endLineNumber: i + 1,
-        endColumn: key.length + 1,
-      });
-    }
-  }
-
-  monaco.editor.setModelMarkers(model, 'esphome', schemaMarkers);
-}
-
-// Determine the indent level of the current cursor line, ignoring blank lines.
-function currentLineIndent(
-  model: import('monaco-editor').editor.ITextModel,
-  position: import('monaco-editor').Position,
-): number {
-  const lineText = model.getLineContent(position.lineNumber);
-  const trimmed = lineText.trimStart();
-  if (!trimmed) return Infinity; // blank line — treat as unknown
-  return lineText.length - trimmed.length;
-}
-
-// Guard: only register the completion provider and validation once per page load.
-let _completionRegistered = false;
-
-// Debounce timer handle for validation
-let _validationTimer: ReturnType<typeof setTimeout> | null = null;
-
 // Track dirty-line decorations (module-level so the callback closure can access it)
 let _dirtyDecorationIds: string[] = [];
 
-export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, onRename: _onRename, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
-  void _onRename; // kept in Props interface for API compatibility
+export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
   const isOpen = target !== null;
   const [content, setContent] = useState('');
   const [, setLoading] = useState(false);
@@ -247,10 +47,11 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
   const [validateResult, setValidateResult] = useState<{ success: boolean; output: string } | null>(null);
   const [validating, setValidating] = useState(false);
 
-  // Keep the module-level version variable in sync so the completion provider
-  // (registered once, outside the component lifecycle) always sees the current value.
+  // Keep the completion provider's module-level version variable in sync so
+  // it always sees the current value despite being registered once outside
+  // the component lifecycle.
   useEffect(() => {
-    if (esphomeVersion) _currentEsphomeVersion = esphomeVersion;
+    if (esphomeVersion) setEsphomeVersion(esphomeVersion);
   }, [esphomeVersion]);
 
   // Keep stable refs to callbacks so the fetch effect depends only on [target],
@@ -350,113 +151,13 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
     monacoRef.current = monaco;
     _dirtyDecorationIds = [];
 
-    if (!_completionRegistered) {
-      _completionRegistered = true;
-
-      // --- Completion provider ---
-      monaco.languages.registerCompletionItemProvider('yaml', {
-        triggerCharacters: [' ', ':'],
-
-        async provideCompletionItems(
-          model: import('monaco-editor').editor.ITextModel,
-          position: import('monaco-editor').Position,
-        ) {
-          const word = model.getWordUntilPosition(position);
-          const range = {
-            startLineNumber: position.lineNumber,
-            endLineNumber: position.lineNumber,
-            startColumn: word.startColumn,
-            endColumn: word.endColumn,
-          };
-
-          const lineContent = model.getLineContent(position.lineNumber);
-          const beforeCursor = lineContent.substring(0, position.column - 1);
-          if (/!secret\s+\S*$/.test(beforeCursor) || beforeCursor.trimEnd().endsWith('!secret')) {
-            try {
-              const keys = await getSecretKeys();
-              return {
-                suggestions: keys.map(k => ({
-                  label: k,
-                  kind: monaco.languages.CompletionItemKind.Variable,
-                  insertText: k,
-                  documentation: 'Secret from secrets.yaml',
-                  range,
-                })),
-              };
-            } catch {
-              return { suggestions: [] };
-            }
-          }
-
-          const components = await loadComponentList();
-          const indent = currentLineIndent(model, position);
-
-          if (indent === 0) {
-            return {
-              suggestions: components.map(name => ({
-                label: name,
-                kind: monaco.languages.CompletionItemKind.Module,
-                insertText: name + ':\n  ',
-                documentation: `ESPHome component: ${name}`,
-                range,
-              })),
-            };
-          }
-
-          const parent = findParentComponent(model, position.lineNumber);
-          if (parent) {
-            try {
-              const schemaData = await fetchComponentSchema(parent, _currentEsphomeVersion);
-              const vars = getConfigVars(schemaData, parent);
-              if (vars.length > 0) {
-                return {
-                  suggestions: vars.map(v => ({
-                    label: v.name,
-                    kind: v.required
-                      ? monaco.languages.CompletionItemKind.Field
-                      : monaco.languages.CompletionItemKind.Property,
-                    insertText: v.name + ': ',
-                    documentation: v.docs,
-                    sortText: (v.required ? '0' : '1') + v.name,
-                    range,
-                  })),
-                };
-              }
-            } catch {
-              // Schema fetch failed — fall through to generic keys below.
-            }
-          }
-
-          return {
-            suggestions: COMMON_SUB_KEYS.map(k => ({
-              label: k,
-              kind: monaco.languages.CompletionItemKind.Property,
-              insertText: k + ': ',
-              range,
-            })),
-          };
-        },
-      });
-    }
-
-    // --- Inline validation + dirty-line tracking on content change ---
+    // Completion + validation + initial pass are all handled in
+    // ./editor/monacoSetup. We still need our own content-change listener
+    // to update the dirty-line decorations on the left gutter.
+    setupEsphomeEditor(editor, monaco);
     editor.onDidChangeModelContent(() => {
-      if (_validationTimer !== null) clearTimeout(_validationTimer);
-      _validationTimer = setTimeout(() => {
-        const model = editor.getModel();
-        if (!model) return;
-        validateYaml(model, monaco);
-      }, 500);
       updateDirtyDecorations(editor).catch(() => {});
     });
-
-    // Run an initial validation pass; re-run once the component list arrives
-    const model = editor.getModel();
-    if (model) validateYaml(model, monaco);
-    loadComponentList().then(() => {
-      const m = editor.getModel();
-      if (m) validateYaml(m, monaco);
-    }).catch(() => null);
   }
 
   async function handleSave() {
@@ -579,8 +280,10 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
             }}
           >
             <div className="flex items-center justify-between mb-1">
-              <span className="font-semibold text-[11px] uppercase tracking-wide">
-                {validateResult.success ? '✓ Validation passed' : '✗ Validation failed'}
+              <span className="inline-flex items-center gap-1 font-semibold text-[11px] uppercase tracking-wide">
+                {validateResult.success
+                  ? (<><Check className="size-3.5" aria-hidden="true" /> Validation passed</>)
+                  : (<><X className="size-3.5" aria-hidden="true" /> Validation failed</>)}
               </span>
               <button
                 className="text-[var(--text-muted)] text-[10px] cursor-pointer hover:text-[var(--text)]"

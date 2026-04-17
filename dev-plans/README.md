@@ -1,13 +1,12 @@
 # Development Plans
 
-Roadmap and bug tracking for distributed-esphome, organized by release.
+Roadmap and bug tracking for ESPHome Fleet, organized by release.
 
 ## Active files
 
-- **[WORKITEMS-1.4.1.md](WORKITEMS-1.4.1.md)** — **Current release.** UI quality sprint (DevicesTab split, shadcn context menu, accessibility, API cleanup, e2e coverage)
-- **[WORKITEMS-1.5.md](WORKITEMS-1.5.md)** — Planned: Editor & config management (file tree, config diff, git integration)
-- **[WORKITEMS-1.6.md](WORKITEMS-1.6.md)** — Planned: LLM-powered assistance (AI editor, release breaking-change analyzer)
-- **[WORKITEMS-1.7.md](WORKITEMS-1.7.md)** — Planned: Dashboard parity (create device, web serial, log tail, adoption, remote compilation)
+- **[WORKITEMS-1.6.md](WORKITEMS-1.6.md)** — **Current release.** Editor & config management (file tree, config diff, git integration)
+- **[WORKITEMS-1.7.md](WORKITEMS-1.7.md)** — Planned: LLM-powered assistance (AI editor, release breaking-change analyzer)
+- **[WORKITEMS-1.8.md](WORKITEMS-1.8.md)** — Planned: Dashboard parity (create device, web serial, log tail, adoption, remote compilation)
 - **[WORKITEMS-future.md](WORKITEMS-future.md)** — Backlog without committed scope
 - **[SECURITY_AUDIT.md](SECURITY_AUDIT.md)** — Security audit findings (refer when making security-relevant changes)
 - **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)** — Step-by-step release process
@@ -22,6 +21,7 @@ Historical release plans for versions already shipped. Kept for reference but no
 - **[archive/WORKITEMS-1.3.md](archive/WORKITEMS-1.3.md)** — Quality + Testing: CI, Playwright, ruff, coverage, security hardening, client image version detection
 - **[archive/WORKITEMS-1.3.1.md](archive/WORKITEMS-1.3.1.md)** — Hardening: typed protocol, safety-net tests, supply chain, upgrade modal, network columns, 24 bug fixes
 - **[archive/WORKITEMS-1.4.md](archive/WORKITEMS-1.4.md)** — Fleet management & automation: per-device version pinning, scheduled upgrades, Schedules tab, "+ New Device", APScheduler, 88 bug fixes
+- **[archive/WORKITEMS-1.5.md](archive/WORKITEMS-1.5.md)** — Rebrand to ESPHome Fleet, native HA integration (services, entities, WebSocket events, mDNS discovery), ESPHome unbundled + lazy-installed, mandatory direct-port auth, downloadable firmware binaries (factory/OTA × raw/gzip), supply-chain hardening (SBOM, cosign, SHA-pinned Actions), full UI quality sprint + UX polish pass, 71 bug fixes
 
 ## How this works
 

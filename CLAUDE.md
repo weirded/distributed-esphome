@@ -4,7 +4,9 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Project Overview
 
-Distributed ESPHome offloads ESPHome firmware compilation to remote machines. The server runs as a Home Assistant add-on, manages a job queue, and serves a web UI. Build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices.
+ESPHome Fleet (internally: `distributed-esphome`) manages fleets of ESPHome devices — offloads compilation to remote workers, schedules upgrades, pins versions per device, and organizes devices via tags. Runs as a Home Assistant add-on with a built-in local worker. Additional build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices.
+
+**Naming convention:** user-facing docs/UI/log lines say **"ESPHome Fleet"**. Code identifiers, the GitHub repo (`weirded/distributed-esphome`), Docker image names (`esphome-dist-server`, `esphome-dist-client`), the add-on slug (`esphome_dist_server`), Python module names, and the YAML comment marker (`# distributed-esphome:`) all keep their original `distributed_esphome` / `esphome-dist-*` form — changing those would force a migration on every existing install for no user benefit.
 
 ## Architecture
 
@@ -19,7 +21,7 @@ Component responsibilities:
 
 - `main.py` — app setup, auth middleware, background loops (timeout checker, HA entity poller, PyPI version refresher), HA Ingress `X-Ingress-Path` injection.
 - `job_queue.py` — in-memory job queue persisted to `/data/queue.json`. State machine: `PENDING → WORKING → SUCCESS | FAILED | TIMED_OUT`. Jobs retry up to 3 times before permanent failure. On server restart, `WORKING` jobs reset to `PENDING`. Loader recovers gracefully from malformed/truncated queue files.
-- `scanner.py` — discovers `.yaml` targets in `/config/esphome/`. `create_bundle()` produces a tar.gz of the full config directory (including `secrets.yaml`, needed for ESPHome's `!secret` resolution).
+- `scanner.py` — discovers `.yaml` targets in `/config/esphome/`. `create_bundle()` produces a tar.gz of the full config directory (including `secrets.yaml`, needed for ESPHome's `!secret` resolution). **ESPHome is NOT bundled in the server Docker image (SE.1–SE.10).** At first boot, `ensure_esphome_installed()` lazy-installs the version reported by the HA ESPHome add-on into `/data/esphome-versions/<ver>/` via the shared `VersionManager`. The venv's `site-packages` is prepended to `sys.path` so `from esphome.* import ...` works; the binary at `<venv>/bin/esphome` is used by `/ui/api/validate`. Downstream callers (`_resolve_esphome_config`, `/ui/api/components`, validate) degrade gracefully while the install is in flight — 1–3 min on first boot; subsequent restarts are instant.
 - `registry.py` — in-memory build worker registry (no persistence); workers are "online" if last heartbeat was within `worker_offline_threshold` seconds.
 - `device_poller.py` — discovers ESPHome devices via `_esphomelib._tcp` mDNS, polls them via `aioesphomeapi` for running version.
 - `api.py` — worker REST API (register, heartbeat, claim job, submit result, stream log). Parses every request body through the typed pydantic models in `protocol.py`.
@@ -105,6 +107,10 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 **UI-5 — Typed fixtures.** E2E Playwright fixtures in `ha-addon/ui/e2e/fixtures.ts` must import the runtime types from `src/types` so a field rename breaks the e2e build. (Enforced by `tsc -b` on the e2e project.)
 
+**UI-7 — Icon-only buttons need both `aria-label` and `title`.** Icon controls carry no visible text, so screen readers need `aria-label` and sighted hover needs `title`. If you reach for one, add both — they're almost always the same string. Landed from UX.12 after the UX review (bug class: icons that hover-reveal no context, or lack accessible names).
+
+**E2E-1 — No `page.waitForTimeout()` in Playwright specs.** Fixed sleeps are flake factories — CI is slower than your laptop, or the page state settles faster. Wait on an observable condition instead (`expect.poll`, `toBeVisible`, `toHaveCount(0)`, a route-interceptor counter, etc.). Landed from CR.6 after a 200ms sleep in `e2e-hass-4/cyd-office-info.spec.ts` was found flaking the prod-smoke suite on slow HA restarts.
+
 **PY-1 — YAML goes through `yaml.safe_load`.** Never hand-rolled regex parsers for YAML content (regression source: #160, ESPHome device-name detection). The `_ota_network_diagnostics` regex fallback is allow-listed because it tries `safe_load` first.
 
 **PY-2 — Every file that calls `subprocess.run`/`subprocess.Popen` must have a module-level `logger`.** The actual command line must also be logged before the subprocess runs (reviewed in PR; file-level logger presence is the grep-able floor). Bug sources: #176, #177, #180 — untriageable reports when the command line wasn't in the log.
@@ -121,6 +127,8 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 **PY-8 — Every direct dep in `requirements.txt` must also appear in `requirements.lock`.** Dockerfiles install from the lockfile with `--require-hashes`, so anything present only in `requirements.txt` is silently missing from the image. Root cause of bug #39: `croniter` was added to `ha-addon/server/requirements.txt` but `scripts/refresh-deps.sh` was never rerun — the production image had no croniter, `schedule_checker` caught the `ImportError` and returned, and no scheduled upgrade ever fired in prod. `scripts/check-invariants.sh` now verifies the lockfile covers every entry in the .txt file.
 
+**PY-9 — No macOS-only packages in `requirements.lock`.** `pyobjc-core`, `pyobjc-framework-*`, and `appnope` leak in as platform-conditional transitives when `pip-compile` is run on a Mac host (they should carry `sys_platform == "darwin"` markers but `pip-compile --generate-hashes` strips markers). The Linux Docker build then errors with `PyObjC requires macOS to build`. Happened twice (1.3.1-dev.9, 1.4.1-dev.55). Always regenerate lockfiles via `scripts/refresh-deps.sh`, which runs `pip-compile` inside a `python:3.11-slim` container on `linux/amd64`. `scripts/check-invariants.sh` greps the lock for the known macOS-package names and fails CI on any hit.
+
 ## Design Judgment (aspirational — reviewed, not enforced)
 
 These aren't grep-checkable but matter just as much. They're how the codebase stays coherent.
@@ -129,8 +137,10 @@ These aren't grep-checkable but matter just as much. They're how the codebase st
 - **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, selects) uses the shadcn wrappers in `components/ui/`. Don't hand-roll components that already exist there. If shadcn doesn't have it yet, add a thin wrapper (see `components/ui/input.tsx`, `components/ui/select.tsx`).
 - **Use library components as intended.** Prefer composition over override. Adjust layout to accommodate library behavior rather than stripping features.
 - **Server state in SWR, UI state in React.** SWR is the cache — read from it, don't copy it into `useState`.
+- **Lift DropdownMenu `open` state out of any row cell.** When a `<DropdownMenu>` lives inside a TanStack Table cell (Devices hamburger, Queue Download, etc.), the 1 Hz SWR poll re-instantiates the row's cell components and tears down any state kept *inside* the menu — the dropdown slams shut mid-click. Always control the menu with an `open` + `onOpenChange` prop where the state lives in the parent tab component (`useState<string | null>(null)` keyed by row id, so only one dropdown is open at a time), and add that state to the columns `useMemo` deps so cells re-render when it flips. Origin: bug #2 (devices hamburger, 1.4.1-dev.3) and bug #71 (queue Download dropdown, 1.5.0-dev.75). If the same symptom shows up on a third menu, fix it the same way — do not try to stop SWR from re-rendering.
 - **One component per file, colocate related code.** Types/helpers/constants used by a single component live near that component, not in a global utils grab-bag.
 - **Semantic HTML.** `<button>` not `<div onClick>`, `<table>` for tabular data.
+- **Icons: Lucide only.** All UI icons come from `lucide-react`. No emoji glyphs (🕐 📅 📌), no HTML entities (`&#8942;`, `&#9881;`), no custom SVGs inline. Sized with Tailwind (`size-3`, `size-3.5`, `size-4`) to match the shadcn convention. Wrap icon-only buttons with `aria-label` (see QS.2); when the icon carries meaning beyond decoration (status indicator, stateful toggle), wrap in a `<span title="…">` so hover reveals the semantic.
 - **Batch operations get one toast.** Bulk actions use `Promise.all` and a single summary toast — never one toast per item. Bulk actions live in `App.tsx`, not in child component loops.
 - **Think about the UX before shipping.** Walk through the change mentally: does the layout make sense on real data? Would it look sloppy to a user?
 - **Update `.gitignore` whenever a new tool is introduced.** Most tools generate cache/lock/build/report directories — add them in the same commit that introduces the tool.
@@ -179,7 +189,7 @@ When adding features or changing user-visible behavior, keep in sync:
 
 - `README.md` — public project overview.
 - `ha-addon/DOCS.md` — user-facing docs shown in the HA add-on panel.
-- `ha-addon/CHANGELOG.md` — **written for users, not developers.** ~90% of the entry should cover things users see and experience (new UI features, UX improvements, bug fixes with user-visible symptoms, configuration changes). ~10% at most for internal/behind-the-scenes work (tests, CI, protocol types, code cleanup) — collapse into a brief "Under the hood" section, not detailed workstream breakdowns. Group by what the user experiences, not by internal workstream labels. Never say "no new features" when there are user-visible features — scan the WORKITEMS bug list for UI/UX work.
+- `ha-addon/CHANGELOG.md` — **written for users, not developers.** ~90% of the entry should cover things users see and experience (new UI features, UX improvements, bug fixes with user-visible symptoms, configuration changes). ~10% at most for internal/behind-the-scenes work (tests, CI, protocol types, code cleanup) — collapse into a brief "Under the hood" section, not detailed workstream breakdowns. Group by what the user experiences, not by internal workstream labels. Never say "no new features" when there are user-visible features — scan the WORKITEMS bug list for UI/UX work. **Only mention changes relative to the last public release** — if a bug was introduced during the dev cycle and fixed before release, it never existed from the user's perspective and doesn't belong in the changelog. Same for regressions, intermediate refactors, or test-only fixes that shipped and un-shipped within the same cycle. The changelog describes what changed *for the user upgrading from the previous stable*, not the full internal git history.
 
 ## Project Tracking
 
@@ -187,7 +197,7 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.4.1.md` — current release (UI quality sprint).
+- `dev-plans/WORKITEMS-1.6.md` — current release (editor + config management).
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process.
@@ -205,3 +215,5 @@ Everything lives in `dev-plans/`:
 ## Deployment
 
 `hass-4` is the local Home Assistant instance. `./push-to-hass-4.sh` deploys the add-on, waits for the new version to report ready, and runs the full `e2e-hass-4` Playwright suite (real compile + OTA to `cyd-office-info`). Run after every turn.
+
+**HA Core restart when the custom integration changes.** Changes under `ha-addon/custom_integration/` require a full `ha core restart` to take effect — the integration_installer copies new files to `/config/custom_components/` on add-on boot, but HA Core loads Python modules once at startup and doesn't hot-reload them. The add-on restart during deploy does NOT restart HA Core (Supervisor only restarts the add-on container). `push-to-hass-4.sh` hashes the integration directory and compares to a remote stamp file (`/tmp/esphome_fleet_integration.hash`); on a mismatch it runs `ha core restart` before the smoke suite. Skipped when the integration is byte-identical to the last push so non-integration turns don't pay the 30-60s restart cost.

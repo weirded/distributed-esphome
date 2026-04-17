@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Calendar, Clock, Download, Pin, User } from 'lucide-react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -11,7 +12,8 @@ import {
 } from '@tanstack/react-table';
 import type { Job, Target, Worker } from '../types';
 import { Button } from './ui/button';
-import { fmtDuration, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable } from '../utils';
+import { SortHeader, getAriaSort } from './ui/sort-header';
+import { fmtDuration, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -56,23 +58,18 @@ const stateSort: SortingFn<Job> = (rowA, rowB) => {
 };
 
 // Inline sort header — mirrors the pattern used in DevicesTab
-function SortHeader({ label, column }: {
-  label: string;
-  column: { getIsSorted: () => false | 'asc' | 'desc'; toggleSorting: (desc?: boolean) => void; getCanSort: () => boolean };
-}) {
-  const sorted = column.getIsSorted();
-  const indicator = sorted === 'asc' ? ' \u25b2' : sorted === 'desc' ? ' \u25bc' : '';
-  const title = sorted === 'asc' ? 'Click to sort descending' : sorted === 'desc' ? 'Click to reset sort' : 'Click to sort ascending';
-  return (
-    <span
-      onClick={() => column.toggleSorting(sorted === 'asc')}
-      style={{ cursor: 'pointer', userSelect: 'none' }}
-      title={title}
-    >
-      {label}{indicator}
-    </span>
-  );
-}
+
+// #69: display labels for the firmware variants served by the
+// Download dropdown. Maps server-side variant names (stable wire
+// identifiers) to user-facing strings.
+const variantLabel = (variant: string): string => {
+  switch (variant) {
+    case 'factory': return 'Factory image';
+    case 'ota':     return 'OTA image';
+    case 'firmware': return 'Firmware';  // legacy pre-#69 blob
+    default:        return variant;
+  }
+};
 
 const columnHelper = createColumnHelper<Job>();
 
@@ -90,9 +87,20 @@ export function QueueTab({
   onOpenLog,
   onEdit,
 }: Props) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'state', desc: false }]);
+  // QS.27: persist sort across reloads via localStorage.
+  const [sorting, setSorting] = usePersistedState<SortingState>(
+    'queue-sort',
+    [{ id: 'state', desc: false }],
+  );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [filter, setFilter] = useState('');
+  // #71: lift the Download dropdown's open state out of the row cell so
+  // it survives the 1 Hz SWR poll. TanStack Table re-instantiates column
+  // cells on data change, and any state kept inside the `<DropdownMenu>`
+  // would be torn down mid-click. Keyed by job id so only one dropdown
+  // is open at a time. Same pattern we used for the Devices-tab
+  // hamburger in #2 (1.4.1-dev.3) — see Design Judgment in CLAUDE.md.
+  const [downloadMenuOpenJobId, setDownloadMenuOpenJobId] = useState<string | null>(null);
 
   // Build target → display name map so queue shows friendly names
   const targetNameMap = useMemo(() => {
@@ -158,7 +166,7 @@ export function QueueTab({
       cell: ({ row: { original: job } }) => {
         const { label: badgeLabel, cls: badgeCls } = getJobBadge(job);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span className="inline-flex items-center gap-1.5">
             <span className={badgeCls}>{badgeLabel}</span>
             {/* #23: a follow-up job is "queued behind" another running job
                 for the same target. Show a small badge next to the State so
@@ -188,15 +196,13 @@ export function QueueTab({
           : null;
 
         const baseHostname = job.assigned_hostname || assignedClient?.hostname || null;
-        const showSlot =
-          baseHostname &&
-          job.worker_id != null &&
-          (assignedClient?.max_parallel_jobs || 1) > 1;
-        const clientName = baseHostname
-          ? showSlot
-            ? `${baseHostname}/${job.worker_id}`
-            : baseHostname
-          : '—';
+        // UX.6: render the slot as a second, muted line beneath the
+        // hostname (never glued with `/N` — that reads like "version N"
+        // or "retry N" to new users). `showSlot` stays guarded by
+        // multi-slot workers only; single-slot workers get just the
+        // hostname.
+        const slotTotal = assignedClient?.max_parallel_jobs || 1;
+        const showSlot = baseHostname && job.worker_id != null && slotTotal > 1;
 
         const pinnedHostname = pinnedClient?.hostname || job.assigned_hostname;
         const showPinnedHint =
@@ -206,14 +212,15 @@ export function QueueTab({
         // specific worker (UpgradeModal worker selector). Visible on every
         // pinned row regardless of state, so the user can audit history.
         return (
-          <span style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span className="text-[12px] inline-flex items-center gap-1">
             {job.scheduled && (
               <span
                 title={job.schedule_kind === 'once' ? 'Triggered by one-time schedule' : 'Triggered by recurring schedule'}
-                aria-label={job.schedule_kind === 'once' ? 'one-time scheduled run' : 'recurring scheduled run'}
-                style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}
+                className="inline-flex text-[var(--accent)]"
               >
-                {job.schedule_kind === 'once' ? '📅' : '🕐'}
+                {job.schedule_kind === 'once'
+                  ? <Calendar className="size-3" aria-label="one-time scheduled run" />
+                  : <Clock className="size-3" aria-label="recurring scheduled run" />}
               </span>
             )}
             {job.pinned_client_id && (
@@ -223,16 +230,26 @@ export function QueueTab({
                     ? `Pinned to ${pinnedHostname} via Upgrade modal`
                     : 'Pinned to a specific worker via Upgrade modal'
                 }
-                aria-label="pinned to specific worker"
-                style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}
+                className="inline-flex text-[var(--accent)]"
               >
-                📌
+                <Pin className="size-3" aria-label="pinned to specific worker" />
               </span>
             )}
             <span>
-              {clientName}
+              {baseHostname || '—'}
+              {showSlot && (
+                <>
+                  <br />
+                  <span
+                    className="text-[10px] text-[var(--text-muted)]"
+                    title={`Build slot ${job.worker_id} of ${slotTotal} on this worker.`}
+                  >
+                    slot {job.worker_id}
+                  </span>
+                </>
+              )}
               {showPinnedHint && !job.assigned_hostname && (
-                <><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>→ {pinnedHostname}</span></>
+                <><br /><span className="text-[10px] text-[var(--text-muted)]">→ {pinnedHostname}</span></>
               )}
             </span>
           </span>
@@ -250,27 +267,63 @@ export function QueueTab({
         const target = targets.find(t => t.target === job.target);
         const isPinned = target?.pinned_version && target.pinned_version === job.esphome_version;
         return (
-          <span style={{ fontSize: 12 }}>
-            {job.esphome_version || <span style={{ color: 'var(--text-muted)' }}>—</span>}
-            {isPinned && <span title={`Pinned to ${target.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
+          <span className="text-[12px]">
+            {job.esphome_version || <span className="text-[var(--text-muted)]">—</span>}
+            {isPinned && (
+              <span title={`Pinned to ${target.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+                <Pin className="size-3" aria-label="Pinned version" />
+              </span>
+            )}
           </span>
         );
       },
       sortingFn: 'alphanumeric',
     }),
-    // #21/#92: triggered-by column — recurring schedule, one-time, or user.
+    // #21/#92 + UX.5: triggered-by column — recurring schedule, one-time, or
+    // manual. Recurring/once rows look up the parent target's cron / one-time
+    // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
+    // Hover reveals the full cron expression + tz so users can reconcile with
+    // the Schedules tab.
     columnHelper.accessor(row => row.scheduled ? (row.schedule_kind ?? 'schedule') : 'user', {
       id: 'triggered_by',
       header: ({ column }) => <SortHeader label="Triggered" column={column} />,
       cell: ({ row: { original: job } }) => {
         if (!job.scheduled) {
-          return <span style={{ fontSize: 12 }} title="Triggered by user action">👤 User</span>;
+          // UX.5: "User" → "Manual" until AU.* auth lets us attribute to a
+          // specific HA user. Tooltip spells out "manual action from the UI".
+          return (
+            <span className="inline-flex items-center gap-1 text-[12px]" title="Manual action (from the Fleet UI)">
+              <User className="size-3" aria-hidden="true" /> Manual
+            </span>
+          );
         }
+        const target = targets.find(t => t.target === job.target);
         if (job.schedule_kind === 'once') {
-          return <span style={{ fontSize: 12 }} title="Triggered by one-time schedule">📅 One-time</span>;
+          const when = target?.schedule_once;
+          const pretty = when ? new Date(when).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+          return (
+            <span
+              className="inline-flex items-center gap-1 text-[12px]"
+              title={when ? `Triggered by one-time schedule fired at ${when}` : 'Triggered by one-time schedule'}
+            >
+              <Calendar className="size-3" aria-hidden="true" />
+              {pretty ? <>Once <span className="text-[var(--text-muted)]">@ {pretty}</span></> : 'Once'}
+            </span>
+          );
         }
         // Default for scheduled (covers 'recurring' and legacy nulls).
-        return <span style={{ fontSize: 12 }} title="Triggered by recurring cron schedule">🕐 Recurring</span>;
+        const cron = target?.schedule;
+        const tz = target?.schedule_tz;
+        const human = formatCronHuman(cron);
+        const tipParts: string[] = ['Triggered by recurring cron schedule'];
+        if (cron) tipParts.push(`cron: ${cron}`);
+        if (tz) tipParts.push(`tz: ${tz}`);
+        return (
+          <span className="inline-flex items-center gap-1 text-[12px]" title={tipParts.join(' · ')}>
+            <Clock className="size-3" aria-hidden="true" />
+            {human ? <>Recurring <span className="text-[var(--text-muted)]">· {human}</span></> : 'Recurring'}
+          </span>
+        );
       },
       sortingFn: 'alphanumeric',
     }),
@@ -281,9 +334,9 @@ export function QueueTab({
         const d = new Date(job.created_at);
         const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         return (
-          <span style={{ fontSize: 12 }} title={d.toLocaleString()}>
+          <span className="text-[12px]" title={d.toLocaleString()}>
             {time}
-            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(job.created_at)}</div>
+            <div className="text-[10px] text-[var(--text-muted)]">{timeAgo(job.created_at)}</div>
           </span>
         );
       },
@@ -297,18 +350,18 @@ export function QueueTab({
         if (inProgress) {
           // Wall-clock elapsed since enqueue (not since worker pickup)
           const elapsed = fmtDuration((Date.now() - new Date(job.created_at).getTime()) / 1000);
-          return <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>Elapsed {elapsed}</span>;
+          return <span className="text-[12px] text-[var(--text-muted)] italic">Elapsed {elapsed}</span>;
         }
-        if (!job.finished_at) return <span style={{ fontSize: 12 }}>—</span>;
+        if (!job.finished_at) return <span className="text-[12px]">—</span>;
         const finished = new Date(job.finished_at);
         const time = finished.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         // Duration = wall clock from enqueue to finish, not just worker compile time
         const wallSeconds = (finished.getTime() - new Date(job.created_at).getTime()) / 1000;
         const dur = wallSeconds >= 0 ? fmtDuration(wallSeconds) : null;
         return (
-          <span style={{ fontSize: 12 }} title={finished.toLocaleString()}>
+          <span className="text-[12px]" title={finished.toLocaleString()}>
             {time}
-            {dur && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Took {dur}</div>}
+            {dur && <div className="text-[10px] text-[var(--text-muted)]">Took {dur}</div>}
           </span>
         );
       },
@@ -319,11 +372,22 @@ export function QueueTab({
       header: () => 'Actions',
       cell: ({ row: { original: job } }) => {
         const inProgress = isJobInProgress(job);
-        const hasLog = !!(job.log || inProgress);
+        // SP.2: log isn't carried in the queue list response anymore. Show the
+        // Log button for any non-pending job — terminal jobs lazy-load the log
+        // via /ui/api/jobs/{id}/log when the modal opens.
+        const hasLog = job.state !== 'pending';
         const canRetry = isJobRetryable(job);
         const canCancel = inProgress;
+        // FD.8 / #69: Download dropdown offers each stored firmware
+        // variant (factory for ESP32 first-flash; ota for OTA / ESP8266)
+        // plus a gzip toggle. Fallback to a single-item variants=["firmware"]
+        // list for pre-#69 blobs still on disk after an upgrade.
+        const canDownload = job.state === 'success' && !!job.download_only && !!job.has_firmware;
+        const variants = (job.firmware_variants && job.firmware_variants.length > 0)
+          ? job.firmware_variants
+          : (canDownload ? ['firmware'] : []);
         return (
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div className="flex gap-1">
             {canCancel && (
               <Button variant="destructive" size="sm" onClick={() => onCancel([job.id])}>Cancel</Button>
             )}
@@ -335,6 +399,56 @@ export function QueueTab({
               isJobSuccessful(job)
                 ? <Button variant="success" size="sm" onClick={() => onRetry([job.id])}>Rerun</Button>
                 : <Button variant="warn" size="sm" onClick={() => onRetry([job.id])}>Retry</Button>
+            )}
+            {canDownload && variants.length > 0 && (
+              <DropdownMenu
+                open={downloadMenuOpenJobId === job.id}
+                onOpenChange={(open) => setDownloadMenuOpenJobId(open ? job.id : null)}
+              >
+                <DropdownMenuTrigger
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer"
+                  title="Download compiled firmware"
+                  aria-label="Download firmware"
+                >
+                  <Download className="size-3.5" aria-hidden="true" />
+                  Download
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuGroup>
+                    {variants.map((variant) => (
+                      <DropdownMenuItem
+                        key={`${variant}-raw`}
+                        render={(props) => (
+                          <a
+                            {...props}
+                            href={`./ui/api/jobs/${job.id}/firmware?variant=${variant}`}
+                            download
+                          >
+                            {variantLabel(variant)} (.bin)
+                          </a>
+                        )}
+                      />
+                    ))}
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    {variants.map((variant) => (
+                      <DropdownMenuItem
+                        key={`${variant}-gz`}
+                        render={(props) => (
+                          <a
+                            {...props}
+                            href={`./ui/api/jobs/${job.id}/firmware?variant=${variant}&gz=1`}
+                            download
+                          >
+                            {variantLabel(variant)} (.bin.gz)
+                          </a>
+                        )}
+                      />
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {hasLog && (
               <Button variant="secondary" size="sm" onClick={() => onOpenLog(job.id)}>Log</Button>
@@ -348,7 +462,7 @@ export function QueueTab({
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, targetNameMap]);
+  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, targetNameMap, downloadMenuOpenJobId]);
 
   const table = useReactTable({
     data: filteredQueue,
@@ -401,9 +515,11 @@ export function QueueTab({
             )}
           </div>
           <div className="actions">
-            {/* Retry dropdown */}
+            {/* Retry dropdown — UX.4: rerun-class actions use the green
+                success colors (same as per-row Retry/Rerun buttons).
+                Orange/amber is reserved for genuine warn states. */}
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-[#78350f] px-2.5 h-7 text-[0.8rem] font-medium text-[#fcd34d] hover:bg-[#92400e] cursor-pointer">
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-[#14532d] px-2.5 h-7 text-[0.8rem] font-medium text-[#4ade80] hover:bg-[#166534] cursor-pointer">
                 Retry <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -450,7 +566,10 @@ export function QueueTab({
               {table.getHeaderGroups().map(headerGroup => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map(header => (
-                    <th key={header.id}>
+                    <th
+                      key={header.id}
+                      aria-sort={header.column.getCanSort() ? getAriaSort(header.column) : undefined}
+                    >
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}

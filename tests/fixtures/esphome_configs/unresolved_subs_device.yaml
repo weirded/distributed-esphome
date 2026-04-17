@@ -1,0 +1,26 @@
+substitutions:
+  device_name: un-sub-device
+  # NOTE: `pretty_name` intentionally undefined so the config has an
+  # unresolved ${pretty_name} reference. This locks bug #22: the scanner
+  # must still produce metadata (name, friendly_name) even when some
+  # substitutions can't be resolved, instead of silently returning None
+  # and dropping back to a raw-YAML fallback.
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${pretty_name}
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: "dummy"

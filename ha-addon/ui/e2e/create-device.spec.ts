@@ -92,8 +92,8 @@ test('duplicate hamburger item opens modal with pre-filled name', async ({ page 
   // Click the ⋮ hamburger on the first device row
   await page.locator('#tab-devices tbody tr').first().locator('.action-menu-trigger').click();
 
-  // Click "Duplicate…"
-  await page.getByRole('button', { name: /duplicate/i }).click();
+  // Click "Duplicate…" — Radix DropdownMenuItem (post-QS.16) is role="menuitem"
+  await page.getByRole('menuitem', { name: /duplicate/i }).click();
 
   // Modal opens with pre-filled "-copy" suffix
   const dialog = page.getByRole('dialog');
@@ -110,7 +110,7 @@ test('duplicate flow creates and opens editor', async ({ page }) => {
 
   // Hamburger → Duplicate…
   await page.locator('#tab-devices tbody tr').first().locator('.action-menu-trigger').click();
-  await page.getByRole('button', { name: /duplicate/i }).click();
+  await page.getByRole('menuitem', { name: /duplicate/i }).click();
 
   const dupDialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: /^duplicate/i }) });
   await expect(dupDialog).toBeVisible();

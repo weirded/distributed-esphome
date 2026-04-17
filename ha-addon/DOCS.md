@@ -1,58 +1,75 @@
-# ESPHome Distributed Build Server
+# ESPHome Fleet
 
-A modern web UI for managing large fleets of ESPHome devices — with distributed compilation that offloads firmware builds to faster remote machines.
-
-If Home Assistant runs on a Raspberry Pi or other low-power hardware, ESPHome compilation is painfully slow. This add-on lets you point the heavy lifting at any faster machine on your network (x86, ARM, Apple Silicon) while keeping HA as the single source of truth for your device configs. Even without remote workers, the built-in local worker and the modern UI make this a powerful replacement for the stock ESPHome dashboard.
+Manage a fleet of ESPHome devices from one place, inside Home Assistant — bulk compiles, scheduled OTA upgrades, per-device version pinning, an inline YAML editor, a job queue you can actually see, and optional distributed compilation so a slow HA host doesn't become a bottleneck.
 
 ## Getting Started
 
-Start the add-on, then open the web UI via the **ESPH Distributed** entry in the HA sidebar.
+Start the add-on, then open the web UI via the **ESPHome Fleet** entry in the HA sidebar.
 
-The add-on includes a built-in local worker (starts paused with 0 slots). Increase the slot count in the **Workers** tab to start compiling immediately. To offload builds to faster machines, click **+ Connect Worker** for a ready-to-run `docker run` command.
+### First steps
 
-Configuration options (token, timeouts, polling intervals) are available in the add-on's **Configuration** tab in Home Assistant.
+1. Your existing ESPHome configs in `/config/esphome/` are picked up automatically — you should see them on the **Devices** tab.
+2. The add-on includes a **built-in local worker** that runs inside the HA host. It starts paused. Go to **Workers**, find the `local-worker` row, and use the `+`/`-` slot buttons to set its parallel-build capacity (1 or 2 is a reasonable default on a Pi; 4+ on a fast host). The moment slot count is above zero, the worker starts claiming jobs.
+3. To offload compilation to a faster machine, click **+ Connect Worker** in the Workers tab. Pick **Bash**, **PowerShell**, or **Docker Compose**, copy the generated snippet, and run it on whatever machine you want to compile on. The snippet includes your actual server URL and token, so there's nothing to edit.
+4. Home Assistant will pop an "ESPHome Fleet discovered" notification a few seconds after the add-on is running. Accept it to get all the devices, workers, and the add-on itself as real HA devices with entities.
 
-## Web UI
+Add-on configuration options (token, job / OTA timeouts, polling intervals, auth knob) live in the add-on's **Configuration** tab in Home Assistant.
 
-**Devices** — every ESPHome config in one place, with online status, current firmware version, and a one-click link to its Home Assistant page. Compile individual devices, everything that's outdated, or your whole fleet. Create new devices or duplicate existing ones, edit YAML inline with autocomplete and validation, pin individual devices to a specific ESPHome version, and view live device logs.
+## What's on the Web UI
 
-**Queue** — live job status and build logs. Retry, cancel, or clear jobs individually or in bulk.
+**Devices.** Every ESPHome config in one place. Columns for online status, current firmware version, HA entity link, IP address, WiFi vs Ethernet, network details, schedule, and ESPHome version. Click Upgrade on any row to compile + OTA that device. The row menu (⋮) exposes live logs, restart, rename, duplicate, pin, delete, and copy-api-key (for devices with a native-API encryption key).
 
-**Workers** — connected build workers with their slot count, cache size, and system info. Includes a built-in local worker and a one-click setup command for adding remote workers. Workers running an outdated image are flagged with an "image stale" badge.
+**Queue.** Every compile job — pending, running, succeeded, failed. Live build logs. Retry or cancel a job, clear finished jobs in bulk, or download the compiled `.bin` file (for jobs run in "download only" mode).
 
-**Schedules** — every scheduled upgrade in one view. Set recurring schedules (daily, weekly, monthly, custom cron) or one-time future upgrades from the device hamburger menu. Schedules are stored alongside the YAML so they travel with your config, and respect each device's pinned ESPHome version.
+**Workers.** Every connected worker — local and remote — with platform info, slot count, cache size, current job, and uptime. Workers running an outdated Docker image are flagged with an "image stale" badge so you know to `docker pull && docker restart` them.
 
-## Troubleshooting
+**Schedules.** Every scheduled upgrade in one view. Recurring (daily/weekly/monthly or full cron) and one-time future schedules. Schedules live in the device YAML itself so they travel with your config and respect each device's pinned ESPHome version.
 
-**Worker shows as offline** — verify `SERVER_URL` and `SERVER_TOKEN` match the add-on configuration. Check that the worker host can reach port 8765.
+**Header** has a dark/light theme toggle, a "streamer mode" that blurs tokens and secrets (for screen-sharing demos), the currently-selected ESPHome version (changes for all new compiles unless overridden per-device via pinning), a shortcut to edit `secrets.yaml`, and a link to [ESPHome Web](https://web.esphome.io/) for browser-based initial flashing.
 
-**Jobs stay in PENDING** — no worker is picking them up. Confirm at least one worker is online in the Workers tab.
+## Verifying what you're running
 
-**OTA fails but compile succeeds** — the worker cannot reach the ESP device on port 3232. Check network/VLAN/firewall rules.
-
-**Wrong firmware version shown** — the device must be on the same network segment as HA (or mDNS must be forwarded). Version updates appear within one poll cycle.
-
-**ESPHome version errors** — check the build log. Pre-install a known-good version with `ESPHOME_SEED_VERSION` on the worker.
-
-## Verifying Image Signatures
-
-Both the server and client Docker images on GHCR are signed with [cosign](https://docs.sigstore.dev/) using GitHub OIDC keyless signing — no long-lived keys are involved, the signature is anchored to the GitHub Actions workflow's identity. You can verify what you pull matches a build from this repo:
+Every server and client image on GHCR is signed with [cosign](https://docs.sigstore.dev/) using GitHub's keyless OIDC flow (no long-lived keys anywhere). You can verify that the image you pulled is the one this repo built:
 
 ```bash
-# Verify the client image
-cosign verify \
-  --certificate-identity-regexp 'https://github.com/weirded/distributed-esphome/.github/workflows/publish-client\.yml@.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/weirded/esphome-dist-client:latest
-
-# Verify the server image
+# Server image
 cosign verify \
   --certificate-identity-regexp 'https://github.com/weirded/distributed-esphome/.github/workflows/publish-server\.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/weirded/esphome-dist-server:latest
+
+# Worker image
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/weirded/distributed-esphome/.github/workflows/publish-client\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/weirded/esphome-dist-client:latest
 ```
 
-A successful verification prints the signature payload + the OIDC claims (workflow ref, run ID, commit SHA) — confirming the image was built by the official workflow on this repo and hasn't been tampered with in transit. Run this after `docker pull` and before any production deployment.
+A successful verification prints the OIDC claims (workflow ref, run ID, commit SHA). Run this once before you trust an image in production, or wire it into your container-pull automation.
+
+### Checking the software bill of materials
+
+Every 1.5.0+ image also carries a CycloneDX SBOM as a cosign attestation — the full list of Python packages, OS libraries, and their pinned versions that went into the image. Handy for CVE audits.
+
+```bash
+# Server image — download + print the SBOM
+cosign verify-attestation \
+  --certificate-identity-regexp 'https://github.com/weirded/distributed-esphome/.github/workflows/publish-server\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --type cyclonedx \
+  ghcr.io/weirded/esphome-dist-server:latest \
+  | jq -r '.payload | @base64d | fromjson | .predicate' \
+  > esphome-dist-server.sbom.json
+
+# Worker image
+cosign verify-attestation \
+  --certificate-identity-regexp 'https://github.com/weirded/distributed-esphome/.github/workflows/publish-client\.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --type cyclonedx \
+  ghcr.io/weirded/esphome-dist-client:latest \
+  | jq -r '.payload | @base64d | fromjson | .predicate' \
+  > esphome-dist-client.sbom.json
+```
 
 ## Support
 

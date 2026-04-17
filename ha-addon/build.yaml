@@ -1,6 +1,13 @@
+# #7: fully-qualify the image so Supervisor's build-config regex accepts it.
+#   The regex `^([a-zA-Z\-\.:\d{}]+/)*?([\-\w{}]+)/([\-\w{}]+)(:[\.\-\w{}]+)?$`
+#   requires at least one `/` in the path — `python:3.11-slim` alone doesn't
+#   qualify, but `docker.io/library/python:3.11-slim` does. Same image.
+#
+# build.yaml itself is flagged as deprecated by the Supervisor in favor of
+# an `ARG BUILD_FROM` in the Dockerfile. Keeping it for now because HA's
+# modern ghcr.io base images are alpine/musl-only for Python, and we need
+# glibc for PlatformIO toolchains used by ESPHome. Revisit when HA ships a
+# Debian-based Python base or we switch PlatformIO install strategy.
 build_from:
-  aarch64: "python:3.11-slim"
-  amd64: "python:3.11-slim"
-  armhf: "python:3.11-slim"
-  armv7: "python:3.11-slim"
-  i386: "python:3.11-slim"
+  aarch64: "docker.io/library/python:3.11-slim"
+  amd64: "docker.io/library/python:3.11-slim"

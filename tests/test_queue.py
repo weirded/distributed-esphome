@@ -223,6 +223,56 @@ async def test_check_timeouts_no_false_positives(tmp_queue_file):
     assert len(affected) == 0
 
 
+async def test_check_timeouts_requeues_when_worker_offline(tmp_queue_file):
+    """Bug #17: a WORKING job whose worker is offline should be re-queued
+    immediately, not wait out the full JOB_TIMEOUT."""
+    q = JobQueue(queue_file=tmp_queue_file)
+    await q.enqueue("device.yaml", "2024.3.1", "run1", timeout_seconds=9999)
+    claimed = await q.claim_next("sleepy-worker")
+    assert claimed is not None
+    # Simulate: worker went offline (registry reports not-online), but the
+    # job isn't remotely close to its JOB_TIMEOUT yet.
+    affected = await q.check_timeouts(is_worker_online=lambda cid: False)
+    assert len(affected) == 1, "offline-worker job must be short-circuited"
+    stored = q.get(claimed.id)
+    assert stored.state == JobState.PENDING
+    assert stored.assigned_client_id is None
+    assert stored.retry_count == 1
+
+
+async def test_check_timeouts_leaves_job_alone_when_worker_online(tmp_queue_file):
+    """Bug #17: the liveness check must not kick in while the worker is
+    still online and the deadline hasn't passed."""
+    q = JobQueue(queue_file=tmp_queue_file)
+    await q.enqueue("device.yaml", "2024.3.1", "run1", timeout_seconds=9999)
+    claimed = await q.claim_next("live-worker")
+    assert claimed is not None
+    affected = await q.check_timeouts(is_worker_online=lambda cid: True)
+    assert len(affected) == 0
+    assert q.get(claimed.id).state == JobState.WORKING
+
+
+async def test_check_timeouts_offline_worker_respects_max_retries(tmp_queue_file):
+    """Bug #17: after MAX_RETRIES offline re-queues the job must still
+    transition to FAILED permanently (not requeue forever)."""
+    q = JobQueue(queue_file=tmp_queue_file)
+    await q.enqueue("device.yaml", "2024.3.1", "run1", timeout_seconds=9999)
+
+    final_state = None
+    for _ in range(5):
+        claimed = await q.claim_next("offline-worker")
+        if claimed is None:
+            break
+        await q.check_timeouts(is_worker_online=lambda cid: False)
+        stored = q.get(claimed.id)
+        if stored.state == JobState.FAILED:
+            final_state = stored
+            break
+
+    assert final_state is not None, "job should eventually transition to FAILED"
+    assert "offline-worker requeues" in (final_state.log or "")
+
+
 # ---------------------------------------------------------------------------
 # Persistence / restart recovery
 # ---------------------------------------------------------------------------
@@ -836,3 +886,126 @@ async def test_validate_only_jobs_bypass_coalescing(tmp_queue_file):
     next_job = await q.claim_next("worker-b")
     assert next_job is not None and next_job.id == validate_job.id
     assert compile_job is not None  # silence
+
+
+# ---------------------------------------------------------------------------
+# FD.1/FD.7 — download-only flag + firmware lifecycle
+# ---------------------------------------------------------------------------
+
+async def test_enqueue_records_download_only_flag(tmp_queue_file):
+    q = JobQueue(queue_file=tmp_queue_file)
+    job = await q.enqueue(
+        target="device.yaml",
+        esphome_version="2026.3.2",
+        run_id="run1",
+        timeout_seconds=300,
+        download_only=True,
+    )
+    assert job is not None
+    assert job.download_only is True
+    assert job.has_firmware is False
+
+
+async def test_download_only_flag_persists_across_reload(tmp_queue_file):
+    q = JobQueue(queue_file=tmp_queue_file)
+    job = await q.enqueue("device.yaml", "2026.3.2", "run1", 300, download_only=True)
+    assert job is not None
+    q2 = JobQueue(queue_file=tmp_queue_file)
+    q2.load()
+    roundtrip = q2.get(job.id)
+    assert roundtrip is not None
+    assert roundtrip.download_only is True
+    assert roundtrip.has_firmware is False
+
+
+async def test_mark_firmware_stored_requires_working_state(tmp_queue_file):
+    q = JobQueue(queue_file=tmp_queue_file)
+    job = await q.enqueue("device.yaml", "2026.3.2", "run1", 300, download_only=True)
+    assert job is not None
+    # PENDING → rejected.
+    ok = await q.mark_firmware_stored(job.id)
+    assert ok is False
+    assert q.get(job.id).has_firmware is False
+
+    # WORKING → accepted.
+    await q.claim_next("worker-A")
+    ok = await q.mark_firmware_stored(job.id)
+    assert ok is True
+    assert q.get(job.id).has_firmware is True
+
+
+async def test_mark_firmware_stored_rejects_non_download_only_job(tmp_queue_file):
+    q = JobQueue(queue_file=tmp_queue_file)
+    job = await q.enqueue("device.yaml", "2026.3.2", "run1", 300, download_only=False)
+    assert job is not None
+    await q.claim_next("worker-A")
+    ok = await q.mark_firmware_stored(job.id)
+    assert ok is False
+
+
+async def test_remove_jobs_deletes_firmware_on_disk(tmp_queue_file, tmp_path, monkeypatch):
+    from firmware_storage import save_firmware, firmware_path
+    import firmware_storage
+
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    q = JobQueue(queue_file=tmp_queue_file)
+    job = await q.enqueue("device.yaml", "2026.3.2", "run1", 300, download_only=True)
+    assert job is not None
+    await q.claim_next("worker-A")
+    save_firmware(job.id, b"fw", root=firmware_dir)
+    await q.mark_firmware_stored(job.id)
+
+    # Transition to SUCCESS so remove_jobs will accept it.
+    await q.submit_result(job.id, "success", log=None, ota_result=None)
+    assert firmware_path(job.id, root=firmware_dir).is_file()
+
+    removed = await q.remove_jobs([job.id])
+    assert removed == 1
+    assert not firmware_path(job.id, root=firmware_dir).exists()
+
+
+async def test_clear_deletes_firmware_on_disk(tmp_queue_file, tmp_path, monkeypatch):
+    from firmware_storage import save_firmware, firmware_path
+    import firmware_storage
+
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    q = JobQueue(queue_file=tmp_queue_file)
+    job = await q.enqueue("device.yaml", "2026.3.2", "run1", 300, download_only=True)
+    assert job is not None
+    await q.claim_next("worker-A")
+    save_firmware(job.id, b"fw", root=firmware_dir)
+    await q.mark_firmware_stored(job.id)
+    await q.submit_result(job.id, "success", log=None, ota_result=None)
+
+    removed = await q.clear(["success"])
+    assert removed == 1
+    assert not firmware_path(job.id, root=firmware_dir).exists()
+
+
+async def test_per_target_coalescing_purges_firmware(tmp_queue_file, tmp_path, monkeypatch):
+    """Enqueue-time stale cleanup (same target) must delete the old binary too."""
+    from firmware_storage import save_firmware, firmware_path
+    import firmware_storage
+
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    q = JobQueue(queue_file=tmp_queue_file)
+    first = await q.enqueue("device.yaml", "2026.3.2", "run1", 300, download_only=True)
+    assert first is not None
+    await q.claim_next("worker-A")
+    save_firmware(first.id, b"old", root=firmware_dir)
+    await q.mark_firmware_stored(first.id)
+    await q.submit_result(first.id, "success", log=None, ota_result=None)
+    assert firmware_path(first.id, root=firmware_dir).is_file()
+
+    # A fresh enqueue for the SAME target clears the old job (per-target
+    # coalescing) — and its firmware must go with it.
+    second = await q.enqueue("device.yaml", "2026.3.2", "run2", 300, download_only=True)
+    assert second is not None
+    assert q.get(first.id) is None  # the coalescing deleted the old entry
+    assert not firmware_path(first.id, root=firmware_dir).exists()

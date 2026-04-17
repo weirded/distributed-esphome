@@ -360,3 +360,43 @@ async def test_ha_entity_poller_demotes_repeated_warnings_to_debug(monkeypatch, 
     assert any("Error polling" in m or "Template API" in m for m in debug_messages), (
         f"expected suppressed DEBUG records for the repeating failures, got: {debug_messages}"
     )
+
+
+# ----------------------------------------------------------------------
+# _esphome_version_key – PEP440-ish sort for ESPHome versions (bug #16)
+# ----------------------------------------------------------------------
+
+def test_esphome_version_key_orders_betas_by_number():
+    """b3 must sort ABOVE b2, not equal to it (bug #16)."""
+    from main import _esphome_version_key
+
+    versions = ["2026.4.0b2", "2026.4.0b3", "2026.4.0b1"]
+    versions.sort(key=_esphome_version_key, reverse=True)
+    assert versions == ["2026.4.0b3", "2026.4.0b2", "2026.4.0b1"]
+
+
+def test_esphome_version_key_orders_pre_release_tiers():
+    """Within the same base version, order is a < b < rc < stable."""
+    from main import _esphome_version_key
+
+    versions = ["2026.3.0", "2026.3.0rc1", "2026.3.0b1", "2026.3.0a1"]
+    versions.sort(key=_esphome_version_key, reverse=True)
+    assert versions == ["2026.3.0", "2026.3.0rc1", "2026.3.0b1", "2026.3.0a1"]
+
+
+def test_esphome_version_key_orders_stable_versions():
+    """Stable semver sorts in normal descending order."""
+    from main import _esphome_version_key
+
+    versions = ["2025.12.0", "2026.3.2", "2026.3.10", "2026.3.1", "2026.4.0"]
+    versions.sort(key=_esphome_version_key, reverse=True)
+    assert versions == ["2026.4.0", "2026.3.10", "2026.3.2", "2026.3.1", "2025.12.0"]
+
+
+def test_esphome_version_key_mixed_stable_and_betas():
+    """Stable releases outrank all pre-release tags of the same base."""
+    from main import _esphome_version_key
+
+    versions = ["2026.4.0b3", "2026.3.2", "2026.4.0", "2026.4.0b1", "2026.3.3"]
+    versions.sort(key=_esphome_version_key, reverse=True)
+    assert versions == ["2026.4.0", "2026.4.0b3", "2026.4.0b1", "2026.3.3", "2026.3.2"]

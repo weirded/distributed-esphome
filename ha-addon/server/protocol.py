@@ -151,6 +151,11 @@ class JobAssignment(_ProtocolMessage):
     timeout_seconds: int = 600
     ota_only: bool = False
     validate_only: bool = False
+    # FD.1: when true the worker runs `esphome compile` (not `esphome run`),
+    # skips the OTA upload, and instead POSTs the compiled binary back to
+    # the server via /api/v1/jobs/{id}/firmware. The user downloads it
+    # later from the Queue tab.
+    download_only: bool = False
     ota_address: Optional[str] = None
     server_timezone: Optional[str] = None
 

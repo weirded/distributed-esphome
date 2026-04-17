@@ -1,0 +1,21 @@
+{
+  "domain": "esphome_fleet",
+  "name": "ESPHome Fleet",
+  "version": "0.1.0",
+  "codeowners": ["@weirded"],
+  "documentation": "https://github.com/weirded/distributed-esphome",
+  "issue_tracker": "https://github.com/weirded/distributed-esphome/issues",
+  "config_flow": true,
+  "hassio": true,
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "single_config_entry": true,
+  "loggers": ["esphome_fleet"],
+  "quality_scale": "bronze",
+  "requirements": [],
+  "zeroconf": [
+    {
+      "type": "_esphome-fleet._tcp.local."
+    }
+  ]
+}

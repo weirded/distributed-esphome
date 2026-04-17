@@ -109,9 +109,10 @@ async def _enqueue_job(
 
 async def _register(ta: _App, hostname: str = "build-box", platform: str = "linux/amd64",
                     system_info: dict | None = None,
-                    image_version: str | None = "4") -> str:
-    # Defaults to image_version="4" (current MIN_IMAGE_VERSION) so most tests
-    # exercise the happy path. Tests that want to simulate a stale-image worker
+                    image_version: str | None = "5") -> str:
+    # Defaults to image_version="5" (current MIN_IMAGE_VERSION since SC.3
+    # bumped from 4→5 to push the hash-pinned esphome-constraints/ tree
+    # to workers). Tests that want to simulate a stale-image worker
     # explicitly pass image_version=None or an older number.
     body: dict = {"hostname": hostname, "platform": platform}
     if system_info is not None:
@@ -1038,11 +1039,12 @@ async def test_get_client_code_allows_fresh_image(tmp_path):
     [
         (None, True),        # pre-LIB.0 worker — no field at all
         ("", True),          # empty string — falsy, cannot parse as int
-        ("1", True),         # integer but below MIN_IMAGE_VERSION=4
+        ("1", True),         # integer but below MIN_IMAGE_VERSION=5
         ("2", True),         # still stale — pydantic added in v3, deps locked in v4
-        ("3", True),         # still stale — hash-pinned deps were added in v4
-        ("4", False),        # exactly MIN_IMAGE_VERSION — fresh
-        ("5", False),        # above MIN_IMAGE_VERSION — fresh
+        ("3", True),         # still stale — hash-pinned server deps were added in v4
+        ("4", True),         # still stale — esphome-constraints/ shipped in v5 (SC.3)
+        ("5", False),        # exactly MIN_IMAGE_VERSION — fresh
+        ("6", False),        # above MIN_IMAGE_VERSION — fresh
         ("garbage", True),   # non-numeric — int() raises, treated as stale
     ],
 )
@@ -1090,5 +1092,218 @@ async def test_heartbeat_image_version_full_parametrization(
         else:
             assert data.get("image_upgrade_required") is None
             assert "server_client_version" in data
+    finally:
+        await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# FD.5 — /api/v1/jobs/{id}/firmware (worker uploads compiled binary)
+# ---------------------------------------------------------------------------
+
+async def test_firmware_upload_stores_bin_and_flips_has_firmware(tmp_path, monkeypatch):
+    import firmware_storage
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    ta = await _make_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="x.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        assert job is not None
+        await _register(ta, hostname="w")
+        # Claim moves the job to WORKING.
+        await ta.queue.claim_next("any-client")
+
+        # #69: workers now POST to variant-qualified path.
+        resp = await ta.post(
+            f"/api/v1/jobs/{job.id}/firmware/factory",
+            data=b"\xde\xad\xbe\xef" * 100,
+            headers={**AUTH_HEADERS, "Content-Type": "application/octet-stream"},
+        )
+        assert resp.status == 200
+
+        stored = firmware_storage.firmware_path(job.id, variant="factory", root=firmware_dir)
+        assert stored.is_file()
+        assert stored.read_bytes() == b"\xde\xad\xbe\xef" * 100
+
+        refreshed = ta.queue.get(job.id)
+        assert refreshed.has_firmware is True
+    finally:
+        await ta.close()
+
+
+async def test_firmware_upload_rejects_non_download_only_job(tmp_path, monkeypatch):
+    import firmware_storage
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", tmp_path / "firmware")
+
+    ta = await _make_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="x.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=False,
+        )
+        assert job is not None
+        await ta.queue.claim_next("any")
+        resp = await ta.post(
+            f"/api/v1/jobs/{job.id}/firmware",
+            data=b"fw",
+            headers={**AUTH_HEADERS, "Content-Type": "application/octet-stream"},
+        )
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+async def test_firmware_upload_rejects_missing_job(tmp_path):
+    ta = await _make_app(tmp_path)
+    try:
+        resp = await ta.post(
+            "/api/v1/jobs/ghost/firmware",
+            data=b"fw",
+            headers={**AUTH_HEADERS, "Content-Type": "application/octet-stream"},
+        )
+        assert resp.status == 404
+    finally:
+        await ta.close()
+
+
+async def test_firmware_upload_rejects_empty_body(tmp_path, monkeypatch):
+    import firmware_storage
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", tmp_path / "firmware")
+
+    ta = await _make_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="x.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        assert job is not None
+        await ta.queue.claim_next("any")
+        resp = await ta.post(
+            f"/api/v1/jobs/{job.id}/firmware",
+            data=b"",
+            headers={**AUTH_HEADERS, "Content-Type": "application/octet-stream"},
+        )
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# Bug #24 — firmware upload refuses stale workers / wrong state WITHOUT
+# writing to disk (preserves a prior successful upload).
+# ---------------------------------------------------------------------------
+
+async def test_firmware_upload_rejects_non_working_state_without_writing(
+    tmp_path, monkeypatch,
+):
+    """A job that has already succeeded on another worker must not be
+    clobbered by a stale worker's late upload. The server must reject
+    with 409 BEFORE touching the on-disk file."""
+    import firmware_storage
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    ta = await _make_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="x.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        assert job is not None
+        # Successful worker: claim → upload → submit success.
+        await ta.queue.claim_next("good-worker")
+        firmware_storage.save_firmware(job.id, b"GOOD_FIRMWARE", root=firmware_dir)
+        await ta.queue.mark_firmware_stored(job.id)
+        await ta.queue.submit_result(job.id, "success", log=None, ota_result=None)
+
+        stored_path = firmware_storage.firmware_path(job.id, root=firmware_dir)
+        assert stored_path.read_bytes() == b"GOOD_FIRMWARE"
+
+        # Stale worker arrives late with its own firmware. Must be
+        # rejected with 409 AND the good firmware must survive.
+        resp = await ta.post(
+            f"/api/v1/jobs/{job.id}/firmware",
+            data=b"STALE_FIRMWARE_SHOULD_BE_REJECTED",
+            headers={
+                **AUTH_HEADERS,
+                "Content-Type": "application/octet-stream",
+                "X-Client-Id": "stale-worker",
+            },
+        )
+        assert resp.status == 409
+        # THE CORE FIX: the file on disk still holds the good worker's
+        # firmware. Before bug #24's fix the handler wrote the stale
+        # bytes first, then the rejection path deleted the file.
+        assert stored_path.read_bytes() == b"GOOD_FIRMWARE"
+    finally:
+        await ta.close()
+
+
+async def test_firmware_upload_rejects_unassigned_worker(tmp_path, monkeypatch):
+    """Security audit F-08: when the caller's client_id doesn't match
+    the currently-assigned worker, reject with 409 even if the job IS
+    still WORKING."""
+    import firmware_storage
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    ta = await _make_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="x.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        assert job is not None
+        await ta.queue.claim_next("assigned-worker")
+
+        resp = await ta.post(
+            f"/api/v1/jobs/{job.id}/firmware",
+            data=b"rogue",
+            headers={
+                **AUTH_HEADERS,
+                "Content-Type": "application/octet-stream",
+                "X-Client-Id": "other-worker",
+            },
+        )
+        assert resp.status == 409
+        assert not firmware_storage.firmware_path(job.id, root=firmware_dir).exists()
+    finally:
+        await ta.close()
+
+
+async def test_firmware_upload_accepted_for_matching_assigned_worker(
+    tmp_path, monkeypatch,
+):
+    """Happy path: the worker whose client_id matches the assignment
+    is accepted and its bytes land on disk."""
+    import firmware_storage
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    ta = await _make_app(tmp_path)
+    try:
+        job = await ta.queue.enqueue(
+            target="x.yaml", esphome_version="2026.3.2", run_id="r",
+            timeout_seconds=300, download_only=True,
+        )
+        assert job is not None
+        await ta.queue.claim_next("assigned-worker")
+
+        resp = await ta.post(
+            f"/api/v1/jobs/{job.id}/firmware/factory",
+            data=b"RIGHT_BYTES",
+            headers={
+                **AUTH_HEADERS,
+                "Content-Type": "application/octet-stream",
+                "X-Client-Id": "assigned-worker",
+            },
+        )
+        assert resp.status == 200
+        path = firmware_storage.firmware_path(job.id, variant="factory", root=firmware_dir)
+        assert path.read_bytes() == b"RIGHT_BYTES"
+        assert ta.queue.get(job.id).has_firmware is True
     finally:
         await ta.close()

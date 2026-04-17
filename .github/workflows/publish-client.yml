@@ -22,20 +22,20 @@ jobs:
       id-token: write  # E.10: required for cosign keyless signing via OIDC
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Read version
         id: version
         run: echo "version=$(cat ha-addon/VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -43,7 +43,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -54,7 +54,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ha-addon/client
           platforms: linux/amd64,linux/arm64
@@ -70,7 +70,7 @@ jobs:
       # OIDC identity, which downstream verifiers check via
       # ``cosign verify --certificate-identity-regexp ... --certificate-oidc-issuer ...``.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
       - name: Sign published images with cosign
         env:
@@ -78,3 +78,24 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           echo "${TAGS}" | xargs -I {} cosign sign --yes "{}@${DIGEST}"
+
+      # SC.2: generate CycloneDX SBOM for the image we just pushed and
+      # attach it as a cosign attestation.
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: esphome-dist-client-${{ steps.version.outputs.version }}.sbom.json
+          artifact-name: esphome-dist-client-${{ steps.version.outputs.version }}.sbom.json
+
+      - name: Attach SBOM as cosign attestation
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          cosign attest --yes \
+            --predicate "esphome-dist-client-${VERSION}.sbom.json" \
+            --type cyclonedx \
+            "${IMAGE}@${DIGEST}"

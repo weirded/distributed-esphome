@@ -8,9 +8,13 @@
 .streamer .sensitive { filter: blur(5px); transition: filter 0.2s; }
 .streamer .sensitive:hover { filter: blur(2px); }
 
-/* Preflight overrides — constrain logo height */
+/* Preflight overrides — constrain logo height. #85: bumped from 26px
+   (sized for the old ESPHome wordmark) to 40px now that the header
+   uses the square "house" glyph — 40px reads as a prominent brand
+   mark next to the 20px "ESPHome Fleet" wordmark while still leaving
+   ~6px of vertical breathing room inside the 52px-tall header. */
 header img {
-  height: 26px;
+  height: 40px;
   width: auto;
   max-width: none;
 }
@@ -92,8 +96,20 @@ header {
   height: 52px;
   position: sticky;
   top: 0;
-  z-index: 100;
+  /* Bug #14: header used to be z-index: 100, which beat the Base UI
+     dropdown popover (z-50) in the stacking war — opening the version
+     dropdown from a header chip would render the dropdown's top edge
+     UNDER the header. Lowered to 30 (still above scrolled content,
+     which has no explicit z-index) so dropdown popovers, dialog
+     overlays (both z-50) all render correctly above. */
+  z-index: 30;
   box-shadow: var(--shadow);
+  /* Bug #1: on iOS / narrow viewports the header items (logo, version
+     dropdown, Secrets, theme/streamer buttons) overflow off the right
+     edge with no way to reach them. Letting the header scroll horizontally
+     keeps every control reachable; on desktop nothing changes (no overflow,
+     no scrollbar). */
+  overflow-x: auto;
 }
 /* Keep header dark in light mode so the ESPHome logo (light gray text) stays readable */
 [data-theme="light"] header {
@@ -148,7 +164,13 @@ th {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
+  /* UX.2: stopped uppercasing table headers. React source now controls
+     the case (sentence-case across all four tabs — Devices, Queue,
+     Workers, Schedules). The old `text-transform: uppercase` globally
+     inverted the React-source case, creating a Workers-vs-rest drift
+     because Devices/Queue/Schedules SortHeader buttons normalized via
+     Tailwind Preflight's button reset while Workers' plain <th> text
+     stayed all-caps. */
   padding: 6px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);

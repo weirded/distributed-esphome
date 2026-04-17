@@ -16,9 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -30,13 +30,33 @@ jobs:
             aiohttp aioesphomeapi zeroconf \
             requests psutil pydantic croniter apscheduler \
             esphome
+          # The HA integration tests (tests/test_integration_*.py) need
+          # the `homeassistant` package installed to import
+          # HomeAssistantError, DeviceInfo, etc. Its dep pins conflict
+          # with esphome's (voluptuous 0.15 vs 0.16) so we can't install
+          # both into the same env without breaking one. Install HA into
+          # an isolated prefix that the integration tests can load
+          # without contaminating esphome's site-packages.
+          python -m venv .ha-testenv
+          # Integration tests reach into homeassistant.components.zeroconf
+          # via config_flow, so zeroconf + aiohttp need to be present
+          # alongside homeassistant itself.
+          ./.ha-testenv/bin/pip install \
+            'homeassistant>=2025.1,<2025.2' \
+            pytest pytest-asyncio \
+            aiohttp zeroconf voluptuous
 
-      - name: Run all tests with coverage
-        run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html
+      - name: Run server + client tests
+        # Excludes integration tests — those need HA, which conflicts
+        # with esphome in the same env.
+        run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html --ignore=tests/test_integration_config_flow.py --ignore=tests/test_integration_device_info.py --ignore=tests/test_integration_coordinator_events.py --ignore=tests/test_integration_services.py --ignore=tests/test_integration_coordinator_auth.py
+
+      - name: Run HA integration tests (isolated venv)
+        run: ./.ha-testenv/bin/pytest tests/test_integration_config_flow.py tests/test_integration_device_info.py tests/test_integration_coordinator_events.py tests/test_integration_services.py tests/test_integration_coordinator_auth.py -v
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-report
           path: htmlcov/
@@ -49,9 +69,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -78,9 +98,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -127,9 +147,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -158,7 +178,7 @@ jobs:
         run: echo "version=$(npx playwright --version)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
@@ -173,7 +193,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: ha-addon/ui/test-results/

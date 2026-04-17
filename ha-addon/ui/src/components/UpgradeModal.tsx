@@ -7,6 +7,7 @@ import {
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { Label } from './ui/label';
 import { Select } from './ui/select';
 import type { Worker } from '../types';
 
@@ -110,6 +111,8 @@ interface Props {
     pinnedClientId: string | null;
     esphomeVersion: string | null;
     updatePin?: string | null;
+    /** FD.3: when true, enqueue a compile-and-download job instead of compile+OTA. */
+    downloadOnly?: boolean;
   }) => void;
   /**
    * Save a recurring cron schedule. `version` is the user's pin choice —
@@ -172,8 +175,23 @@ export function UpgradeModal({
     return true;
   });
 
-  // --- Mode: now vs schedule ---
-  const [mode, setMode] = useState<'now' | 'schedule'>(scheduleOnly ? 'schedule' : defaultMode);
+  // UX.8 + #79: One 4-option action radio. `Schedule Upgrade` was
+  // earlier a single radio with a nested Recurring/Once sub-toggle —
+  // that sub-toggle is now promoted into two first-class radios so
+  // there's exactly one decision point:
+  //   upgrade-now         → mode=now, nowAction=ota      (default)
+  //   download-now        → mode=now, nowAction=download
+  //   schedule-recurring  → mode=schedule, scheduleType=recurring
+  //   schedule-once       → mode=schedule, scheduleType=once
+  type Action = 'upgrade-now' | 'download-now' | 'schedule-recurring' | 'schedule-once';
+  const initialAction: Action = (() => {
+    if (scheduleOnly) return currentOnce ? 'schedule-once' : 'schedule-recurring';
+    if (defaultMode === 'schedule') return currentOnce ? 'schedule-once' : 'schedule-recurring';
+    return 'upgrade-now';
+  })();
+  const [action, setAction] = useState<Action>(initialAction);
+  const mode: 'now' | 'schedule' = action.startsWith('schedule-') ? 'schedule' : 'now';
+  const nowAction: 'ota' | 'download' = action === 'download-now' ? 'download' : 'ota';
 
   // --- Schedule state ---
   // #90/#91: cron is shown literally in the picker — no client-side hour
@@ -185,7 +203,9 @@ export function UpgradeModal({
   void currentScheduleTz;
   const seedCron = currentSchedule ?? '';
   const parsed = seedCron ? parseCron(seedCron) : null;
-  const [scheduleType, setScheduleType] = useState<'recurring' | 'once'>(currentOnce ? 'once' : 'recurring');
+  // #79: scheduleType is now derived from `action` — the "recurring vs
+  // once" choice is surfaced directly in the main Action radio group.
+  const scheduleType: 'recurring' | 'once' = action === 'schedule-once' ? 'once' : 'recurring';
   const [interval, setInterval] = useState(parsed?.interval ?? 'days');
   const [every, setEvery] = useState(parsed?.every ?? 1);
   const [time, setTime] = useState(parsed?.time ?? '02:00');
@@ -223,7 +243,10 @@ export function UpgradeModal({
       onUpgradeNow({
         pinnedClientId: selectedWorker || null,
         esphomeVersion: selectedVersion && selectedVersion !== defaultEsphomeVersion ? selectedVersion : null,
-        updatePin: shouldUpdatePin ? selectedVersion : null,
+        // FD.3: don't update the pin when we're only producing a
+        // binary to download — the device state hasn't changed.
+        updatePin: nowAction === 'ota' && shouldUpdatePin ? selectedVersion : null,
+        downloadOnly: nowAction === 'download',
       });
     } else {
       if (scheduleType === 'once') {
@@ -236,10 +259,15 @@ export function UpgradeModal({
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent style={{ maxWidth: 480 }}>
+      <DialogContent style={{ maxWidth: 600 }}>
         <DialogHeader>
           <DialogTitle>
-            {mode === 'schedule' ? 'Schedule Upgrade' : 'Upgrade'} — {displayName}
+            {/* UX.8: title matches the selected action verb. */}
+            {action === 'schedule-recurring'
+              ? 'Schedule Recurring Upgrade'
+              : action === 'schedule-once' ? 'Schedule Upgrade'
+              : action === 'download-now' ? 'Download'
+              : 'Upgrade'}{' '}— {displayName}
           </DialogTitle>
         </DialogHeader>
         <div className="p-[18px] flex flex-col gap-4">
@@ -248,9 +276,15 @@ export function UpgradeModal({
           {!scheduleOnly && (
             <>
               <div>
-                <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">Worker</label>
-                <Select value={selectedWorker} onChange={e => setSelectedWorker(e.target.value)}>
-                  <option value="">&lt;any&gt; — let the scheduler pick</option>
+                <Label htmlFor="upgrade-worker-select">Worker</Label>
+                <Select
+                  id="upgrade-worker-select"
+                  value={selectedWorker}
+                  onChange={e => setSelectedWorker(e.target.value)}
+                  title="Fleet will pick the fastest available worker at compile time."
+                >
+                  {/* UX.7: dropped the <any> coder-syntax label. */}
+                  <option value="">Any available worker (auto)</option>
                   {eligibleWorkers.map(w => (
                     <option key={w.client_id} value={w.client_id}>{w.hostname}</option>
                   ))}
@@ -258,7 +292,7 @@ export function UpgradeModal({
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)] mb-1">ESPHome version</label>
+                <Label>ESPHome version</Label>
                 <input
                   type="text"
                   value={versionSearch}
@@ -304,45 +338,74 @@ export function UpgradeModal({
             </>
           )}
 
-          {/* Mode radio: Now vs Schedule (hidden in scheduleOnly mode).
-              #34: Radios sit *below* the worker+version selectors so the
-              primary choice (what to upgrade to) comes before the
-              secondary choice (when to run it). */}
+          {/* UX.8 + #79: single Action radio (4 options). Schedule is split
+              into recurring vs one-time so there's no nested sub-toggle
+              inside the schedule form. `whitespace-nowrap` on the label
+              rows stops "Schedule Recurring" from wrapping onto two lines
+              (#78). */}
           {!scheduleOnly && (
-            <div className="flex items-center gap-4 pt-1 border-t border-[var(--border)]">
-              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer pt-2">
-                <input type="radio" name="upgrade-mode" checked={mode === 'now'} onChange={() => setMode('now')} />
-                Now
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-[var(--border)]">
+              <Label>Action</Label>
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                <input
+                  type="radio"
+                  name="upgrade-action"
+                  checked={action === 'upgrade-now'}
+                  onChange={() => setAction('upgrade-now')}
+                />
+                Upgrade Now
+                <span className="text-[11px] text-[var(--text-muted)]">— compile + OTA flash</span>
               </label>
-              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer pt-2">
-                <input type="radio" name="upgrade-mode" checked={mode === 'schedule'} onChange={() => setMode('schedule')} />
-                Scheduled
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                <input
+                  type="radio"
+                  name="upgrade-action"
+                  checked={action === 'download-now'}
+                  onChange={() => setAction('download-now')}
+                />
+                Download Now
+                <span className="text-[11px] text-[var(--text-muted)]">— compile only, no OTA; grab the .bin from the Queue tab</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                <input
+                  type="radio"
+                  name="upgrade-action"
+                  checked={action === 'schedule-recurring'}
+                  onChange={() => setAction('schedule-recurring')}
+                />
+                Schedule Recurring
+                <span className="text-[11px] text-[var(--text-muted)]">— run the OTA upgrade on a cron</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                <input
+                  type="radio"
+                  name="upgrade-action"
+                  checked={action === 'schedule-once'}
+                  onChange={() => setAction('schedule-once')}
+                />
+                Schedule Once
+                <span className="text-[11px] text-[var(--text-muted)]">— run the OTA upgrade at a specific timestamp</span>
               </label>
             </div>
           )}
 
-          {/* Schedule options (only visible in schedule mode) */}
+          {/* Schedule options (only visible when a schedule-* action is active) */}
           {mode === 'schedule' && (
             <div className="flex flex-col gap-3 pt-1 border-t border-[var(--border)]">
-              {/* Recurring vs Once */}
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-1.5 text-[12px] cursor-pointer">
-                  <input type="radio" name="schedule-type" checked={scheduleType === 'recurring'} onChange={() => setScheduleType('recurring')} />
-                  Recurring
-                </label>
-                <label className="flex items-center gap-1.5 text-[12px] cursor-pointer">
-                  <input type="radio" name="schedule-type" checked={scheduleType === 'once'} onChange={() => setScheduleType('once')} />
-                  One-time
-                </label>
-                {scheduleType === 'recurring' && (
+              {/* #79: recurring/once is now selected via the main Action
+                  radio above, so the inline sub-toggle is gone. The only
+                  remaining inline control is the "Advanced (cron)" toggle
+                  for recurring — right-aligned above the inputs. */}
+              {scheduleType === 'recurring' && (
+                <div className="flex justify-end">
                   <button
-                    className="ml-auto text-[10px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]"
+                    className="text-[10px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)]"
                     onClick={() => setCronMode(cronMode === 'friendly' ? 'cron' : 'friendly')}
                   >
                     {cronMode === 'friendly' ? 'Advanced (cron)' : 'Simple'}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
 
               {scheduleType === 'recurring' ? (
                 cronMode === 'friendly' ? (
@@ -407,7 +470,11 @@ export function UpgradeModal({
               disabled={mode === 'schedule' && scheduleType === 'once' && !onceDate}
               onClick={handleConfirm}
             >
-              {mode === 'now' ? 'Upgrade' : 'Save Schedule'}
+              {/* UX.8: confirm-button label mirrors the action verb. */}
+              {action === 'upgrade-now' && 'Upgrade'}
+              {action === 'download-now' && 'Compile & Download'}
+              {action === 'schedule-recurring' && 'Save Schedule'}
+              {action === 'schedule-once' && 'Save Schedule'}
             </Button>
           </div>
         </div>

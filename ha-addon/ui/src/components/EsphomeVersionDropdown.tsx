@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { RotateCw } from 'lucide-react';
 import type { EsphomeVersions } from '../types';
 import {
   DropdownMenu,
@@ -84,12 +85,12 @@ export function EsphomeVersionDropdown({ versions, onSelect, onRefresh }: Props)
     </DropdownMenu>
     {onRefresh && (
       <button
-        className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-1.5 py-0.5 text-[11px] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
+        className="inline-flex items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface2)] w-[22px] h-[22px] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
         title="Refresh available ESPHome versions from PyPI"
         aria-label="Refresh ESPHome versions"
         onClick={onRefresh}
       >
-        &#8635;
+        <RotateCw className="size-3" />
       </button>
     )}
     </span>

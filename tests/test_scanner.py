@@ -173,12 +173,18 @@ def test_get_esphome_version_returns_unknown_when_not_installed():
 
     meta.version = mock_version
     scanner._selected_esphome_version = None
+    # SE.7: without the failure flag set, the new logic assumes the
+    # lazy-install is in flight and returns "installing". This test
+    # exercises the "install won't help" terminal state, so simulate
+    # the failure flag too.
+    scanner._esphome_install_failed = True
     try:
         ver = get_esphome_version()
         assert ver == "unknown"
     finally:
         meta.version = original
         scanner._selected_esphome_version = original_selected
+        scanner._esphome_install_failed = False
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +323,45 @@ def test_name_map_extracts_encryption_key():
     # The fixture's secrets.yaml maps api_encryption_key to a real base64 key
     assert "device1" in keys
     assert keys["device1"]  # non-empty
+
+
+def test_name_map_resolves_despite_unresolved_substitution():
+    """Bug #22: YAMLs with an undefined substitution (e.g. ${pretty_name}
+    referenced but not declared) must still produce scanner metadata —
+    the resolver has to pass ``ignore_missing=True`` to ESPHome's
+    substitution pass when available, otherwise any missing reference
+    raises and the entire config silently returns empty.
+    """
+    name_map, keys, overrides, _ = build_name_to_target_map(
+        str(FIXTURES), ["unresolved_subs_device.yaml"],
+    )
+    # The device_name substitution resolves, so the device name itself
+    # must make it into the name_map.
+    assert "un-sub-device" in name_map, (
+        f"name_map is missing resolved device name; got {name_map}"
+    )
+    assert name_map["un-sub-device"] == "unresolved_subs_device.yaml"
+    # API encryption key must be extracted (keyed by resolved name).
+    assert "un-sub-device" in keys
+    # Address override is always registered — at minimum the mdns fallback.
+    assert "un-sub-device" in overrides
+
+
+def test_get_device_metadata_uses_friendly_name_for_unresolved_subs():
+    """Bug #22 follow-up: get_device_metadata must still extract
+    device_name for a YAML that contains an unresolved substitution.
+    (friendly_name may be None when it references an undefined sub; the
+    UI falls back to device_name in that case — but device_name must NOT
+    be None, which is what the regression had before.)
+    """
+    from scanner import get_device_metadata
+
+    meta = get_device_metadata(str(FIXTURES), "unresolved_subs_device.yaml")
+    assert meta["device_name"] is not None, (
+        "device_name should resolve from ${device_name} even when friendly_name doesn't"
+    )
+    # device_name is title-cased ("un-sub-device" → "Un Sub Device")
+    assert "Un Sub Device" in meta["device_name"]
 
 
 def test_name_map_empty_targets(tmp_path):
@@ -752,8 +797,12 @@ def test_duplicate_device_preserves_include_tags(tmp_path):
     assert "!secret 'ap_password'" in result or "!secret ap_password" in result
 
 
-def test_duplicate_device_preserves_use_address(tmp_path):
-    """#53: wifi.use_address is preserved in the clone (reverted from #47)."""
+def test_duplicate_device_strips_use_address(tmp_path):
+    """#54: wifi.use_address is stripped so the duplicate doesn't inherit
+    the source's IP and show "online" just because the server can still
+    reach the original device at that address. Other wifi fields
+    (ssid, password) are preserved.
+    """
     import yaml
     src = tmp_path / "src.yaml"
     src.write_text(
@@ -762,8 +811,44 @@ def test_duplicate_device_preserves_use_address(tmp_path):
     )
     result = duplicate_device(str(tmp_path), "src.yaml", "device-copy")
     data = yaml.safe_load(result)
-    assert data["wifi"]["use_address"] == "192.168.1.100"
+    assert "use_address" not in data["wifi"]
     assert data["wifi"]["ssid"] == "home"
+
+
+def test_duplicate_device_strips_manual_static_ip(tmp_path):
+    """#54: wifi.manual_ip.static_ip is stripped for the same reason."""
+    import yaml
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "esphome:\n  name: device\n"
+        "wifi:\n"
+        "  ssid: home\n"
+        "  manual_ip:\n"
+        "    static_ip: 192.168.1.50\n"
+        "    gateway: 192.168.1.1\n"
+    )
+    result = duplicate_device(str(tmp_path), "src.yaml", "device-copy")
+    data = yaml.safe_load(result)
+    # static_ip removed; gateway preserved (not an identity pin).
+    manual_ip = data["wifi"].get("manual_ip") or {}
+    assert "static_ip" not in manual_ip
+    assert manual_ip.get("gateway") == "192.168.1.1"
+
+
+def test_duplicate_device_strips_ethernet_and_openthread_addresses(tmp_path):
+    """#54: same treatment for ethernet.use_address and openthread."""
+    import yaml
+    src = tmp_path / "src.yaml"
+    src.write_text(
+        "esphome:\n  name: device\n"
+        "ethernet:\n  use_address: 10.0.0.10\n  type: LAN8720\n"
+        "openthread:\n  use_address: fd00::1\n"
+    )
+    result = duplicate_device(str(tmp_path), "src.yaml", "device-copy")
+    data = yaml.safe_load(result)
+    assert "use_address" not in data["ethernet"]
+    assert data["ethernet"]["type"] == "LAN8720"
+    assert "use_address" not in data["openthread"]
 
 
 def test_duplicate_device_preserves_includes_with_substitution_rewrite(tmp_path):
@@ -818,3 +903,28 @@ def test_duplicate_device_rewrites_substitutions_name_with_implicit_esphome_name
     assert "name" not in parsed["esphome"]
     # Other substitutions preserved
     assert parsed["substitutions"]["display_name"] == "Office Speakers"
+
+
+def test_resolve_failure_logs_warning(tmp_path, caplog):
+    """DL.5: malformed YAML resolve failure promotes to WARNING with
+    the target filename + exception type (issue #60 diagnostic).
+    """
+    import logging
+    from scanner import _resolve_esphome_config
+
+    bad = tmp_path / "broken.yaml"
+    # !secret reference a secret that doesn't exist — ESPHome's resolve
+    # pipeline raises. The test only cares that our catch path logs WARNING.
+    bad.write_text(
+        "esphome:\n"
+        "  name: broken\n"
+        "wifi:\n"
+        "  password: !secret nonexistent_secret\n"
+    )
+    with caplog.at_level(logging.WARNING, logger="scanner"):
+        result = _resolve_esphome_config(str(tmp_path), "broken.yaml")
+    assert result is None
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("broken.yaml" in r.getMessage() for r in warnings), (
+        f"expected WARNING mentioning broken.yaml, got: {[r.getMessage() for r in warnings]}"
+    )

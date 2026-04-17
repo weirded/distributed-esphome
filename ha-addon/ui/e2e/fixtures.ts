@@ -55,6 +55,9 @@ export const targets: Target[] = [
     server_version: '2026.3.2',
     has_api_key: false,
     area: 'Bedroom',
+    // PT.12 — pinned to a specific version so the pin-unpin spec can verify
+    // the 📌 icon appears in the version cell.
+    pinned_version: '2026.2.0',
   },
   {
     target: 'garage-door.yaml',
@@ -65,6 +68,23 @@ export const targets: Target[] = [
     online: false,
     needs_update: false,
     server_version: '2026.3.2',
+    // PT.12 — recurring schedule so the schedules tab has at least one row.
+    schedule: '0 3 * * *',
+    schedule_enabled: true,
+    schedule_tz: 'UTC',
+  },
+  {
+    target: 'office.yaml',
+    device_name: 'office',
+    friendly_name: 'Office Sensor',
+    ip_address: '192.168.1.13',
+    running_version: '2026.3.2',
+    online: true,
+    needs_update: false,
+    server_version: '2026.3.2',
+    // PT.12 — one-time scheduled upgrade. Far enough in the future that it
+    // doesn't fire during a test run.
+    schedule_once: new Date(Date.now() + 24 * 3600_000).toISOString(),
   },
 ];
 
@@ -153,6 +173,46 @@ export const queue: Job[] = [
     created_at: new Date(Date.now() - 900_000).toISOString(),
     duration_seconds: 600,
   },
+  // PT.12 — cancelled job so the queue spec can verify the Cancelled badge
+  // and that "Clear Succeeded" doesn't touch cancelled rows.
+  {
+    id: 'job-006',
+    target: 'living-room.yaml',
+    state: 'cancelled',
+    assigned_client_id: 'worker-1',
+    assigned_hostname: 'build-server-1',
+    created_at: new Date(Date.now() - 1200_000).toISOString(),
+    duration_seconds: 12,
+  },
+  // PT.12 — scheduled (recurring) job so the Triggered column renders the
+  // Clock icon path. Terminal state (success) so it doesn't bump active count.
+  {
+    id: 'job-007',
+    target: 'garage-door.yaml',
+    state: 'success',
+    scheduled: true,
+    schedule_kind: 'recurring',
+    assigned_client_id: 'worker-1',
+    assigned_hostname: 'build-server-1',
+    created_at: new Date(Date.now() - 1800_000).toISOString(),
+    finished_at: new Date(Date.now() - 1700_000).toISOString(),
+    duration_seconds: 100,
+    ota_result: 'success',
+  },
+  // FD.8 — download-only job with a firmware binary ready. Queue-tab
+  // renders the Download button exclusively for this row.
+  {
+    id: 'job-008',
+    target: 'office.yaml',
+    state: 'success',
+    download_only: true,
+    has_firmware: true,
+    assigned_client_id: 'worker-1',
+    assigned_hostname: 'build-server-1',
+    created_at: new Date(Date.now() - 2100_000).toISOString(),
+    finished_at: new Date(Date.now() - 2000_000).toISOString(),
+    duration_seconds: 100,
+  },
 ];
 
 const configContent = `esphome:
@@ -237,8 +297,43 @@ export async function mockApi(page: Page) {
   await page.route('**/ui/api/jobs/*/log*', route =>
     route.fulfill({ json: { log: 'INFO Compiling...\nINFO Done.\n', offset: 100, finished: true } }),
   );
+  // FD.6 — firmware download. Short tiny payload; tests just verify the
+  // request reaches this URL, not the byte content.
+  await page.route('**/ui/api/jobs/*/firmware', route =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/octet-stream',
+      headers: { 'Content-Disposition': 'attachment; filename="firmware.bin"' },
+      body: 'FIRMWARE_BYTES',
+    }),
+  );
   await page.route('**/ui/api/targets/*/rename', route =>
     route.fulfill({ json: { new_filename: 'renamed.yaml' } }),
+  );
+  // PT.12 — pin / unpin: server returns no body on success.
+  await page.route('**/ui/api/targets/*/pin', route =>
+    route.fulfill({ status: 200, json: {} }),
+  );
+  // PT.12 — schedule routes: set/delete recurring + one-time + toggle.
+  await page.route('**/ui/api/targets/*/schedule/once', route =>
+    route.fulfill({ status: 200, json: {} }),
+  );
+  await page.route('**/ui/api/targets/*/schedule/toggle', route =>
+    route.fulfill({ json: { schedule_enabled: false } }),
+  );
+  await page.route('**/ui/api/targets/*/schedule', route =>
+    route.fulfill({ status: 200, json: {} }),
+  );
+  // PT.12 — schedule history (per-target outcome list) — empty by default.
+  await page.route('**/ui/api/schedule-history', route =>
+    route.fulfill({ json: {} }),
+  );
+  // PT.12 — meta updates (area, comment) used by hamburger-menu actions.
+  await page.route('**/ui/api/targets/*/meta', route =>
+    route.fulfill({ status: 200, json: {} }),
+  );
+  await page.route('**/ui/api/workers/*/clean', route =>
+    route.fulfill({ status: 200, json: {} }),
   );
   await page.route('**/ui/api/targets/*', route => {
     if (route.request().method() === 'DELETE') {

@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildWsUrl, getJobLog } from '../api/client';
 import { copyTerminalText, downloadTerminalText } from '../utils/terminal';
@@ -38,13 +39,19 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stac
   const pollJobIdRef = useRef<string | null>(null);
   const mountedRef = useRef(false);
 
-  // Live header updates
+  // Live header updates (QS.27): the job header shows a running
+  // "elapsed since start" counter for in-flight compiles. The job
+  // object itself only re-renders when SWR polls (1 Hz for queue),
+  // but the human-readable elapsed value needs to tick every second
+  // so the user sees a smooth counter instead of a jittery stair-step
+  // tied to the polling cadence. `forceUpdate` bumps a dummy state
+  // counter purely to re-run `timeAgo` against the current wall-clock
+  // time. Cleaned up on modal close — no wasted timer while hidden.
   const [, forceUpdate] = useState(0);
   const headerTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const job = jobId ? queue.find(j => j.id === jobId) ?? null : null;
 
-  // Force header re-render every second while open
   useEffect(() => {
     if (!isOpen) return;
     headerTimerRef.current = setInterval(() => forceUpdate(n => n + 1), 1000);
@@ -162,8 +169,11 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stac
       } catch {
         startPolling(jobId);
       }
-    } else if (currentJob?.log) {
-      term.write(currentJob.log);
+    } else if (currentJob) {
+      // SP.2: queue list no longer carries `log`. For terminal jobs, fetch
+      // via /ui/api/jobs/{id}/log — startPolling does one full read and
+      // stops as soon as the response says finished:true.
+      startPolling(jobId);
     }
 
     return () => {
@@ -242,8 +252,8 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stac
           <Button variant="secondary" size="sm" onClick={handleCopy} title="Copy log to clipboard">
             Copy
           </Button>
-          <Button variant="secondary" size="sm" onClick={handleDownload} title="Download log as file">
-            &#8595; Download
+          <Button variant="secondary" size="sm" onClick={handleDownload} title="Download build log as text file">
+            <Download className="size-3.5 mr-1" aria-hidden="true" /> Download log
           </Button>
         </DialogHeader>
         <div style={{ flex: 1, padding: 0, overflow: 'hidden' }}>

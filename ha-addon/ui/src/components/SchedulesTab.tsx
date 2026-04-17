@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Calendar, Check, Circle, Clock, Pin, X } from 'lucide-react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -9,8 +10,9 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import type { Target, Worker } from '../types';
-import { stripYaml, timeAgo, formatCronHuman } from '../utils';
+import { stripYaml, timeAgo, formatCronHuman, usePersistedState } from '../utils';
 import { Button } from './ui/button';
+import { SortHeader, getAriaSort } from './ui/sort-header';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -20,23 +22,6 @@ import {
 } from './ui/dropdown-menu';
 import { deleteTargetSchedule, getScheduleHistory, type ScheduleHistoryEntry } from '../api/client';
 
-function SortHeader({ label, column }: {
-  label: string;
-  column: { getIsSorted: () => false | 'asc' | 'desc'; toggleSorting: (desc?: boolean) => void; getCanSort: () => boolean };
-}) {
-  const sorted = column.getIsSorted();
-  const indicator = sorted === 'asc' ? ' \u25b2' : sorted === 'desc' ? ' \u25bc' : '';
-  const title = sorted === 'asc' ? 'Click to sort descending' : sorted === 'desc' ? 'Click to reset sort' : 'Click to sort ascending';
-  return (
-    <span
-      onClick={() => column.toggleSorting(sorted === 'asc')}
-      style={{ cursor: 'pointer', userSelect: 'none' }}
-      title={title}
-    >
-      {label}{indicator}
-    </span>
-  );
-}
 
 function formatNextRun(schedule: string | null | undefined, lastRun: string | null | undefined, scheduleOnce: string | null | undefined): string {
   if (scheduleOnce) {
@@ -66,7 +51,8 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
     [targets],
   );
 
-  const [sorting, setSorting] = useState<SortingState>([]);
+  // QS.27: persist sort across reloads via localStorage.
+  const [sorting, setSorting] = usePersistedState<SortingState>('schedules-sort', []);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [filter, setFilter] = useState('');
 
@@ -140,19 +126,25 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
         if (t.schedule_once) titleParts.push(`One-time: ${t.schedule_once}`);
         return (
           <span
-            style={{ cursor: 'pointer', color: 'var(--accent)' }}
+            className="cursor-pointer text-[var(--accent)]"
             title={`${titleParts.join(' • ')} — click to edit`}
             onClick={() => onSchedule(t.target)}
           >
             {cronHuman && (
-              <span style={{ opacity: enabled ? 1 : 0.5 }}>
-                🕐 {cronHuman}
-                {!enabled && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>(paused)</span>}
+              <span className="inline-flex items-center gap-1" style={{ opacity: enabled ? 1 : 0.5 }}>
+                <Clock className="size-3" aria-hidden="true" />
+                {cronHuman}
+                {!enabled && <span className="text-[var(--text-muted)] ml-2">(paused)</span>}
               </span>
             )}
             {cronHuman && onceWhen && <br />}
-            {onceWhen && <span>📅 Once: {onceWhen}</span>}
-            {!cronHuman && !onceWhen && <span style={{ color: 'var(--text-muted)' }}>—</span>}
+            {onceWhen && (
+              <span className="inline-flex items-center gap-1">
+                <Calendar className="size-3" aria-hidden="true" />
+                Once: {onceWhen}
+              </span>
+            )}
+            {!cronHuman && !onceWhen && <span className="text-[var(--text-muted)]">—</span>}
           </span>
         );
       },
@@ -171,12 +163,12 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
         if (t.schedule) {
           labels.push(
             t.schedule_enabled !== false
-              ? <span key="r" style={{ color: 'var(--success)' }}>Active</span>
-              : <span key="r" style={{ color: 'var(--text-muted)' }}>Paused</span>,
+              ? <span key="r" className="text-[var(--success)]">Active</span>
+              : <span key="r" className="text-[var(--text-muted)]">Paused</span>,
           );
         }
         if (t.schedule_once) {
-          labels.push(<span key="o" style={{ color: 'var(--accent)' }}>One-time</span>);
+          labels.push(<span key="o" className="text-[var(--accent)]">One-time</span>);
         }
         return <>{labels.map((l, i) => <span key={i}>{i > 0 && ' + '}{l}</span>)}</>;
       },
@@ -197,11 +189,17 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
             {lastEntry
               ? <>
                   {timeAgo(lastEntry.fired_at)}
-                  {lastEntry.outcome === 'enqueued' && <span style={{ color: 'var(--accent)', marginLeft: 4 }}>●</span>}
-                  {lastEntry.outcome === 'success' && <span style={{ color: 'var(--success)', marginLeft: 4 }}>✓</span>}
-                  {lastEntry.outcome === 'failed' && <span style={{ color: 'var(--destructive)', marginLeft: 4 }}>✗</span>}
+                  {lastEntry.outcome === 'enqueued' && (
+                    <Circle className="ml-1 inline size-3 align-text-bottom text-[var(--accent)]" fill="currentColor" aria-label="enqueued" />
+                  )}
+                  {lastEntry.outcome === 'success' && (
+                    <Check className="ml-1 inline size-3 align-text-bottom text-[var(--success)]" aria-label="success" />
+                  )}
+                  {lastEntry.outcome === 'failed' && (
+                    <X className="ml-1 inline size-3 align-text-bottom text-[var(--destructive)]" aria-label="failed" />
+                  )}
                 </>
-              : <span style={{ color: 'var(--text-muted)' }}>{formatNextRun(t.schedule, t.schedule_last_run, t.schedule_once)}</span>
+              : <span className="text-[var(--text-muted)]">{formatNextRun(t.schedule, t.schedule_last_run, t.schedule_once)}</span>
             }
           </span>
         );
@@ -213,9 +211,13 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
       cell: ({ row: { original: t } }) => {
         const version = t.pinned_version || t.server_version || '—';
         return (
-          <span style={{ fontSize: 12 }}>
+          <span className="text-[12px]">
             {version}
-            {t.pinned_version && <span title={`Pinned to ${t.pinned_version}`} style={{ marginLeft: 4, fontSize: 10 }}>📌</span>}
+            {t.pinned_version && (
+              <span title={`Pinned to ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+                <Pin className="size-3" aria-label="Pinned version" />
+              </span>
+            )}
           </span>
         );
       },
@@ -298,7 +300,10 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               {table.getHeaderGroups().map(headerGroup => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map(header => (
-                    <th key={header.id}>
+                    <th
+                      key={header.id}
+                      aria-sort={header.column.getCanSort() ? getAriaSort(header.column) : undefined}
+                    >
                       {header.isPlaceholder
                         ? null
                         : flexRender(header.column.columnDef.header, header.getContext())}
@@ -311,7 +316,8 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               {table.getRowModel().rows.length === 0 ? (
                 <tr className="empty-row"><td colSpan={7}>
                   {scheduled.length === 0
-                    ? 'No devices have a schedule configured — open a device\'s menu and choose "Schedule Upgrade..."'
+                    ? /* UX.1: the menu item this used to reference was removed in #93. */
+                      'No devices have a schedule configured — click Upgrade on a device, then choose Scheduled.'
                     : 'No schedules match filter'}
                 </td></tr>
               ) : (

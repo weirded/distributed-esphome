@@ -464,6 +464,12 @@ class DevicePoller:
 
         Does NOT persist ip_address or address_source — see _load_cache
         docstring for why.
+
+        #41: also broadcasts a ``devices_changed`` event so HA integrations
+        refresh in real time instead of waiting on the coordinator poll.
+        Piggy-backs on the existing save-point, which fires on every
+        material device transition (online/offline, running_version,
+        mac_address, compilation_time).
         """
         try:
             data = {
@@ -480,6 +486,11 @@ class DevicePoller:
             tmp.replace(DEVICE_CACHE_FILE)
         except Exception:
             logger.debug("Failed to save device cache", exc_info=True)
+        try:
+            from event_bus import EVENT_DEVICES_CHANGED, broadcast  # noqa: PLC0415
+            broadcast(EVENT_DEVICES_CHANGED)
+        except Exception:
+            logger.debug("event_bus broadcast failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Public
@@ -550,12 +561,22 @@ class DevicePoller:
                     compile_target=compile_target,
                     address_source=source,
                 )
-                logger.debug("Created device %s from address %s (%s, no mDNS yet)",
-                             device_name, addr, source)
+                # DL.3: promoted from DEBUG so operators can see the
+                # poller picking up newly-discovered targets without
+                # turning on debug logging.
+                logger.info(
+                    "Proactively created device %s at %s (source=%s, mDNS pending)",
+                    device_name, addr, source,
+                )
             else:
                 dev = self._devices[existing_key]
                 # Update IP from address override if not already set from mDNS
                 if not dev.ip_address:
+                    # DL.3: filled-in-IP path — previously silent.
+                    logger.info(
+                        "Filled in address for existing device %s: %s (source=%s)",
+                        existing_key, addr, source,
+                    )
                     dev.ip_address = addr
                 # ALWAYS fill in the address source if it's missing — this
                 # covers cached devices loaded from /data/device_cache.json

@@ -49,7 +49,12 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[480px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl outline-none",
+          // Bug #14: cap default dialog height at the viewport so a tall
+          // body (e.g. UpgradeModal's worker + version-list + radios stack)
+          // can't push controls below the fold. Body's own scroll container
+          // handles the overflow. dialog-lg / dialog-xl override these with
+          // explicit max-height in theme.css.
+          "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[480px] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-xl outline-none",
           className
         )}
         {...props}

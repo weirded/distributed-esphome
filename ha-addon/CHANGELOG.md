@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.5.0
+
+**Rebrand: now called ESPHome Fleet.** Same add-on, same Docker images, no migration needed — just a new name that better describes what the tool does. The HA sidebar entry, add-on store name, browser tab title, and add-on logs all read "ESPHome Fleet" instead of "ESPHome Distributed Build Server". The GitHub repo, Docker image names, and add-on slug are unchanged so existing installs upgrade in place with no action required.
+
+**Native Home Assistant integration.** ESPHome Fleet is now a first-class HA citizen. The add-on drops a custom integration into your HA config on first boot and advertises itself via mDNS; HA pops a one-click "ESPHome Fleet discovered" notification. Once you confirm, every managed device, every build worker, and the add-on itself become real HA devices with entities you can dashboard on:
+
+- **Update entities** per device — use HA's built-in Update card to upgrade firmware, with the current/latest version both visible.
+- **Sensors** for queue depth, worker online state, per-worker active-job count, fleet-wide online/outdated/total-slot counts, and per-device running version.
+- **Buttons** to kick off compiles directly from an automation.
+- **Numbers** for each worker's max-parallel-jobs slot.
+- **`esphome_fleet.compile` / `.cancel` / `.validate` actions** — invoke from the HA action editor with a real device picker (choose the device, not a filename) and an optional worker pin. Supports bulk targets, `"all"`, and `"outdated"`.
+- **`esphome_fleet_compile_complete` events** on the HA bus for automation triggers — fires once per terminal state with target, state, duration, worker, and schedule context.
+- Devices managed by this add-on auto-merge with the same device from the stock ESPHome integration, so the Update card sits next to your existing ESPHome sensors and switches.
+
+**Downloadable firmware binaries.** Pick "Download Now" in the Upgrade dialog to get a compile without OTA — the Queue tab then offers a Download menu with every variant the compile produced. ESP32 gets both **Factory** (full flash image for first-time USB/serial flash) and **OTA** (smaller OTA-safe image); ESP8266 gets OTA. Each is available raw or **gzip-compressed** for smaller wire transfer (~30–40% smaller on typical ESP firmware).
+
+**Mandatory authentication on the direct-port API.** The `/ui/api/*` endpoints now require an `Authorization: Bearer <token>` on port 8765. Two token shapes are accepted: the add-on's shared worker token (used automatically by the HA integration's coordinator, so no user action needed) and a Home Assistant long-lived access token (for scripts and `curl` — gives real per-user audit attribution). Ingress access from the HA sidebar is unaffected. The add-on's Bearer token flows through Supervisor discovery into the integration transparently — just accept the discovery notification and it works.
+
+**ESPHome unbundled from the server image.** The add-on no longer ships with a particular ESPHome version baked in — it installs whatever your HA ESPHome add-on reports at first boot. This means your builds always match the version HA expects. Heads up: **first boot takes 1–3 minutes** while ESPHome installs into `/data/esphome-versions/`. The UI shows an "Installing ESPHome…" banner during that window and features that depend on the binary (validate, autocomplete, compiles) stay disabled until ready. Subsequent restarts are instant because the install is cached.
+
+**Supply-chain signals you can verify.** Every GHCR image carries a cosign signature (keyless, GitHub OIDC) and a CycloneDX-format SBOM attestation. See `DOCS.md` for the `cosign verify` + `cosign verify-attestation` commands. Every GitHub Actions step is SHA-pinned, and CI fails on any unpinned `uses:` line. `pip-audit` and `npm audit` gate every push.
+
+**UI quality sprint.**
+
+- **Accessibility** — every icon-only button now has both an `aria-label` (for screen readers) and a `title` (for hover), enforced by a new invariant. Hamburger/sort-header clicks are real `<button>`s now; row-menu keyboard nav comes from Radix.
+- **Lucide icons everywhere** — emoji glyphs (🕐 📅 📌 👁 🔒 ☀ ☾) and HTML entities (⋮ ⚙ ↻ ↓ ↗ ▲ ▼) replaced with consistent Lucide icons across the app.
+- **One Action selector in the Upgrade dialog** — Upgrade Now / Download Now / Schedule Upgrade, replacing the former nested Now/Scheduled + Compile+OTA/Compile+Download toggles.
+- **Queue dropdown stability** — the Download and Retry dropdown menus no longer slam shut on each 1 Hz SWR poll (same class of bug as the devices-tab hamburger #2 fix). Applied to every row-cell DropdownMenu in the app.
+- **Table polish** — column headers now consistently sentence-case across all four tabs; state badges (Compiling, Failed, Timed Out, Cancelled, etc.) are title-case everywhere, same badge component used on both the Queue and Workers tabs. The Worker cell renders the slot on a muted second line (`local-worker / slot 2`) instead of gluing it to the hostname.
+- **Queue tab triggered-by column** — shows "Manual", "Recurring · Daily 03:00", "Once @ 2026-04-17 08:30" with full cron/tz in the tooltip.
+- **Connect Worker modal** — new Docker Compose format tab alongside Bash and PowerShell, with the shared token baked into the snippet. Default container name is now `esphome-fleet-worker` (rebranded). The old `docker-compose.worker.yml` in the repo root is retired — the modal generates it live.
+- **Download buttons disambiguated** — per-row "Download .bin" vs log-file "Download log" are no longer ambiguously named.
+- **Schedules tab empty-state copy** fixed to point at the Upgrade dialog's Scheduled option (the previous text referenced a hamburger menu item that had been removed).
+- **Error Boundary** around the root `<App />` so a transient render error shows a recoverable dialog instead of a blank page.
+- **QS.27 polish** — persisted sort state per tab, URL `?tab=` deep-linking, and a small pile of micro-cleanups.
+
+**Under the hood.**
+
+- Frontend API calls all funnel through a typed `api/client.ts` layer with named response interfaces; no more `fetch()` in components (enforced invariant). Silent `return [] on !r.ok` fallbacks are now throws that SWR's error path surfaces.
+- `DevicesTab.tsx` split from 1,173 lines + 24 hooks into six focused files. Monaco glue split into `yamlValidation.ts` / `completionProvider.ts` / `monacoSetup.ts`.
+- HA integration tests (37 new): config flow, device-info builders, coordinator events, installer atomicity, services schema + lifecycle.
+- Protocol (`protocol.py`) pydantic contracts enforced byte-identical between server and client; every `/api/v1/*` handler parses through a typed model.
+- `integration_installer` now writes atomically (`os.replace` over a staging dir) so a crash mid-install can't strand a missing custom integration.
+- 16 enforced invariants checked mechanically on every push (up from 10): `fetch()` placement, shadcn wrappers, `any` ban in new code, `<td>` flex ban, typed e2e fixtures, YAML `safe_load` vs regex, subprocess logging, worker image version bumps, hash-pinned lockfiles, macOS-package lock guard, protocol parity, `--ignore-vuln` applicability, typed request bodies, icon-button labels, e2e waits, API-layer error propagation.
+
 ## 1.4.0
 
 The fleet management release. Schedule upgrades, pin device versions, and create new devices — all from the UI.
