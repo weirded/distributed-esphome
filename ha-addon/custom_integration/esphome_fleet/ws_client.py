@@ -64,6 +64,10 @@ class EventStreamClient:
         """Reconnect loop. Runs until ``stop()`` is called."""
         backoff = _INITIAL_BACKOFF
         url = f"{self._coordinator.base_url.rstrip('/')}/ui/api/ws/events"
+        # AU.7: carry the same Bearer the coordinator uses for HTTP polls
+        # so `/ui/api/ws/events` survives `require_ha_auth=true`. The
+        # coordinator exposes `_auth_headers()` for exactly this case.
+        headers = self._coordinator._auth_headers() or None
         while not self._stopped:
             try:
                 _LOGGER.debug("event stream: connecting to %s", url)
@@ -71,6 +75,7 @@ class EventStreamClient:
                     url,
                     heartbeat=30.0,
                     timeout=aiohttp.ClientWSTimeout(ws_close=10.0),
+                    headers=headers,
                 ) as ws:
                     _LOGGER.info("event stream: connected to %s", url)
                     backoff = _INITIAL_BACKOFF
