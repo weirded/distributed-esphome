@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, request as pwRequest, test } from '@playwright/test';
 
 /**
  * #82 — direct-port auth covers the static UI shell, not just /ui/api/*.
@@ -12,19 +12,34 @@ import { expect, test } from '@playwright/test';
  * returns 401 without a Bearer token, and returns 200 when we send the
  * add-on's shared system token.
  *
- * FLEET_TOKEN is the same token the "Connect Worker" modal shows — the
- * add-on `api_token` option. Required for the 200-path assertions.
+ * Uses its own `APIRequestContext` created **without** the auth header
+ * so `playwright.config.ts`'s `extraHTTPHeaders` Bearer (attached for
+ * every other smoke test) doesn't sneak in and turn our 401 assertions
+ * into false 200s.
  */
 
 const FLEET_URL = (process.env.HASS4_URL || 'http://hass-4.local:8765').replace(/\/$/, '');
-const FLEET_TOKEN = process.env.HASS4_FLEET_TOKEN || '';
+const ADDON_TOKEN = process.env.HASS4_ADDON_TOKEN || '';
 
-const PROTECTED_PATHS = ['/', '/index.html', '/ui/api/info'] as const;
+const PROTECTED_PATHS = ['/', '/index.html', '/ui/api/server-info'] as const;
 
 test.describe('#82 direct-port auth covers the SPA shell', () => {
+  // Dedicated no-auth APIRequestContext for the 401 assertions. The
+  // default `request` fixture inherits playwright.config.ts's
+  // `extraHTTPHeaders` which carries a Bearer — that would mask the
+  // very bug this test file exists to catch.
+  let unauth: Awaited<ReturnType<typeof pwRequest.newContext>>;
+  test.beforeAll(async () => {
+    unauth = await pwRequest.newContext({
+      baseURL: FLEET_URL,
+      extraHTTPHeaders: {},
+    });
+  });
+  test.afterAll(async () => { await unauth.dispose(); });
+
   for (const path of PROTECTED_PATHS) {
-    test(`${path} without auth returns 401`, async ({ request }) => {
-      const resp = await request.get(`${FLEET_URL}${path}`);
+    test(`${path} without auth returns 401`, async () => {
+      const resp = await unauth.get(path);
       expect(
         resp.status(),
         `GET ${path} without Bearer should 401 under require_ha_auth=true`,
@@ -36,10 +51,8 @@ test.describe('#82 direct-port auth covers the SPA shell', () => {
     });
   }
 
-  test('/ without auth does NOT leak HTML content', async ({ request }) => {
-    // Defensive: even if the status were wrong, the body must not contain
-    // the React shell's <!DOCTYPE> / <div id="root"> / bundle script tags.
-    const resp = await request.get(`${FLEET_URL}/`);
+  test('/ without auth does NOT leak HTML content', async () => {
+    const resp = await unauth.get('/');
     const body = await resp.text();
     expect(body.toLowerCase()).not.toContain('<!doctype');
     expect(body).not.toContain('id="root"');
@@ -47,14 +60,14 @@ test.describe('#82 direct-port auth covers the SPA shell', () => {
 
   test.describe('with a valid system Bearer', () => {
     test.skip(
-      !FLEET_TOKEN,
-      'HASS4_FLEET_TOKEN not set — export the add-on api_token to run the 200-path checks.',
+      !ADDON_TOKEN,
+      'HASS4_ADDON_TOKEN not set — push-to-hass-4.sh exports it; run the suite via that wrapper to exercise the 200-path.',
     );
 
     for (const path of PROTECTED_PATHS) {
-      test(`${path} with Bearer returns 200`, async ({ request }) => {
-        const resp = await request.get(`${FLEET_URL}${path}`, {
-          headers: { Authorization: `Bearer ${FLEET_TOKEN}` },
+      test(`${path} with Bearer returns 200`, async () => {
+        const resp = await unauth.get(path, {
+          headers: { Authorization: `Bearer ${ADDON_TOKEN}` },
         });
         expect(
           resp.status(),
@@ -63,9 +76,9 @@ test.describe('#82 direct-port auth covers the SPA shell', () => {
       });
     }
 
-    test('/ with Bearer serves the React SPA shell', async ({ request }) => {
-      const resp = await request.get(`${FLEET_URL}/`, {
-        headers: { Authorization: `Bearer ${FLEET_TOKEN}` },
+    test('/ with Bearer serves the React SPA shell', async () => {
+      const resp = await unauth.get('/', {
+        headers: { Authorization: `Bearer ${ADDON_TOKEN}` },
       });
       expect(resp.status()).toBe(200);
       const body = await resp.text();
