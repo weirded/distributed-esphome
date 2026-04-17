@@ -4,22 +4,25 @@
     "step": {
       "user": {
         "title": "Connect to ESPHome Fleet",
-        "description": "Enter the base URL of your ESPHome Fleet add-on (for example `http://homeassistant.local:8765`).",
+        "description": "Enter the base URL of your ESPHome Fleet add-on (for example `http://homeassistant.local:8765`) and the shared token from the add-on's Configuration tab.",
         "data": {
-          "base_url": "Base URL"
+          "base_url": "Base URL",
+          "token": "Add-on token"
         }
       },
       "discovery_confirm": {
         "title": "Set up {name}",
         "description": "Home Assistant found an ESPHome Fleet server at {url}. Confirm or edit the URL to finish setup.",
         "data": {
-          "base_url": "Base URL"
+          "base_url": "Base URL",
+          "token": "Add-on token"
         }
       }
     },
     "error": {
       "invalid_url": "Enter a valid http(s) URL.",
-      "cannot_connect": "Could not reach the ESPHome Fleet server at that URL. Check the URL, that the add-on is running, and that this host can reach it."
+      "cannot_connect": "Could not reach the ESPHome Fleet server at that URL. Check the URL, that the add-on is running, and that this host can reach it.",
+      "token_required": "The add-on token is required. Copy it from Settings → Add-ons → ESPHome Fleet → Configuration."
     },
     "abort": {
       "already_configured": "This server is already configured.",

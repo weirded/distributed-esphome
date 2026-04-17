@@ -1,7 +1,7 @@
-"""HA user authentication middleware (AU.2).
+"""HA user authentication middleware (AU.2, extended by AU.7 in 1.5.0).
 
 Resolves the requesting Home Assistant user for every ``/ui/api/*``
-request via one of three paths (checked in order):
+request via one of four paths (checked in order):
 
   1. **Supervisor peer trust.** When the request arrives from
      172.30.32.2 (Supervisor's internal Ingress proxy), trust it — HA
@@ -10,16 +10,25 @@ request via one of three paths (checked in order):
      ``X-Remote-User-Id`` headers, which we attach to the request for
      downstream handlers.
 
-  2. **Bearer token.** When the request carries ``Authorization: Bearer
+  2. **System Bearer (AU.7).** When the request carries ``Authorization:
+     Bearer <x>`` and ``x`` equals the add-on's shared worker token
+     (``cfg.token``), treat the caller as a trusted system. Used by the
+     native ESPHome Fleet HA integration's coordinator so it can poll
+     ``/ui/api/*`` without the user having to mint a long-lived access
+     token. The add-on plumbs the same token into the Supervisor
+     discovery payload so the config flow captures it automatically.
+
+  3. **HA user Bearer.** When the request carries ``Authorization: Bearer
      <HA long-lived access token>``, validate it against Supervisor's
      ``/auth`` endpoint (which exists because the add-on has
      ``auth_api: true`` — AU.1). If Supervisor returns 200, the token
      is valid; the response body carries the user metadata.
 
-  3. **Neither.** Respond with 401 + ``WWW-Authenticate: Bearer
-     realm="ESPHome Fleet"`` when ``require_ha_auth`` is enabled; pass
-     through otherwise (preserves the pre-1.4.1 behavior where any
-     caller that reached port 8765 got in).
+  4. **Neither.** Respond with 401 + ``WWW-Authenticate: Bearer
+     realm="ESPHome Fleet"``. Since AU.7 (1.5.0) the add-on option
+     ``require_ha_auth`` defaults to ``true``, so this path always
+     rejects. The option still exists as an escape hatch for test
+     harnesses and for a user who deliberately wants pre-1.4.1 behavior.
 
 The middleware attaches ``request["ha_user"]`` on any successful
 authentication — ``{"name": ..., "id": ..., "is_admin": ...}`` — or
@@ -153,17 +162,33 @@ async def ha_auth_middleware(request: web.Request, handler):
             request["ha_user"] = {"name": name, "id": user_id, "is_admin": None}
         return await handler(request)
 
-    # Path 2: Bearer token. Validate against Supervisor's /auth.
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        if token:
-            user = await _validate_bearer_with_supervisor(token)
-            if user is not None:
-                request["ha_user"] = user
-                return await handler(request)
+    bearer = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
 
-    # Path 3: no auth — gated by require_ha_auth.
+    # Path 2 (AU.7): system-token Bearer. The add-on's shared worker
+    # token doubles as the integration's coordinator credential so the
+    # user doesn't have to mint an LLAT just to run the integration.
+    # `cfg.token` is the same token the Connect Worker modal shows;
+    # anyone who already has it is already authenticated to `/api/v1/*`,
+    # so granting system access to `/ui/api/*` doesn't widen the blast
+    # radius. `ha_user.name` = "esphome_fleet_integration" so mutation
+    # audit lines can distinguish system vs user actions (AU.4).
+    if bearer and cfg.token and bearer == cfg.token:
+        request["ha_user"] = {
+            "name": "esphome_fleet_integration",
+            "id": None,
+            "is_admin": False,
+        }
+        return await handler(request)
+
+    # Path 3: HA user Bearer — validate against Supervisor's /auth.
+    if bearer:
+        user = await _validate_bearer_with_supervisor(bearer)
+        if user is not None:
+            request["ha_user"] = user
+            return await handler(request)
+
+    # Path 4: no (valid) auth — gated by require_ha_auth.
     if cfg.require_ha_auth:
         logger.info(
             "401 on %s: require_ha_auth=true and no valid HA auth "
@@ -176,5 +201,7 @@ async def ha_auth_middleware(request: web.Request, handler):
             headers={"WWW-Authenticate": _WWW_AUTHENTICATE},
         )
 
-    # Pre-1.4.1 compatibility: unauthenticated direct-port access is allowed.
+    # Pre-1.4.1 compatibility: unauthenticated direct-port access is allowed
+    # when require_ha_auth is off. AU.7 flipped the default to on, so this
+    # branch only matters for test harnesses / deliberate opt-out.
     return await handler(request)

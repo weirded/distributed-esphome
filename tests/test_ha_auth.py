@@ -12,9 +12,9 @@ from constants import HA_SUPERVISOR_IP
 from ha_auth import _validate_bearer_with_supervisor, ha_auth_middleware
 
 
-def _make_app(require_ha_auth: bool = False) -> web.Application:
+def _make_app(require_ha_auth: bool = False, token: str = "") -> web.Application:
     app = web.Application()
-    app["config"] = AppConfig(require_ha_auth=require_ha_auth)
+    app["config"] = AppConfig(require_ha_auth=require_ha_auth, token=token)
     return app
 
 
@@ -26,6 +26,7 @@ async def _run_middleware(
     user_headers: dict | None = None,
     require_ha_auth: bool = False,
     supervisor_valid: object = None,
+    server_token: str = "",
 ) -> web.Response:
     """Execute the middleware against a constructed request.
 
@@ -44,7 +45,7 @@ async def _run_middleware(
                 return (peer_ip, 1)
             return None
 
-    app = _make_app(require_ha_auth=require_ha_auth)
+    app = _make_app(require_ha_auth=require_ha_auth, token=server_token)
     request = make_mocked_request(
         "GET", path, headers=hdrs, transport=_T(), app=app,
     )
@@ -209,3 +210,50 @@ async def test_validate_bearer_returns_none_on_non_200(monkeypatch) -> None:
 
     with patch("ha_auth.aiohttp.ClientSession", return_value=_Session()):
         assert await _validate_bearer_with_supervisor("user-token") is None
+
+
+# --- AU.7: system-token Bearer path ---
+
+
+async def test_system_token_bearer_grants_access_without_supervisor() -> None:
+    """AU.7 Path 2: Bearer equal to cfg.token authenticates as system caller."""
+    resp = await _run_middleware(
+        auth="Bearer the-add-on-shared-token",
+        server_token="the-add-on-shared-token",
+        # No supervisor_valid mock — the system-token path must short-circuit
+        # BEFORE ha_auth ever reaches the Supervisor validator.
+    )
+    assert resp.status == 200
+    body = resp.body.decode() if resp.body else ""
+    assert "esphome_fleet_integration" in body
+
+
+async def test_system_token_mismatch_falls_through_to_supervisor() -> None:
+    """AU.7: a Bearer that isn't the add-on token falls through to the
+    Supervisor /auth validator as before."""
+    resp = await _run_middleware(
+        auth="Bearer llat-from-a-user",
+        server_token="the-add-on-shared-token",  # non-matching
+        supervisor_valid={"name": "stefan", "id": "abc", "is_admin": True},
+    )
+    assert resp.status == 200
+    body = resp.body.decode() if resp.body else ""
+    assert '"stefan"' in body
+
+
+async def test_empty_server_token_does_not_accept_empty_bearer() -> None:
+    """AU.7 edge case: cfg.token == "" must not let `Bearer ` in.
+    Defensive — an empty add-on token is an error state, not a shortcut."""
+    resp = await _run_middleware(
+        auth="Bearer ",  # empty bearer token
+        server_token="",
+        require_ha_auth=True,
+    )
+    assert resp.status == 401
+
+
+async def test_require_ha_auth_default_is_true() -> None:
+    """AU.7: mandatory in 1.5.0. AppConfig() with no overrides must set
+    require_ha_auth=True so the middleware rejects unauthenticated calls."""
+    cfg = AppConfig()
+    assert cfg.require_ha_auth is True

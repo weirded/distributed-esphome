@@ -234,7 +234,9 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
 
     // Reopen the editor and verify the marker shows up.
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    // CR.6: wait on the dialog actually unmounting instead of a fixed
+    // timeout. Stops prod-smoke flakes on slow HA restarts.
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 5_000 });
     await targetRow.getByRole('button', { name: /^edit$/i }).click();
     await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 15_000 });
     // Wait for any view-line containing the marker. Monaco may not have

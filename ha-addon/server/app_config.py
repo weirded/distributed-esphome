@@ -79,11 +79,14 @@ class AppConfig:
     device_poll_interval: int = 60
     config_dir: str = "/config/esphome"
     port: int = 8765
-    # AU.3: when true, direct-port /ui/api/* calls must carry a valid
-    # HA Bearer token. Ingress-tunneled access is unaffected. Default
-    # false in 1.4.1 so existing setups keep working; flip to true in
-    # 1.5 once the path is proven in the wild.
-    require_ha_auth: bool = False
+    # AU.3/AU.7: when true, direct-port /ui/api/* calls must carry a
+    # valid HA Bearer token. Ingress-tunneled access is unaffected.
+    # Default flipped to `true` in 1.5.0 (AU.7) — the add-on's own
+    # shared token now works as a system Bearer (ha_auth.py Path 2),
+    # so the native HA integration's coordinator authenticates
+    # transparently. Left as a config option for test harnesses and
+    # for deliberate pre-1.4.1 opt-out.
+    require_ha_auth: bool = True
 
     # Set of keys we recognise from options.json. Anything else gets logged
     # at WARNING on startup so a typo (``worker_ofline_threshold``) is

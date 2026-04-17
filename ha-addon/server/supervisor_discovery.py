@@ -28,25 +28,34 @@ DISCOVERY_SERVICE = "esphome_fleet"
 SUPERVISOR_URL = "http://supervisor"
 
 
-async def register_discovery(port: int) -> str | None:
+async def register_discovery(port: int, token: str | None = None) -> str | None:
     """POST a discovery record to Supervisor. Returns the UUID on success.
 
-    Returns None if we couldn't register (no token, Supervisor
+    Returns None if we couldn't register (no Supervisor token, Supervisor
     unreachable, non-2xx response). Never raises.
+
+    AU.7: the optional ``token`` argument is the add-on's shared worker
+    token. When supplied, it's advertised in the discovery payload so
+    the integration's config flow can hand it to the coordinator for
+    `Authorization: Bearer …` on every `/ui/api/*` call. Orthogonal to
+    the SUPERVISOR_TOKEN env var we use to talk to Supervisor itself.
     """
-    token = os.environ.get("SUPERVISOR_TOKEN")
-    if not token:
+    supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+    if not supervisor_token:
         logger.debug("No SUPERVISOR_TOKEN — skipping Supervisor discovery (#26)")
         return None
 
     # Supervisor routes to this host by its internal Docker name,
     # which matches the container hostname inside the add-on.
     host = socket.gethostname()
+    config: dict[str, object] = {"host": host, "port": port, "ssl": False}
+    if token:
+        config["token"] = token
     payload = {
         "service": DISCOVERY_SERVICE,
-        "config": {"host": host, "port": port, "ssl": False},
+        "config": config,
     }
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {supervisor_token}"}
 
     try:
         async with aiohttp.ClientSession() as session:

@@ -1168,9 +1168,14 @@ def create_app() -> web.Application:
 
         # #26: register ourselves with Supervisor's /discovery API so the
         # custom integration can auto-configure without a URL prompt.
+        # AU.7: the payload now includes `token` so the integration's
+        # coordinator can authenticate against `/ui/api/*` without asking
+        # the user to paste credentials.
         try:
             from supervisor_discovery import register_discovery  # noqa: PLC0415
-            app["_rt"]["supervisor_discovery_uuid"] = await register_discovery(cfg.port)
+            app["_rt"]["supervisor_discovery_uuid"] = await register_discovery(
+                cfg.port, token=cfg.token,
+            )
         except Exception:
             logger.debug("Supervisor discovery registration raised", exc_info=True)
 

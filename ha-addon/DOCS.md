@@ -40,22 +40,21 @@ Configuration options (token, timeouts, polling intervals) are available in the 
 
 The add-on's web UI lives behind Home Assistant Ingress and is authenticated by HA itself — no extra step needed to open it from the HA sidebar. Workers connect over the direct port (`:8765`) with a shared `token` from the add-on options.
 
-**For tooling / automation that wants to call `/ui/api/*` directly from *outside* HA** (shell scripts, CI, a bash prompt), the 1.5.0 add-on can validate Home Assistant user credentials via Supervisor's `/auth` endpoint. Turn it on:
+**Direct-port `/ui/api/*` access requires a Bearer token by default** (add-on option `require_ha_auth`, default `true` since 1.5.0). Two kinds of tokens are accepted:
 
-1. Add-on **Configuration** → enable `require_ha_auth`.
-2. In HA, create a **Long-Lived Access Token** (Profile → Security → Long-Lived Access Tokens → Create Token).
-3. Send the token as a Bearer header on every request:
+- **The add-on's shared token** (from the add-on's Configuration tab — also what build workers use on port 8765). Handy for scripts running on machines that already have the token, and the native ESPHome Fleet HA integration uses it automatically.
+- **A Home Assistant Long-Lived Access Token** for anything that wants real per-user attribution. Mutations (compile, cancel, pin, schedule, rename, delete, save) log the authenticated user's HA username.
 
-   ```bash
-   curl -H "Authorization: Bearer $HA_LLAT" \
-        http://homeassistant.local:8765/ui/api/targets
-   ```
+Example:
 
-Requests without a valid token receive **401 Unauthorized** plus `WWW-Authenticate: Bearer realm="ESPHome Fleet"`. Ingress-tunneled requests are unaffected — HA already authenticated the user before forwarding.
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+     http://homeassistant.local:8765/ui/api/targets
+```
 
-Every mutation (compile, cancel, pin, schedule, rename, delete, save) logs the authenticated user's HA username, so operators can trace who enqueued what.
+Requests without a valid token receive **401 Unauthorized** plus `WWW-Authenticate: Bearer realm="ESPHome Fleet"`. Ingress-tunneled access is unaffected — HA already authenticated the user before forwarding.
 
-> **Trade-off note.** `require_ha_auth` defaults to `false` in 1.5.0 because the native **ESPHome Fleet** HA integration doesn't yet send a Bearer token on its coordinator GETs; flipping the option to `true` today would break the integration's polling loop (the browser UI continues to work via Ingress). If you're running tooling outside HA and don't use the integration, turning this on is safe. Full integration-side bearer wiring is queued for a follow-up release, and this note will change when that lands.
+If you specifically need the pre-1.4.1 "no auth on port 8765" behavior (for a test harness, say), flip `require_ha_auth` to `false` in the add-on options.
 
 ## Verifying Image Signatures
 

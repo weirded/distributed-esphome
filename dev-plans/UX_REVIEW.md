@@ -13,6 +13,32 @@ The last two sections are a **Terminology Audit** (all over-the-fleet inconsiste
 
 ---
 
+## 🟢 Shipped in 1.5.0-dev.76
+
+The first round of UI polish work landed. Findings addressed (see the `## UI Polish (from UX review)` section in `WORKITEMS-1.5.md` for implementation notes per item):
+
+| UX_REVIEW § | WORKITEMS ID | Status |
+|---|---|---|
+| §2.2 — Schedules empty-state stale copy | WI **UX.1** | ✅ FIXED (1.5.0-dev.76) |
+| §3.12 + §5 — column-header casing / sort indicator consistency | WI **UX.2** | ✅ FIXED (1.5.0-dev.76) |
+| §4.1 — state-badge case (Queue ↔ Workers) | WI **UX.3** | ✅ FIXED (1.5.0-dev.76) |
+| §4.2 — Retry button color | WI **UX.4** | ✅ FIXED (1.5.0-dev.76) |
+| §4.4 — Triggered column enrichment | WI **UX.5** | ✅ FIXED (1.5.0-dev.76) — `retry_of` linkage deferred to 1.6 |
+| §4.5 — Worker cell slot-suffix visual | WI **UX.6** | ✅ FIXED (1.5.0-dev.76) |
+| §7.1 — Upgrade-modal `<any>` placeholder | WI **UX.7** | ✅ FIXED (1.5.0-dev.76) |
+| §7.2 — Merge radio groups into one 3-option Action selector | WI **UX.8** | ✅ FIXED (1.5.0-dev.76) |
+| §8.2 — Connect Worker default container name rebrand | WI **UX.9** | ✅ FIXED (1.5.0-dev.76) |
+| §8.4 — Docker Compose tab in Connect Worker + retire `docker-compose.worker.yml` | WI **UX.10** | ✅ FIXED (1.5.0-dev.76) |
+| §11.1 — Disabled hamburger-item tooltips | WI **UX.11** | ✅ FIXED (1.5.0-dev.76) |
+| §12.2 — UI-7 invariant: icon-only buttons need `aria-label` AND `title` | WI **UX.12** | ✅ FIXED (1.5.0-dev.76) |
+| §12.3 — Button padding / height audit | WI **UX.13** | ✅ FIXED (1.5.0-dev.76) — audit surfaced no mismatches post-UX.4/UX.6 |
+
+**Important scope note on §3.3 / §14.1 (core-action vocabulary).** The **case-normalization half** shipped as WI UX.3 (all badges / states / cells are sentence case now). The **full Deploy / Build / Schedule Deploy rename** proposed in the report did NOT ship — we kept "Upgrade" as the primary action vocabulary, and the modal now uses the new single-selector action labels `Upgrade Now / Download Now / Schedule Upgrade` (WI UX.8). If the full DevOps-style rename becomes interesting later, it's a strictly additive change.
+
+Unshipped findings still stand — see the Prioritized Recommendations section below, with done items struck through.
+
+---
+
 ## 1. Global header
 
 ### 1.1 The header is dense with actions of wildly different frequency
@@ -74,6 +100,8 @@ Left to right today: `[ESPHome] [Fleet]` brand, `v1.5.0-dev.75` version pill, `E
 - Never mix "1 active" / "3 done" on the same tab label — the label mutates with unrelated state. Pick *active* as the badge, move "done" to the tab's own toolbar.
 
 ### 2.2 Schedules tab's empty state points to a menu item that no longer exists
+
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.1. Copy rewritten to: *"No devices have a schedule configured — click **Upgrade** on a device, then choose **Scheduled**."*
 
 **What I saw.**
 ```
@@ -227,6 +255,8 @@ For devices where HA status is "unknown" (`—`), a tooltip should explain *why*
 
 ### 3.12 Sort indicator inconsistency
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.2. Global `th { text-transform: uppercase }` dropped; Workers-tab sortable columns migrated to the shared `SortHeader` so they now match Devices/Queue/Schedules' sort-glyph style.
+
 **What I saw.** Hostname column header on Workers tab shows a sort-up triangle (`▲`). Other sortable columns on Devices tab don't show a visible indicator unless sorted.
 
 **Why it matters.** Users have to discover which columns sort by clicking.
@@ -239,6 +269,8 @@ For devices where HA status is "unknown" (`—`), a tooltip should explain *why*
 
 ### 4.1 State badge case inconsistency: `COMPILING + OTA` vs `Compiling + OTA`
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.3. Dropped the `uppercase` utility from `BADGE_BASE` in `utils/jobState.ts`; Workers-tab Current Job cell switched to the same `getJobBadge` component as Queue. Badges render identically everywhere.
+
 **What I saw.**
 - Queue-tab State cell: `COMPILING + OTA` (all caps, outlined, purple).
 - Workers-tab Current Job cell: `Compiling + OTA` (title case, not a badge).
@@ -248,6 +280,8 @@ For devices where HA status is "unknown" (`—`), a tooltip should explain *why*
 **Suggested fix.** Pick one case for state labels and apply everywhere. `Compiling + OTA` (sentence case) reads better; ALL CAPS is aggressive for a standard state. Keep the badge styling (colored pill) in the Queue tab since it's the primary state-exposure surface; the Workers-tab cell can reuse the same badge component.
 
 ### 4.2 Retry button is orange (warning color)
+
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.4. `Retry ▼` trigger now uses the success green (`bg-[#14532d] text-[#4ade80]`) matching the per-row Rerun button. Orange/amber reserved for genuine warnings.
 
 **What I saw.** The `Retry ▼` dropdown trigger is a warning orange, visually weighted equal to or above the neutral `Clear ▼` to its right.
 
@@ -269,6 +303,8 @@ For devices where HA status is "unknown" (`—`), a tooltip should explain *why*
 
 ### 4.4 Triggered column is too terse to be useful
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.5. Relabeled `User` → `Manual` (HA-user attribution follows with AU.*). Recurring rows: `Recurring · Daily 03:00` with tooltip of the raw cron + tz. One-time rows: `Once @ <timestamp>` with full ISO in tooltip. `🔄 Retry of #<id>` deferred to 1.6 (no `retry_of` field on the wire contract yet).
+
 **What I saw.** `👤 User` with a person icon.
 
 **Why it matters.** "User" is almost never useful information on its own. Which user? When was it scheduled (if it was)? For power users, audit trail matters.
@@ -283,6 +319,8 @@ For devices where HA status is "unknown" (`—`), a tooltip should explain *why*
 Each with a tooltip showing full context and a hover-to-highlight on the parent schedule / original job.
 
 ### 4.5 Worker cell's slot suffix `/2` is ambiguous
+
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.6. Queue + Workers tabs now render the slot on a muted second line (`AI-MacBook-Pro.local` / `slot 2`) with a tooltip *"Build slot 2 of 2 on this worker."* Single-slot workers render just the hostname.
 
 **What I saw.** Worker column shows `AI-MacBook-Pro.local/2`. No explanation that `/2` is "slot 2 of this worker's concurrent build slots."
 
@@ -413,6 +451,8 @@ Already covered — most impactful finding in the review.
 
 ### 7.1 "Worker" default `<any> — let the scheduler pick` is coder-y
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.7. Now reads `Any available worker (auto)` with hover tooltip *"Fleet will pick the fastest available worker at compile time."*
+
 **What I saw.** The Worker select defaults to `<any> — let the scheduler pick` (angle brackets).
 
 **Why it matters.** `<any>` is literal placeholder syntax from code samples; it leaks into the UI. Power users tolerate it, but the label "let the scheduler pick" could just be the state.
@@ -420,6 +460,8 @@ Already covered — most impactful finding in the review.
 **Suggested fix.** `Any available worker (auto)` with a tooltip "Fleet will pick the fastest available worker at compile time." Remove angle brackets.
 
 ### 7.2 Two radio groups with related options feels like a wizard
+
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.8. Collapsed into one 3-option Action selector: `Upgrade Now` (default) / `Download Now` / `Schedule Upgrade`. Single `action` state variable; modal title + confirm-button label mirror the selected verb. E2E specs rewritten to match.
 
 **What I saw.** Group 1: `Now | Scheduled`. Group 2: `Compile + OTA | Compile + Download (no OTA)`. Group 2 only shows when group 1 = Now.
 
@@ -476,6 +518,8 @@ Picking "Schedule deploy..." expands the schedule sub-form inline. Fewer nested 
 
 ### 8.2 Container-name default uses the pre-rebrand name
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.9. Default `containerName` now `esphome-fleet-worker`. Existing containers unaffected; only newly-copied `docker run` / compose snippets use the new name.
+
 **What I saw.** Default `CONTAINER NAME: distributed-esphome-worker`.
 
 **Why it matters.** Per the rebrand rules (`CLAUDE.md`), code identifiers stay `distributed_esphome` but user-facing strings are `ESPHome Fleet`. The container name is a user-facing identifier: shows up in `docker ps`, container logs, dashboards, health checks. It's the piece of code-generated config the user sees most.
@@ -491,6 +535,8 @@ Picking "Schedule deploy..." expands the schedule sub-form inline. Fewer nested 
 **Suggested fix.** Add `--label com.github.weirded.distributed-esphome.version=<image-tag>` (or similar) so any user-side tool can identify Fleet-managed containers. Opt-out if you decide it's pointless — this is a nice-to-have.
 
 ### 8.4 No Docker Compose variant
+
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.10. Connect Worker modal now has three format buttons (`Bash | PowerShell | Docker Compose`). Compose branch emits a live-from-server `docker-compose.yml` snippet. Retired static `docker-compose.worker.yml` from repo root.
 
 **What I saw.** Only `docker run -d ... ` one-liner, toggled between Bash and PowerShell.
 
@@ -592,6 +638,8 @@ Picking "Schedule deploy..." expands the schedule sub-form inline. Fewer nested 
 
 ### 11.1 Menu items are well-organized but some states are opaque
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.11. Disabled items now carry reason tooltips. `Restart` already had one (from #14). New: `Copy API Key` disabled → *"This device has no `api:` block with an encryption key. Add `api: { encryption: { key: ... } }` to enable."* Audit confirmed no other hamburger items are conditionally disabled.
+
 **What I saw.** Hamburger items for `cyd-office-info`:
 - **Device** section:
   - Live Logs
@@ -641,6 +689,8 @@ This is the "Disable, don't fail" rule from `CLAUDE.md` — but the hover toolti
 
 ### 12.2 Icons don't all have hover tooltips
 
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.12. New **UI-7** invariant in `scripts/check-invariants.sh` flags any button/trigger with `aria-label=` but no `title=` (and vice versa). Existing icon-only buttons audited — all have both. CLAUDE.md's Enforced Invariants list updated with UI-7.
+
 **What I saw.** Some icon-only buttons have tooltips (theme toggle, streamer mode), some don't (refresh ESPHome versions has aria-label but no visible tooltip on hover, "More actions" hamburger is also aria-label only).
 
 **Why it matters.** `aria-label` is the right thing for screen readers but sighted users benefit from visible tooltips too. QS.2 addressed aria-label presence; it didn't ensure `title=` for hover.
@@ -648,6 +698,8 @@ This is the "Disable, don't fail" rule from `CLAUDE.md` — but the hover toolti
 **Suggested fix.** Add a new invariant (call it **UI-7**): every icon-only button MUST have both `aria-label` and `title` (or a shadcn `<Tooltip>` wrapper). Grep-enforceable via `check-invariants.sh`.
 
 ### 12.3 Button padding / height is close-to-uniform but not pixel-identical
+
+**Status:** ✅ FIXED (1.5.0-dev.76) — WI UX.13. Audit found no remaining mismatches after WI UX.4 (Retry pill sync) and WI UX.6 (slot-row relayout). All row-action buttons and DropdownMenuTrigger replicas confirmed using `size="sm"` tokens.
 
 **What I saw.** QS.27 normalized toolbar button heights. Rows are mostly aligned. A few stragglers (e.g., `Cancel` vs `Log` vs `Edit` in Queue row actions column look slightly different weights).
 
@@ -849,70 +901,76 @@ Radix handles this correctly (tested implicitly via Escape-closes-menu).
 
 Each finding mapped to a suggested workitem prefix (**UX.N**) so you can slot them into releases later. Ordered approximately by impact / effort ratio.
 
+> **Status column added 2026-04-16.** Items with ✅ shipped in 1.5.0-dev.76 under the `UI Polish (from UX review)` section of `WORKITEMS-1.5.md`. **Strikethrough = fully addressed.** 🟡 = partial. "WI UX.N" refers to the WORKITEMS item ID, which is *not* the same numbering as this report's UX.N — the two sequences diverged because WI was sized at 13 items while the report's table has 45.
+>
+> Two additional findings were shipped that are not in the table below (they were flagged in the body only): **§3.12** (sort-indicator consistency, WI UX.2) and **§4.5** (worker-cell slot suffix, WI UX.6). Also shipped: **§4.1** badge-case (WI UX.3), **§8.2** container name (WI UX.9), **§11.1** hamburger tooltips (WI UX.11), **§12.3** button-height audit (WI UX.13) — each noted inline in the finding itself.
+
 ### High impact, low effort (quick wins — grab soon)
 
-| Ref | Area | Finding | Effort |
-|---|---|---|---|
-| **UX.1** | §2.2 | Rewrite Schedules empty state (pointer to removed menu item is a real bug) | XS |
-| **UX.2** | §7.3 | Drop `Current (2026.4.0)` duplicate row in Upgrade version picker | XS |
-| **UX.3** | §4.2 | Neutralize Retry button color (not a warning) | XS |
-| **UX.4** | §11.1 | Add tooltips to disabled hamburger items explaining *why* | XS |
-| **UX.5** | §3.6 | Rename column headers `HA` → `In HA`, `Net` → `Network` | XS |
-| **UX.6** | §8.2 | Change Connect Worker default container name to `esphome-fleet-worker` | XS |
-| **UX.7** | §3.3, §14.1 | Rename the core action vocabulary to `Deploy`/`Build`/`Schedule Deploy`; normalize badge case across Queue + Workers tab | S |
-| **UX.8** | §4.3 | Clear dropdown: add counts, clearer labels (`Clear succeeded (N)` etc.), confirm on "Clear everything" | S |
-| **UX.9** | §10.1 | Streamer mode blurs Secrets modal values + Connect Worker token field | S |
-| **UX.10** | §2.1 | Standardize tab-badge format (ratios for stateful lists, attention-count for activity) | S |
-| **UX.11** | §9.3 | Add unsaved-changes `●` marker + discard-confirm on editor close | S |
-| **UX.12** | §9.5 | Disable Monaco spellcheck on YAML files | XS |
+Status legend: ✅ shipped in 1.5.0-dev.76 (WI = the WORKITEMS-1.5.md item ID, which may not match the report's UX.N numbering). Unchecked items remain open for scheduling.
+
+| Ref | Area | Finding | Effort | Status |
+|---|---|---|---|---|
+| ~~**UX.1**~~ | §2.2 | Rewrite Schedules empty state (pointer to removed menu item is a real bug) | XS | ✅ WI UX.1 |
+| **UX.2** | §7.3 | Drop `Current (2026.4.0)` duplicate row in Upgrade version picker | XS | — |
+| ~~**UX.3**~~ | §4.2 | Neutralize Retry button color (not a warning) | XS | ✅ WI UX.4 (shipped as **green**, not neutral — matches the other "do-it-again" buttons per your guidance) |
+| ~~**UX.4**~~ | §11.1 | Add tooltips to disabled hamburger items explaining *why* | XS | ✅ WI UX.11 |
+| **UX.5** | §3.6 | Rename column headers `HA` → `In HA`, `Net` → `Network` | XS | — |
+| ~~**UX.6**~~ | §8.2 | Change Connect Worker default container name to `esphome-fleet-worker` | XS | ✅ WI UX.9 |
+| **UX.7** (partial) | §3.3, §14.1 | Rename the core action vocabulary to `Deploy`/`Build`/`Schedule Deploy`; normalize badge case across Queue + Workers tab | S | 🟡 partial — case normalization shipped as WI UX.3; the full Deploy/Build rename was not taken. Modal-action labels unified as `Upgrade Now / Download Now / Schedule Upgrade` in WI UX.8. |
+| **UX.8** | §4.3 | Clear dropdown: add counts, clearer labels (`Clear succeeded (N)` etc.), confirm on "Clear everything" | S | — |
+| **UX.9** | §10.1 | Streamer mode blurs Secrets modal values + Connect Worker token field | S | — |
+| **UX.10** | §2.1 | Standardize tab-badge format (ratios for stateful lists, attention-count for activity) | S | — |
+| **UX.11** | §9.3 | Add unsaved-changes `●` marker + discard-confirm on editor close | S | — |
+| **UX.12** | §9.5 | Disable Monaco spellcheck on YAML files | XS | — |
 
 ### High impact, medium effort
 
-| Ref | Area | Finding | Effort |
-|---|---|---|---|
-| **UX.13** | §3.4 | Merge bulk-action dropdowns into a single selection-aware action bar | M |
-| **UX.14** | §5.1 | Workers tab: one row per worker; inline slot-state indicators instead of N rows | M |
-| **UX.15** | §5.3 | Platform cell → structured chips instead of prose | M |
-| **UX.16** | §3.11 | Add filter-chip row on Devices tab (Online / Needs update / Pinned / Area / Network) | M |
-| **UX.17** | §4.4 | Triggered column: richer display (Manual / HA user / cron / one-time / retry-of) | M |
-| **UX.18** | §7.2 | Merge "Now/Scheduled" + "Compile+OTA/Download" into single 3-option action selector | M |
-| **UX.19** | §9.1 | Editor button weight/split-button refactor: one primary, compound actions under dropdown | M |
-| **UX.20** | §12.2 | New invariant UI-7: icon-only buttons require both `aria-label` and `title`/Tooltip | XS (invariant) + M (audit) |
-| **UX.21** | §5.5 | Per-worker hamburger menu (Clean Cache + Pause/Resume + Remove + Rename) | M |
-| **UX.22** | §12.5 | Show an in-progress chip on Devices rows that have a WORKING job | M |
+| Ref | Area | Finding | Effort | Status |
+|---|---|---|---|---|
+| **UX.13** | §3.4 | Merge bulk-action dropdowns into a single selection-aware action bar | M | — |
+| **UX.14** | §5.1 | Workers tab: one row per worker; inline slot-state indicators instead of N rows | M | — |
+| **UX.15** | §5.3 | Platform cell → structured chips instead of prose | M | — |
+| **UX.16** | §3.11 | Add filter-chip row on Devices tab (Online / Needs update / Pinned / Area / Network) | M | — |
+| ~~**UX.17**~~ | §4.4 | Triggered column: richer display (Manual / HA user / cron / one-time / retry-of) | M | ✅ WI UX.5 (retry-of deferred to 1.6) |
+| ~~**UX.18**~~ | §7.2 | Merge "Now/Scheduled" + "Compile+OTA/Download" into single 3-option action selector | M | ✅ WI UX.8 |
+| **UX.19** | §9.1 | Editor button weight/split-button refactor: one primary, compound actions under dropdown | M | — |
+| ~~**UX.20**~~ | §12.2 | New invariant UI-7: icon-only buttons require both `aria-label` and `title`/Tooltip | XS (invariant) + M (audit) | ✅ WI UX.12 |
+| **UX.21** | §5.5 | Per-worker hamburger menu (Clean Cache + Pause/Resume + Remove + Rename) | M | — |
+| **UX.22** | §12.5 | Show an in-progress chip on Devices rows that have a WORKING job | M | — |
 
 ### Medium impact, medium-to-large effort
 
-| Ref | Area | Finding | Effort |
-|---|---|---|---|
-| **UX.23** | §3.1 | Target vs Device distinction surfaced in UI (chip + filter) | M |
-| **UX.24** | §6.2 | Schedules tab: add `Next Run` column, Kind chip, Enabled toggle | M |
-| **UX.25** | §6.3 | Bulk pause/resume on Schedules tab + global "Pause all" maintenance toggle | M |
-| **UX.26** | §1.1 | Header reorganization + demote `ESPHome Web ↗` to overflow menu | M |
-| **UX.27** | §3.10 | HA column cell enrichment: tooltips explaining `—` state per device | S |
-| **UX.28** | §8.4 | Add Docker Compose tab to Connect Worker modal | M |
-| **UX.29** | §13.2 | Mobile: switch Devices table to card layout below 768px | L |
-| **UX.30** | §12.1 | Light mode parity for the header (or document as intentional) | S |
-| **UX.31** | §8.1 | Streamer-mode masking of server token in Connect Worker (code block + plain field) | S |
+| Ref | Area | Finding | Effort | Status |
+|---|---|---|---|---|
+| **UX.23** | §3.1 | Target vs Device distinction surfaced in UI (chip + filter) | M | — |
+| **UX.24** | §6.2 | Schedules tab: add `Next Run` column, Kind chip, Enabled toggle | M | — |
+| **UX.25** | §6.3 | Bulk pause/resume on Schedules tab + global "Pause all" maintenance toggle | M | — |
+| **UX.26** | §1.1 | Header reorganization + demote `ESPHome Web ↗` to overflow menu | M | — |
+| **UX.27** | §3.10 | HA column cell enrichment: tooltips explaining `—` state per device | S | — |
+| ~~**UX.28**~~ | §8.4 | Add Docker Compose tab to Connect Worker modal | M | ✅ WI UX.10 (plus retired `docker-compose.worker.yml`) |
+| **UX.29** | §13.2 | Mobile: switch Devices table to card layout below 768px | L | — |
+| **UX.30** | §12.1 | Light mode parity for the header (or document as intentional) | S | — |
+| **UX.31** | §8.1 | Streamer-mode masking of server token in Connect Worker (code block + plain field) | S | — |
 
 ### Lower priority / stretch
 
-| Ref | Area | Finding | Effort |
-|---|---|---|---|
-| **UX.32** | §3.5 | Column-picker grouping + saved views | M |
-| **UX.33** | §3.2 | Row-action audit: hover-reveal pattern or Logs-promoted variant | M |
-| **UX.34** | §4.7 | Queue Pending row ETA / position indicator | M |
-| **UX.35** | §10.2, §10.3 | Secrets modal: search hint + blast-radius banner | S |
-| **UX.36** | §9.4 | Editor: diff preview before Save (pairs with AV.* in 1.6) | M |
-| **UX.37** | §1.2 | Dev-version pill: semantic states (stable / dev / update available) | S |
-| **UX.38** | §9.2 | Editor keyboard-shortcut tooltips + `?` help overlay | S |
-| **UX.39** | §13.1 | Mobile: fade mask on tab bar overflow edges | XS |
-| **UX.40** | §15.5 | `aria-live` region for async state changes | S |
-| **UX.41** | §5.2 | "Score" legend or replacement | XS |
-| **UX.42** | §5.6 | Slot counter: show busy/total inline | S |
-| **UX.43** | §12.4 | Stronger row-hover highlight | XS |
-| **UX.44** | §7.1 | "Worker" default label: `Any available worker (auto)` instead of `<any>` | XS |
-| **UX.45** | §7.5 | "Remove schedule" tertiary button inside Schedule modal | XS |
+| Ref | Area | Finding | Effort | Status |
+|---|---|---|---|---|
+| **UX.32** | §3.5 | Column-picker grouping + saved views | M | — |
+| **UX.33** | §3.2 | Row-action audit: hover-reveal pattern or Logs-promoted variant | M | — |
+| **UX.34** | §4.7 | Queue Pending row ETA / position indicator | M | — |
+| **UX.35** | §10.2, §10.3 | Secrets modal: search hint + blast-radius banner | S | — |
+| **UX.36** | §9.4 | Editor: diff preview before Save (pairs with AV.* in 1.6) | M | — |
+| **UX.37** | §1.2 | Dev-version pill: semantic states (stable / dev / update available) | S | — |
+| **UX.38** | §9.2 | Editor keyboard-shortcut tooltips + `?` help overlay | S | — |
+| **UX.39** | §13.1 | Mobile: fade mask on tab bar overflow edges | XS | — |
+| **UX.40** | §15.5 | `aria-live` region for async state changes | S | — |
+| **UX.41** | §5.2 | "Score" legend or replacement | XS | — |
+| **UX.42** | §5.6 | Slot counter: show busy/total inline | S | — |
+| **UX.43** | §12.4 | Stronger row-hover highlight | XS | — |
+| ~~**UX.44**~~ | §7.1 | "Worker" default label: `Any available worker (auto)` instead of `<any>` | XS | ✅ WI UX.7 |
+| **UX.45** | §7.5 | "Remove schedule" tertiary button inside Schedule modal | XS | — |
 
 ### Out-of-scope flags (not in the above lists)
 

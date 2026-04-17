@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -66,13 +68,35 @@ def _read_addon_version(version_file: Path) -> str | None:
 
 
 def _patch_manifest_version(manifest_path: Path, version: str) -> None:
-    """Rewrite manifest.json's `version` field in place."""
+    """Rewrite manifest.json's `version` field atomically (CR.10).
+
+    Write to a sibling tempfile, then `os.replace` over the target —
+    either HA sees the pre-patch contents or the fully-patched file,
+    never a zero-byte or half-written manifest.
+    """
     with manifest_path.open("r", encoding="utf-8") as fp:
         data = json.load(fp)
     data["version"] = version
-    with manifest_path.open("w", encoding="utf-8") as fp:
-        json.dump(data, fp, indent=2)
-        fp.write("\n")
+    # `delete=False` + `os.replace` is the standard atomic-rewrite
+    # pattern. We own the removal on the success path; a crash between
+    # the tempfile write and `os.replace` leaves the tempfile orphaned
+    # (harmless — no one reads `.esphome_fleet.XXXX.manifest.json`).
+    fd, tmp_path = tempfile.mkstemp(
+        dir=manifest_path.parent,
+        prefix=f".{manifest_path.name}.",
+        suffix=".new",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            json.dump(data, fp, indent=2)
+            fp.write("\n")
+        os.replace(tmp_path, manifest_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def install_integration(
@@ -134,17 +158,43 @@ def install_integration(
         )
         return "unchanged"
 
+    # CR.10: atomic copy-then-replace. The old `rmtree(dest); copytree(src, dest)`
+    # pattern left a window where a crash between the two calls would
+    # strand /config/custom_components/esphome_fleet/ as missing until the
+    # next successful boot. Copy to a sibling `.new` staging dir first,
+    # swap it in with `os.replace` (atomic on the same filesystem), then
+    # remove the previous tree. Ignore __pycache__ / *.pyc so future edits
+    # to the source tree don't leak build cache into user HA config.
+    staging_dir = destination_dir.with_name(destination_dir.name + ".new")
     try:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+        shutil.copytree(
+            source_dir,
+            staging_dir,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        _patch_manifest_version(staging_dir / "manifest.json", source_version)
+        # os.replace works even when the destination already exists and
+        # IS a directory, as long as we're on the same filesystem and the
+        # new name refers to a directory too. POSIX guarantees atomicity.
+        previous_dir = destination_dir.with_name(destination_dir.name + ".old")
         if destination_dir.exists():
-            shutil.rmtree(destination_dir)
-        shutil.copytree(source_dir, destination_dir)
-        _patch_manifest_version(destination_dir / "manifest.json", source_version)
+            if previous_dir.exists():
+                shutil.rmtree(previous_dir)
+            os.replace(destination_dir, previous_dir)
+        os.replace(staging_dir, destination_dir)
+        if previous_dir.exists():
+            shutil.rmtree(previous_dir, ignore_errors=True)
     except Exception:
         logger.exception(
             "Failed to copy HA integration %s → %s; add-on will keep running",
             source_dir,
             destination_dir,
         )
+        # Best-effort cleanup of the staging tree so we don't wedge on retry.
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
         return "failed"
 
     if destination_version is None:

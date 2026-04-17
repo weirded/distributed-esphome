@@ -109,6 +109,8 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 **UI-7 — Icon-only buttons need both `aria-label` and `title`.** Icon controls carry no visible text, so screen readers need `aria-label` and sighted hover needs `title`. If you reach for one, add both — they're almost always the same string. Landed from UX.12 after the UX review (bug class: icons that hover-reveal no context, or lack accessible names).
 
+**E2E-1 — No `page.waitForTimeout()` in Playwright specs.** Fixed sleeps are flake factories — CI is slower than your laptop, or the page state settles faster. Wait on an observable condition instead (`expect.poll`, `toBeVisible`, `toHaveCount(0)`, a route-interceptor counter, etc.). Landed from CR.6 after a 200ms sleep in `e2e-hass-4/cyd-office-info.spec.ts` was found flaking the prod-smoke suite on slow HA restarts.
+
 **PY-1 — YAML goes through `yaml.safe_load`.** Never hand-rolled regex parsers for YAML content (regression source: #160, ESPHome device-name detection). The `_ota_network_diagnostics` regex fallback is allow-listed because it tries `safe_load` first.
 
 **PY-2 — Every file that calls `subprocess.run`/`subprocess.Popen` must have a module-level `logger`.** The actual command line must also be logged before the subprocess runs (reviewed in PR; file-level logger presence is the grep-able floor). Bug sources: #176, #177, #180 — untriageable reports when the command line wasn't in the log.

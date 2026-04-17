@@ -112,6 +112,28 @@ check_absent "UI-4" \
     '' \
     ha-addon/ui/src
 
+# (UI-6) No silent "return default on !r.ok" in api/client.ts (CR.5). When
+# a handler fails, the UI needs to see an error — not a blank list + a
+# feature silently off. Flag any line that returns an array/object literal
+# immediately after `if (!r.ok)`. Throw or toast instead.
+check_absent "UI-6" \
+    "api/client.ts silent error-swallowing — throw or toast, don't return default" \
+    'if \(!r\.ok\) return (\[|\{)' \
+    '' \
+    ha-addon/ui/src/api
+
+# (E2E-1) No `page.waitForTimeout(N)` in e2e specs (CR.6). Fixed sleeps
+# are flake factories — the test finishes slower than CI, or faster than
+# the page state settles. Always wait on an observable condition
+# (`expect.poll`, `toBeVisible`, `toHaveCount(0)`) instead. Allow-listed:
+# none — if there's ever a legitimate reason, add it to the allowlist
+# here with a short comment.
+check_absent "E2E-1" \
+    "page.waitForTimeout in e2e specs — replace with a DOM-state wait" \
+    'page\.waitForTimeout\(' \
+    '' \
+    ha-addon/ui/e2e ha-addon/ui/e2e-hass-4
+
 # (UI-7) Icon-only buttons need both aria-label and title (UX.12). Icon
 # controls are unlabeled by default — screen readers need aria-label, and
 # sighted hover needs a title. If you're reaching for one, you need both.

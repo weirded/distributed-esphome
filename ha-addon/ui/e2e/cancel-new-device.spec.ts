@@ -67,7 +67,9 @@ test('closing an existing (already-saved) target does NOT fire DELETE', async ({
 
   // Close the clean editor. No edits → Escape closes immediately.
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  // CR.6: wait for an observable signal (modal gone) instead of a fixed
+  // timeout. Also guarantees we don't race `deleted` on slow CI.
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   expect(deleted).toEqual([]);
 });

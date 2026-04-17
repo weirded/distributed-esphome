@@ -14,6 +14,7 @@ Structure adapted from Ardumine's PR #57 with the post-rebrand domain
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
@@ -25,13 +26,26 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
-from .const import CONF_BASE_URL, DEFAULT_TITLE, DOMAIN, ZEROCONF_TYPE
+from .const import CONF_BASE_URL, CONF_TOKEN, DEFAULT_TITLE, DOMAIN, ZEROCONF_TYPE
 
 
-def _url_schema(default_url: str | None = None) -> vol.Schema:
+def _url_schema(
+    default_url: str | None = None,
+    *,
+    include_token: bool = True,
+) -> vol.Schema:
+    """AU.7: manual setup captures the token too so the coordinator has
+    a Bearer credential from day one. Supervisor-discovered flows skip
+    the prompt because the token arrives in the discovery payload.
+    """
+    fields: dict[Any, Any] = {}
     if default_url is None:
-        return vol.Schema({vol.Required(CONF_BASE_URL): str})
-    return vol.Schema({vol.Required(CONF_BASE_URL, default=default_url): str})
+        fields[vol.Required(CONF_BASE_URL)] = str
+    else:
+        fields[vol.Required(CONF_BASE_URL, default=default_url)] = str
+    if include_token:
+        fields[vol.Required(CONF_TOKEN)] = str
+    return vol.Schema(fields)
 
 
 async def _probe_server(hass, base_url: str) -> bool:
@@ -77,6 +91,7 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     _discovery_name: str | None = None
     _discovery_url: str | None = None
+    _discovery_token: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, str] | None = None
@@ -86,21 +101,28 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             candidate = user_input.get(CONF_BASE_URL, "")
+            token = (user_input.get(CONF_TOKEN) or "").strip()
             try:
                 base_url = _normalize_base_url(candidate)
             except ValueError:
                 errors["base"] = "invalid_url"
             else:
-                # CR.16: probe the URL before creating the entry. If the
-                # server isn't reachable, surface the error in the form
-                # instead of creating an entry that immediately shows a
-                # red "failed to set up" banner. Supervisor-discovered
-                # flows skip this probe because Supervisor already vetted
-                # the URL via /discovery.
-                if not await _probe_server(self.hass, base_url):
+                if not token:
+                    # AU.7: manual setup needs the add-on token so the
+                    # coordinator has a Bearer credential. The user can
+                    # copy it from Settings → Add-ons → ESPHome Fleet →
+                    # Configuration.
+                    errors[CONF_TOKEN] = "token_required"
+                elif not await _probe_server(self.hass, base_url):
+                    # CR.16: probe the URL before creating the entry. If
+                    # the server isn't reachable, surface the error in
+                    # the form instead of creating an entry that
+                    # immediately shows a red "failed to set up" banner.
+                    # Supervisor-discovered flows skip this probe because
+                    # Supervisor already vetted the URL via /discovery.
                     errors["base"] = "cannot_connect"
                 else:
-                    return await self._async_create_entry(base_url)
+                    return await self._async_create_entry(base_url, token)
 
         return self.async_show_form(
             step_id="user",
@@ -141,6 +163,10 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # sidecar integrations.
         self._discovery_name = DEFAULT_TITLE
         self._discovery_url = base_url
+        # AU.7: Supervisor discovery advertises the add-on's token so
+        # the confirm-screen user doesn't have to paste it.
+        token = config.get("token")
+        self._discovery_token = token if isinstance(token, str) and token else None
         self.context["title_placeholders"] = {"name": DEFAULT_TITLE}
         return await self.async_step_discovery_confirm()
 
@@ -185,19 +211,27 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_user()
 
         errors: dict[str, str] = {}
+        # AU.7: hide the token field on confirm when discovery already
+        # carried it — that's the common path for Supervisor-discovered
+        # installs and we don't want to surprise users with a prompt.
+        include_token = self._discovery_token is None
 
         if user_input is not None:
             candidate = user_input.get(CONF_BASE_URL, "")
+            token = (user_input.get(CONF_TOKEN) or "").strip() or self._discovery_token
             try:
                 base_url = _normalize_base_url(candidate)
             except ValueError:
                 errors["base"] = "invalid_url"
             else:
-                return await self._async_create_entry(base_url)
+                if not token:
+                    errors[CONF_TOKEN] = "token_required"
+                else:
+                    return await self._async_create_entry(base_url, token)
 
         return self.async_show_form(
             step_id="discovery_confirm",
-            data_schema=_url_schema(self._discovery_url),
+            data_schema=_url_schema(self._discovery_url, include_token=include_token),
             description_placeholders={
                 "name": self._discovery_name or DEFAULT_TITLE,
                 "url": self._discovery_url,
@@ -205,12 +239,12 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def _async_create_entry(self, base_url: str) -> FlowResult:
-        """Create a config entry for the provided base URL."""
+    async def _async_create_entry(self, base_url: str, token: str) -> FlowResult:
+        """Create a config entry for the provided base URL + token (AU.7)."""
         await self.async_set_unique_id(base_url.lower())
         self._abort_if_unique_id_configured()
         title = self._discovery_name or DEFAULT_TITLE
         return self.async_create_entry(
             title=title,
-            data={CONF_BASE_URL: base_url},
+            data={CONF_BASE_URL: base_url, CONF_TOKEN: token},
         )

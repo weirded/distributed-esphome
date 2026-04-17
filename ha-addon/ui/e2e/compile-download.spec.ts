@@ -128,6 +128,16 @@ test('Queue Download dropdown survives a SWR poll tick (#71)', async ({ page }) 
   // vanish. The fix lifts `open` state to the QueueTab parent (see
   // CLAUDE.md Design Judgment → "Lift DropdownMenu open state out of
   // any row cell").
+  //
+  // CR.6 / E2E-1: wait on an observable condition instead of a fixed
+  // sleep. The mockApi fixture handles /ui/api/queue with `route.fulfill`,
+  // but `page.on('response')` still fires for every fulfilled response
+  // — including the mocked ones — so we can count SWR polls by URL.
+  let queuePolls = 0;
+  page.on('response', resp => {
+    if (resp.url().endsWith('/ui/api/queue')) queuePolls += 1;
+  });
+
   await page.getByRole('button', { name: /Queue/ }).click();
   await expect(page.locator('#tab-queue tbody tr').first()).toBeVisible({ timeout: 5000 });
 
@@ -137,9 +147,9 @@ test('Queue Download dropdown survives a SWR poll tick (#71)', async ({ page }) 
   const menuItem = page.getByRole('menuitem').first();
   await expect(menuItem).toBeVisible();
 
-  // Wait long enough to cross at least two 1 Hz SWR poll ticks. The
-  // menu must still be visible afterward.
-  await page.waitForTimeout(2500);
+  // Wait for at least 2 additional queue polls after the menu opened.
+  const openedAt = queuePolls;
+  await expect.poll(() => queuePolls, { timeout: 10_000 }).toBeGreaterThanOrEqual(openedAt + 2);
   await expect(menuItem).toBeVisible();
 });
 

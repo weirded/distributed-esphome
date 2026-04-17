@@ -20,7 +20,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_BASE_URL, DOMAIN
+from .const import CONF_BASE_URL, CONF_TOKEN, DOMAIN
 from .coordinator import EsphomeFleetCoordinator
 from .device import hub_device_info, target_device_info, worker_device_info
 from .services import async_register_services, async_unregister_services
@@ -45,8 +45,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ESPHome Fleet from a config entry."""
     base_url = entry.data[CONF_BASE_URL]
+    # AU.7: token is optional only for entries created before AU.7
+    # shipped — new entries always carry it, and the add-on now requires
+    # a Bearer on every /ui/api/* call. Legacy entries keep working
+    # until the user reauths (the coordinator falls back to sending no
+    # Authorization header when the token is missing).
+    token = entry.data.get(CONF_TOKEN)
 
-    coordinator = EsphomeFleetCoordinator(hass, base_url)
+    coordinator = EsphomeFleetCoordinator(hass, base_url, token=token)
     # Block setup until the first poll succeeds so entities + services
     # have real data (and a real UpdateFailed bubbles up to HA as a
     # setup error).

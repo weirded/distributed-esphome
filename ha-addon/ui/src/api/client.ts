@@ -307,27 +307,39 @@ export async function getApiKey(filename: string): Promise<string> {
 export async function validateConfig(target: string): Promise<{ success: boolean; output: string }> {
   // Bespoke handling: validate may return non-OK status with a useful `output`
   // body (e.g. "config has 3 errors..."). We fall through to .output on error.
+  // CR.5: parsing the body might itself throw (non-JSON on a 500, truncated
+  // response, etc.). Isolate the parse so we always surface a meaningful
+  // error string rather than a swallowed `SyntaxError: Unexpected token`.
   const r = await apiFetch('./ui/api/validate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ target }),
   });
-  const data = await r.json() as ValidateResponse;
+  let data: ValidateResponse;
+  try {
+    data = await r.json() as ValidateResponse;
+  } catch {
+    if (!r.ok) throw new Error(`validation failed (HTTP ${r.status})`);
+    throw new Error('validate response was not valid JSON');
+  }
   if (!r.ok) throw new Error(data.error || data.output || `validation failed (HTTP ${r.status})`);
   return { success: !!data.success, output: data.output || '' };
 }
 
+// CR.5: `getSecretKeys` and `getEsphomeSchema` used to silently return []
+// on any error, which looked like "no autocomplete suggestions" to the user
+// — the editor appeared to work but autocomplete was dead. Throw instead
+// so the SWR `onError` path (QS.7's `logSwrError`) logs it with the key
+// attached and the caller can surface a real error state.
 export async function getSecretKeys(): Promise<string[]> {
   const r = await apiFetch('./ui/api/secret-keys');
-  if (!r.ok) return [];
-  const data = await r.json() as SecretKeysResponse;
+  const data = await parseResponse<SecretKeysResponse>(r, 'getSecretKeys');
   return data.keys || [];
 }
 
 export async function getEsphomeSchema(): Promise<string[]> {
   const r = await apiFetch('./ui/api/esphome-schema');
-  if (!r.ok) return [];
-  const data = await r.json() as EsphomeSchemaResponse;
+  const data = await parseResponse<EsphomeSchemaResponse>(r, 'getEsphomeSchema');
   return data.components || [];
 }
 
@@ -522,6 +534,8 @@ export interface ScheduleHistoryEntry {
 
 export async function getScheduleHistory(): Promise<Record<string, ScheduleHistoryEntry[]>> {
   const r = await apiFetch('./ui/api/schedule-history');
-  if (!r.ok) return {};
-  return r.json() as Promise<Record<string, ScheduleHistoryEntry[]>>;
+  // CR.5/UI-6: route through parseResponse so SWR's onError path logs
+  // the failure with the endpoint name attached, instead of silently
+  // reporting an empty map.
+  return parseResponse<Record<string, ScheduleHistoryEntry[]>>(r, 'getScheduleHistory');
 }

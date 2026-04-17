@@ -7,8 +7,9 @@
 > **Refresh note (2026-04-16):** Walk-through with the project owner against current code. Status flips in this refresh:
 > - **F-06, F-07, F-08, F-17** moved OPEN/PARTIAL → **WONTFIX** — each is by-design for the documented home-network threat model (see new Threat Model section below). The code isn't changing; this is the audit catching up to the decisions.
 > - **F-11** moved WONTFIX → **INFO** — build logs contain values the server already has (it distributed them in `secrets.yaml` via the job bundle); logging them back doesn't cross a trust boundary. Not a finding.
+> - **F-14** and **F-15** moved OPEN → **FIXED (1.5.0-dev.77)** via SA.2 and SA.1 respectively — token file chmod + `X-Ingress-Path` sanitizer both shipped in the same dev cycle.
 > - **F-19** confirmed **FIXED** in 1.4.1 via SC.1 (SHA-pinned Actions + `check-invariants.sh` rule).
-> - **F-15** and **F-18** remain **OPEN** and are queued in `WORKITEMS-1.5.md` as concrete follow-ups (see items referenced in the per-finding notes below).
+> - **F-18** remains **OPEN** — queued as SC.3 in the Supply Chain Hardening section of `WORKITEMS-1.5.md`. Largest open supply-chain finding; only F-* item explicitly not accepted by the threat model.
 >
 > New **Threat Model** section added immediately below the executive summary to make the deployment assumptions explicit — F-01/F-02/F-04/F-05/F-06/F-07/F-08/F-17 all trace back to it.
 
@@ -50,12 +51,12 @@ Explicit trust assumptions that this audit treats as accepted risk:
 **What the threat model does NOT accept:**
 
 - **External adversaries** reaching the add-on from the Internet — by design the add-on is LAN-only; users who expose port 8765 to the Internet are explicitly out-of-scope (we document this in `ha-addon/DOCS.md`).
-- **Direct-port access bypassing HA Ingress** — closed in 1.4.1/1.5 via the opt-in `require_ha_auth` add-on option (AU.1–AU.6 / **F-03**). When enabled, direct port 8765 requests require a valid HA Bearer token. Opt-in default for 1.5; mandatory in 1.6.
+- **Direct-port access bypassing HA Ingress** — closed in 1.5 via mandatory `require_ha_auth` (AU.1–AU.7 / **F-03**). Direct port 8765 requests require a valid Bearer — either the add-on's shared worker token (used automatically by the native HA integration) or a Home Assistant long-lived access token.
 - **Supply-chain compromise** of the add-on itself — covered by the Supply Chain Threat Model below: hash-pinned lockfiles (**F-12**), SHA-pinned GitHub Actions (**F-19**), cosign-signed GHCR images, `pip-audit` + `npm audit` CI gates, PY-7/PY-8 invariants.
 - **Tampering with worker updates at the image layer** — workers update via `docker pull` of cosign-signed GHCR images. Source-code auto-update (**F-02**) was temporarily disabled in 1.4.1-dev.60 and restored in dev.62 (bug #58); the threat model treats the shared bearer token as the trust boundary there (a compromised token = full fleet compromise either way).
 - **Tampering with the ESPHome package at `pip install` time on workers** (**F-18**) — **this is NOT accepted**. It's the largest remaining open hardening item. Queued in `WORKITEMS-1.5.md`.
 
-**What this means for the findings below.** F-01 / F-02 / F-04 / F-05 / F-06 / F-07 / F-08 / F-11 / F-13 / F-16 / F-17 are all accepted per this threat model and marked **WONTFIX** (or INFO). Their presence in this document is documentation, not backlog. F-03 is **FIXED** via opt-in. F-09, F-10, F-12, F-19, F-20 are **FIXED**. F-14, F-15, F-18 are **OPEN** and queued for remediation.
+**What this means for the findings below.** F-01 / F-02 / F-04 / F-05 / F-06 / F-07 / F-08 / F-11 / F-13 / F-16 / F-17 are all accepted per this threat model and marked **WONTFIX** (or INFO). Their presence in this document is documentation, not backlog. F-03 / F-09 / F-10 / F-12 / F-14 / F-15 / F-19 / F-20 are **FIXED**. F-18 is the **only remaining OPEN** finding, queued as SC.3 for 1.5.
 
 ---
 
@@ -78,13 +79,9 @@ Explicit trust assumptions that this audit treats as accepted risk:
 - **Compression middleware scope** — gzip is applied only to `/ui/api/*` responses (not `/api/v1/*` worker-tier), so the 46 MB config-bundle tarball sent to workers doesn't block the event loop gzipping it synchronously. Not a security fix per se but prevents a latent DoS via the event-loop stall.
 
 **Deliberately still open** (see summary table for status):
-- F-02 (worker auto-update signing) — image-version gating in 1.3.0 narrowed the blast radius but no signature verification yet.
-- F-08 (job result not validated against claiming worker).
-- F-14 (auth token file mode).
-- F-15 (`X-Ingress-Path` sanitization).
-- F-17 (external_components RCE) — amplifies F-03; full fix deferred.
-- F-18 (worker pip install not hash-pinned) — partial via 1.3.1 image lockfiles; worker-time `esphome==<version>` install remains unpinned.
-- F-19 (GitHub Actions referenced by major-version tags, not SHA-pinned) — Dependabot now watches them but doesn't use SHA pins.
+- F-18 (worker pip install not hash-pinned) — the sole remaining open finding. Partial via 1.3.1 image lockfiles; worker-time `esphome==<version>` install remains unpinned. Queued as SC.3 for 1.5.
+
+(F-02 / F-08 / F-17 accepted per threat model in the 2026-04-16 refresh. F-14 / F-15 / F-19 all shipped fixes in the 1.4.1–1.5 cycle — see summary table for release tags.)
 
 ---
 
@@ -206,7 +203,7 @@ The safest fix is to remove the auto-update mechanism entirely and rely on Docke
 
 ### F-03 — UI API Has No Authentication; Relies Entirely on HA Ingress
 
-**Status:** FIXED in 1.5.0 via opt-in `require_ha_auth` add-on option (AU.3). Default remains `false` to preserve backwards compatibility; flip to `true` in a later release once the path is proven. With `require_ha_auth: true` set, direct-port `/ui/api/*` requests that don't carry a valid HA Bearer token are rejected with 401 + `WWW-Authenticate: Bearer realm="ESPHome Fleet"`. Ingress-tunneled access is unaffected (Supervisor adds the `X-Ingress-Path` header). See AU.1–AU.6 in WORKITEMS-1.5.md.
+**Status:** FIXED (mandatory) in 1.5.0 via `require_ha_auth` add-on option (AU.3), now defaulting to `true` per AU.7. Direct-port `/ui/api/*` requests that don't carry a valid Bearer token are rejected with 401 + `WWW-Authenticate: Bearer realm="ESPHome Fleet"`. Two Bearer shapes are accepted: (a) the add-on's own shared worker token — used by the native HA integration's coordinator, which receives it automatically via the Supervisor-discovery payload (AU.7); (b) a Home Assistant long-lived access token, validated against Supervisor's `/auth` endpoint (AU.2). Ingress-tunneled access is unaffected (Supervisor adds the `X-Ingress-Path` header). See AU.1–AU.7 in WORKITEMS-1.5.md.
 
 **Severity:** MEDIUM (HIGH if port 8765 is directly reachable) — pre-fix
 
@@ -439,7 +436,7 @@ Add `integrity="sha384-..."` SRI attributes to the Monaco script tag. Better, bu
 
 ### F-11 — Build Log Content Stored Unredacted
 
-**Status (2026-04-16):** **Not a finding (INFO)** — re-assessed. The logs contain values (WiFi passwords, API keys, OTA passwords) that the **server itself distributed** to the worker via the job bundle's `secrets.yaml` (F-04, accepted). When the worker logs an error containing those substituted values, it's returning data the server already has back to the server that sent it. No trust boundary is crossed, no information is leaked that wasn't already on the server's disk. Displaying those logs in the browser UI is an F-03-adjacent concern already addressed by the `require_ha_auth` opt-in. Removing from the residual-findings list.
+**Status (2026-04-16):** **Not a finding (INFO)** — re-assessed. The logs contain values (WiFi passwords, API keys, OTA passwords) that the **server itself distributed** to the worker via the job bundle's `secrets.yaml` (F-04, accepted). When the worker logs an error containing those substituted values, it's returning data the server already has back to the server that sent it. No trust boundary is crossed, no information is leaked that wasn't already on the server's disk. Displaying those logs in the browser UI is an F-03-adjacent concern already addressed by the mandatory `require_ha_auth` in 1.5 (AU.7). Removing from the residual-findings list.
 
 **Severity:** LOW
 
@@ -509,6 +506,8 @@ For builds you control directly, pin the `BUILD_FROM` to a specific digest (`FRO
 
 ### F-14 — `run.sh` Reads Auth Token from Plaintext File with No Permission Check
 
+**Status (2026-04-16):** **FIXED (1.5.0-dev.77)** via SA.2. `app_config.py` now invokes `TOKEN_FILE.chmod(0o600)` immediately after `write_text`, wrapped in try/except so a failed chmod logs at DEBUG rather than blocking startup (for filesystems where chmod is unavailable).
+
 **Severity:** Info
 
 **Description:**
@@ -535,7 +534,7 @@ TOKEN_FILE.chmod(0o600)
 
 ### F-15 — `X-Ingress-Path` Header Injected Into HTML Without Sanitization
 
-**Status (2026-04-16):** **OPEN — queued for 1.5** (`WORKITEMS-1.5.md` SA.1). Code still does plain string replace of `ingress_path` into the `<base href="...">` attribute without sanitization (`ha-addon/server/main.py:991-999`). Low risk in practice (Supervisor sets the header; cannot be set by untrusted clients in a normal HA install) but a one-regex fix closes the residual "what if an upstream proxy is misconfigured" case.
+**Status (2026-04-16):** **FIXED (1.5.0-dev.77)** via SA.1. `serve_index` now strips any character not in `[/A-Za-z0-9._-]` from the Supervisor-supplied `X-Ingress-Path` before interpolating it into `<base href="…">`. When the sanitized value is empty, falls through to the default `<base href="./">`. Defence-in-depth — Supervisor sets the header on the HA happy path and untrusted clients can't reach it there.
 
 **Severity:** Info
 
@@ -576,7 +575,7 @@ This is an operational observation, not a security issue. It is noted here becau
 
 ### F-17 — Unauthenticated UI + `external_components` in YAML → Worker RCE
 
-**Status (2026-04-16):** **WONTFIX** per threat model. `external_components:`, `esphome.includes:`, and `libraries:` with git/URL sources are core ESPHome features that real users rely on (any half-interesting ESPHome config uses at least one). Scanning YAML and refusing to compile configs that use them would be a feature regression, not a hardening win. The **unauthenticated-UI** half of the finding is addressed by `require_ha_auth` (F-03 FIXED, opt-in 1.5 → mandatory 1.6); once that's on, YAML edits + compile enqueues require HA auth, making this "authenticated HA user can RCE workers" — which is fine per the threat model (operator is trusted).
+**Status (2026-04-16):** **WONTFIX** per threat model. `external_components:`, `esphome.includes:`, and `libraries:` with git/URL sources are core ESPHome features that real users rely on (any half-interesting ESPHome config uses at least one). Scanning YAML and refusing to compile configs that use them would be a feature regression, not a hardening win. The **unauthenticated-UI** half of the finding is addressed by `require_ha_auth` (F-03 FIXED, mandatory in 1.5 per AU.7); YAML edits + compile enqueues now require HA auth, making this "authenticated HA user can RCE workers" — which is fine per the threat model (operator is trusted).
 
 **Severity:** HIGH (if port 8765 is directly reachable) / MEDIUM (HA Ingress only)
 
@@ -677,22 +676,22 @@ A mapping of this project's findings against OWASP's Top 10 web application risk
 
 | Category | Status | Evidence in this project |
 |---|---|---|
-| **A01 Broken Access Control** | Accepted per threat model | F-03 FIXED (1.4.1 opt-in `require_ha_auth`, mandatory 1.6). F-06/F-07/F-08 all **WONTFIX** per threat model §4/§5/§3 (Supervisor / operator / workers all trusted). |
-| **A02 Cryptographic Failures** | Accepted per threat model | F-05 WONTFIX (plaintext HTTP on trusted LAN), F-01 WONTFIX (browser is trusted; required for Connect Worker UX), F-14 (token file mode) OPEN — one-line low-prio. |
-| **A03 Injection** | OK | Subprocess invocations use argument lists; YAML parsed via ESPHome's `safe_load`-based resolver; all `/api/v1/*` handlers parse through typed pydantic (1.3.1). Residual: **F-15 OPEN — queued as SA.1 for 1.5**. |
-| **A04 Insecure Design** | Accepted per threat model | F-02 **WONTFIX** (workers trusted), F-04 **WONTFIX** (workers trusted), F-17 **WONTFIX** (core ESPHome feature). F-18 OPEN — queued as SA.2 for 1.5; this is the exception, not accepted. |
+| **A01 Broken Access Control** | Accepted per threat model | F-03 FIXED (mandatory `require_ha_auth` in 1.5, AU.7). F-06/F-07/F-08 all **WONTFIX** per threat model §4/§5/§3 (Supervisor / operator / workers all trusted). |
+| **A02 Cryptographic Failures** | Accepted per threat model | F-05 WONTFIX (plaintext HTTP on trusted LAN), F-01 WONTFIX (browser is trusted; required for Connect Worker UX), **F-14 FIXED (1.5.0-dev.77 via SA.2)**. |
+| **A03 Injection** | OK | Subprocess invocations use argument lists; YAML parsed via ESPHome's `safe_load`-based resolver; all `/api/v1/*` handlers parse through typed pydantic (1.3.1). **F-15 FIXED (1.5.0-dev.77 via SA.1)** — `X-Ingress-Path` sanitized before HTML interpolation. No remaining residual. |
+| **A04 Insecure Design** | Accepted per threat model | F-02 **WONTFIX** (workers trusted), F-04 **WONTFIX** (workers trusted), F-17 **WONTFIX** (core ESPHome feature). F-18 OPEN — queued as **SC.3** for 1.5; this is the exception, not accepted. |
 | **A05 Security Misconfiguration** | OK (1.3.1+) | F-13 (base image digest — WONTFIX, HA controls BUILD_FROM). **F-20 CLOSED in 1.3.1 via `security_headers_middleware`** (CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Frame-Options on every `/ui/api/*` + static response). Not audited: whether containers run as root (likely yes — neither Dockerfile sets `USER`) |
 | **A06 Vulnerable & Outdated Components** | Largely OK (1.3.1+) | **F-12 CLOSED:** hash-pinned lockfiles + `--require-hashes` install + `pip-audit` in CI + `npm audit` in CI + Dependabot weekly PRs (pip × 2, npm, docker × 2, github-actions) + PY-7 (CVE applicability assessment) + PY-8 (lockfile sync) invariants. Residual: F-18 (worker-time pip install) still OPEN |
 | **A07 Identification & Authentication Failures** | Accepted per threat model | Single static shared token with no rotation story (threat model §3 — workers are trusted). F-07 WONTFIX; sanity-limit mitigations from 1.3.x stay (log cap, parallel-jobs clamp, log-append DoS guard). |
-| **A08 Software & Data Integrity Failures** | Partial | F-02 WONTFIX (workers trusted). F-18 OPEN — queued as SA.2 for 1.5 (explicitly NOT accepted). F-19 FIXED (1.4.1 SC.1 — SHA-pinned Actions). Cosign-signed GHCR images (1.3.1 E.10). SBOM not yet. |
+| **A08 Software & Data Integrity Failures** | Partial | F-02 WONTFIX (workers trusted). F-18 OPEN — queued as **SC.3** for 1.5 (explicitly NOT accepted). F-19 FIXED (1.4.1 SC.1 — SHA-pinned Actions). Cosign-signed GHCR images + SBOM attestations (1.4.1 SC.2). |
 | **A09 Security Logging & Monitoring Failures** | Partial | **Auth middleware now emits structured 401 reasons with peer IP (1.3.1 bug #3 + C.2).** No audit log of who triggered compiles or edited configs; no alerting on repeated auth failures. Server logs sufficient for post-incident forensics |
 | **A10 Server-Side Request Forgery (SSRF)** | Low | `device_poller.py` only contacts mDNS-discovered ESPHome devices on well-known ports; the editor fetches ESPHome's JSON schema from `schema.esphome.io` (moved into a dedicated `api/esphomeSchema.ts` module during the 1.3.1 UI-1 cleanup — no attacker-controlled URL reaches a server-side fetcher) |
 
 **Highest-leverage fixes that remain** (ordered by ease × impact):
 
-1. **F-18 worker pip install hash-pinning** — **the only F-* item explicitly not accepted by the threat model.** Ship per-ESPHome-version constraints files in the worker image (`esphome-constraints/<version>.txt` generated by `pip-compile --generate-hashes`). Install with `--require-hashes -c` at job time. Refuse versions without shipped constraints rather than falling back to unverified resolution. Queued as `WORKITEMS-1.5.md` **SC.3**.
-2. **F-15 `X-Ingress-Path` regex sanitizer** — one-line fix in `serve_index`. Queued as `WORKITEMS-1.5.md` **SA.1**.
-3. **F-14 token file `chmod 0600`** — one-line fix (`TOKEN_FILE.chmod(0o600)` after write). Low risk inside the add-on's `/data` volume but trivial to ship. Queued as `WORKITEMS-1.5.md` **SA.2**.
+1. **F-18 worker pip install hash-pinning** — **the only F-* item explicitly not accepted by the threat model, and now the only remaining open finding.** Ship per-ESPHome-version constraints files in the worker image (`esphome-constraints/<version>.txt` generated by `pip-compile --generate-hashes`). Install with `--require-hashes -c` at job time. Refuse versions without shipped constraints rather than falling back to unverified resolution. Queued as `WORKITEMS-1.5.md` **SC.3**.
+
+*(F-14 and F-15 shipped in 1.5.0-dev.77 via SA.2 and SA.1 respectively — see their per-finding entries above.)*
 
 ---
 
@@ -730,7 +729,7 @@ Status as of 1.5.0-dev.75+ (last reviewed 2026-04-16).
 |------|------------------------------------------------------|----------|--------|-------|
 | F-01 | Auth token exposed to browser via server-info API    | High     | WONTFIX | Threat model §1: browser is trusted. Required for the Connect Worker modal's `docker run` command UX. |
 | F-02 | Worker auto-update executes arbitrary server code    | High     | WONTFIX | Threat model §3: every connected worker is trusted (shared bearer token = full fleet compromise either way). 1.3.0 LIB.0/LIB.1 image-version gating stays. Feature reverted + restored as bug #58; no further remediation planned. |
-| F-03 | UI API unauthenticated if port 8765 is directly accessible | Medium | FIXED (1.4.1, opt-in `require_ha_auth`) | AU.1–AU.6. `auth_api: true` + HA Bearer validation via Supervisor `/auth`. Opt-in default for 1.5 to avoid breaking existing setups; flip to mandatory in 1.6. |
+| F-03 | UI API unauthenticated if port 8765 is directly accessible | Medium | FIXED (1.5.0, mandatory `require_ha_auth`) | AU.1–AU.7. `auth_api: true` + HA Bearer validation via Supervisor `/auth` + add-on-token "system" Bearer path for the native HA integration. |
 | F-04 | `secrets.yaml` included in every build bundle        | Medium   | WONTFIX | Threat model §3: workers are trusted. Required for ESPHome's `!secret` resolution on the worker. |
 | F-05 | Worker-server communication is plaintext HTTP        | Medium   | WONTFIX | Threat model §2: LAN is trusted. Users with remote workers across segments can front the server with their own reverse proxy (documented). |
 | F-06 | Supervisor IP bypass grants unauthenticated API access | Low    | WONTFIX | Threat model §4: Supervisor is trusted. Standard HA add-on pattern. 1.3.x hardening (`_normalize_peer_ip()`, structured 401 logging, `HA_SUPERVISOR_IP` constant) stays. |
@@ -741,10 +740,10 @@ Status as of 1.5.0-dev.75+ (last reviewed 2026-04-16).
 | F-11 | Build log content stored unredacted                  | Info     | NOT A FINDING | Logs contain values (WiFi passwords, OTA passwords, API keys) that the server itself distributed to the worker via `secrets.yaml` (F-04, accepted). Returning them to the server that already has them doesn't cross a trust boundary. Removed from residual-findings list. |
 | F-12 | Dependency versions not pinned                       | Low      | FIXED (1.3.1) | Confirmed 2026-04-16: `ha-addon/{server,client}/requirements.lock` present, `--require-hashes` install, `pip-audit` + `npm audit` in CI, Dependabot weekly, PY-7 + PY-8 + PY-9 invariants enforced. |
 | F-13 | Docker base image not pinned to a digest             | Low      | WONTFIX | HA add-on build infrastructure controls `BUILD_FROM`; pinning a digest would break the official build flow. |
-| F-14 | Auth token file written without explicit permissions | Info     | OPEN | One-line fix (`TOKEN_FILE.chmod(0o600)`). Not prioritized; low risk inside the add-on's `/data` volume. |
-| F-15 | `X-Ingress-Path` injected into HTML unsanitized      | Info     | **OPEN — queued for 1.5** (SA.1) | Verified still present at `ha-addon/server/main.py:991-999`. Add regex sanitizer. |
+| F-14 | Auth token file written without explicit permissions | Info     | **FIXED (1.5.0-dev.77)** | SA.2: `TOKEN_FILE.chmod(0o600)` immediately after `write_text`, wrapped in try/except so chmod failure on unusual filesystems logs at DEBUG rather than blocking startup. |
+| F-15 | `X-Ingress-Path` injected into HTML unsanitized      | Info     | **FIXED (1.5.0-dev.77)** | SA.1: regex strips anything not in `[/A-Za-z0-9._-]` before interpolation; empty sanitized value falls through to default `<base href="./">`. |
 | F-16 | Worker registry not persistent (operational note)    | Info     | INFO | By design — registry is in-memory. 1.6 **WC.1–WC.5** (durable `WORKER_NAME`) will make this less operationally painful. |
-| F-17 | Unauth UI + `external_components` → worker RCE       | High     | WONTFIX | Threat model §3: workers are trusted. `external_components` / `includes` / `libraries` are core ESPHome features users rely on; refusing configs that use them would be a feature regression. Once F-03 flips to mandatory in 1.6, this becomes "authenticated HA user can RCE workers" — accepted per threat model. |
-| F-18 | Worker pip install is not hash-pinned                | High     | **OPEN — queued for 1.5** (SA.2) | Verified still present: `version_manager.py:135-140` runs unpinned `pip install`. **Largest open supply-chain finding; explicitly NOT accepted by the threat model.** |
+| F-17 | Unauth UI + `external_components` → worker RCE       | High     | WONTFIX | Threat model §3: workers are trusted. `external_components` / `includes` / `libraries` are core ESPHome features users rely on; refusing configs that use them would be a feature regression. F-03 flipped to mandatory in 1.5 (AU.7), so this is now "authenticated HA user can RCE workers" — accepted per threat model. |
+| F-18 | Worker pip install is not hash-pinned                | High     | **OPEN — queued for 1.5** (SC.3) | Verified still present: `version_manager.py:135-140` runs unpinned `pip install`. **The only remaining open finding, and the only F-* item explicitly NOT accepted by the threat model.** |
 | F-19 | GitHub Actions referenced by floating tags           | Low      | FIXED (1.4.1, SC.1) | Every non-local `uses:` across the 4 workflow files now pins a 40-char commit SHA with trailing `# vN.M.P` comment. `check-invariants.sh` rule + Dependabot watching. |
 | F-20 | Missing security response headers on UI              | Low      | FIXED (1.3.1) | `security_headers_middleware` attaches CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` on `/ui/api/*` + static. Tests in `test_security_headers.py`. |

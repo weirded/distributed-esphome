@@ -36,7 +36,12 @@ _TERMINAL_JOB_STATES = {"success", "failed", "timed_out", "cancelled"}
 class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls the add-on and caches the result for entities/services."""
 
-    def __init__(self, hass: HomeAssistant, base_url: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        base_url: str,
+        token: str | None = None,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
@@ -45,12 +50,23 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._base_url = base_url.rstrip("/")
         self._session: aiohttp.ClientSession = async_get_clientsession(hass)
+        # AU.7: server accepts this as a system Bearer for /ui/api/*
+        # calls since 1.5.0, so we stop relying on the add-on having
+        # `require_ha_auth=false`. Falls back to no Authorization header
+        # when the config entry pre-dates AU.7 (entry migration path).
+        self._token = token
         # HI.6: per-job last-seen state, for terminal-transition detection.
         self._last_job_states: dict[str, str] = {}
 
     @property
     def base_url(self) -> str:
         return self._base_url
+
+    def _auth_headers(self) -> dict[str, str]:
+        """AU.7: Authorization header for every call when we have a token."""
+        if self._token:
+            return {"Authorization": f"Bearer {self._token}"}
+        return {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch the latest snapshot from the add-on.
@@ -137,7 +153,11 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _get_json(self, path: str) -> Any:
         url = f"{self._base_url}{path}"
-        async with self._session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with self._session.get(
+            url,
+            headers=self._auth_headers(),
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
             resp.raise_for_status()
             return await resp.json()
 
@@ -145,7 +165,10 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """POST helper used by services (HI.2)."""
         url = f"{self._base_url}{path}"
         async with self._session.post(
-            url, json=payload, timeout=aiohttp.ClientTimeout(total=30)
+            url,
+            json=payload,
+            headers=self._auth_headers(),
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             resp.raise_for_status()
             if resp.content_type == "application/json":
