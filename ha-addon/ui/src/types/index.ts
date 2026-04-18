@@ -230,6 +230,12 @@ export interface Job {
   scheduled?: boolean;
   /** When `scheduled`, distinguishes recurring (cron) from one-time fires (#92). */
   schedule_kind?: 'recurring' | 'once' | null;
+  /** Bug 27: True when the job was enqueued by Home Assistant's
+   * esphome_fleet.compile (or similar) service action — i.e. the
+   * caller authenticated with the add-on's system-token Bearer as
+   * ``esphome_fleet_integration``. Drives a distinct badge in the
+   * Queue tab's Triggered column. */
+  ha_action?: boolean;
   /** AV.7: git HEAD hash of /config/esphome/ at enqueue time. Used by
    * the "Diff since compile" button in the log modal to open the
    * History panel pre-set to (from=this_hash, to=working tree). */

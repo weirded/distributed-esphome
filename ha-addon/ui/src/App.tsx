@@ -746,6 +746,10 @@ export default function App() {
             onClearAll={handleClearAll}
             onOpenLog={setLogJobId}
             onEdit={(target) => setEditorTarget(target)}
+            onOpenHistoryDiff={(target, fromHash) => {
+              setHistoryFromHash(fromHash);
+              setHistoryTarget(target);
+            }}
           />
         )}
         {activeTab === 'workers' && (

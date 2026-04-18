@@ -1680,6 +1680,13 @@ async def start_compile(request: web.Request) -> web.Response:
             config_hash=_get_head(Path(cfg.config_dir)),
         )
         if job is not None:
+            # Bug 27: flag the job as triggered by a Home Assistant
+            # service action when the caller authenticated with our
+            # system-token Bearer (see ha_auth.py Path 2 —
+            # ``ha_user.name == "esphome_fleet_integration"``).
+            ha_user = request.get("ha_user") or {}
+            if ha_user.get("name") == "esphome_fleet_integration":
+                job.ha_action = True
             enqueued += 1
 
     logger.info(
@@ -1730,6 +1737,13 @@ async def save_target_content(request: web.Request) -> web.Response:
     except Exception:
         return json_error("Invalid JSON")
     content = body.get("content", "")
+    # Bug #24: optional user-entered commit message. Passed through to
+    # commit_file() which uses it instead of the auto-generated
+    # "save: <file>" subject when present. Ignored when auto-commit is
+    # off — the editor's "Save and Commit" button takes the separate
+    # /files/{f}/commit path for that case.
+    raw_msg = body.get("commit_message")
+    commit_message = raw_msg.strip() if isinstance(raw_msg, str) and raw_msg.strip() else None
 
     from git_versioning import commit_file  # noqa: PLC0415
 
@@ -1747,7 +1761,7 @@ async def save_target_content(request: web.Request) -> web.Response:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
         logger.info("Saved staged %s → %s (%d bytes)", filename, final_name, len(content))
-        await commit_file(Path(config_dir), final_name, "create")
+        await commit_file(Path(config_dir), final_name, "create", commit_message)
         return web.json_response({"ok": True, "renamed_to": final_name})
 
     try:
@@ -1758,7 +1772,7 @@ async def save_target_content(request: web.Request) -> web.Response:
     from scanner import _config_cache  # noqa: PLC0415
     _config_cache.pop(filename, None)
     logger.info("Saved %s (%d bytes)%s", filename, len(content), _who(request))
-    await commit_file(Path(config_dir), filename, "save")
+    await commit_file(Path(config_dir), filename, "save", commit_message)
     _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 

@@ -84,6 +84,12 @@ class Job:
     # #92: when scheduled, distinguish recurring (cron) from one-time fires so
     # the Queue tab can show which kind triggered the job. None for user-triggered.
     schedule_kind: Optional[str] = None  # "recurring" | "once" | None
+    # Bug 27: True when the enqueue came from Home Assistant's
+    # ``esphome_fleet.compile`` / similar service action (identified by
+    # the ``esphome_fleet_integration`` system-token Bearer in ha_auth).
+    # Lets the Queue tab's Triggered column distinguish HA-driven
+    # compiles from user-clicked ones.
+    ha_action: bool = False
     # AV.7: HEAD of /config/esphome/ at enqueue time. `None` when the
     # config dir isn't a git repo (hasn't been through AV.1 auto-init)
     # or git_versioning is unavailable. When auto-commit is on, this is
@@ -121,6 +127,7 @@ class Job:
             "is_followup": self.is_followup,
             "scheduled": self.scheduled,
             "schedule_kind": self.schedule_kind,
+            "ha_action": self.ha_action,
             "config_hash": self.config_hash,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
@@ -157,6 +164,7 @@ class Job:
             is_followup=d.get("is_followup", False),
             scheduled=d.get("scheduled", False),
             schedule_kind=d.get("schedule_kind"),
+            ha_action=d.get("ha_action", False),
             config_hash=d.get("config_hash"),
         )
 

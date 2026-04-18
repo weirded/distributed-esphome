@@ -213,6 +213,34 @@ async def test_commit_file_produces_a_commit(tmp_path: Path):
     assert messages[0] == "save: living-room.yaml"
 
 
+async def test_commit_file_uses_custom_message_when_provided(tmp_path: Path):
+    """Bug #24: a user-entered commit message from the editor Save dialog
+    replaces the auto-generated ``f"{action}: {relpath}"`` subject, and
+    falls back to the default when the message is blank/whitespace."""
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    baseline = _log_count(d)
+
+    old = gv.DEBOUNCE_SECONDS
+    gv.DEBOUNCE_SECONDS = 0.05
+    try:
+        (d / "living-room.yaml").write_text("esphome:\n  name: living-room\n# edit one\n")
+        await gv.commit_file(d, "living-room.yaml", "save", "tune PWM duty cycle")
+        await gv.drain_pending_commits()
+
+        (d / "living-room.yaml").write_text("esphome:\n  name: living-room\n# edit two\n")
+        # Blank string must fall back to the default subject.
+        await gv.commit_file(d, "living-room.yaml", "save", "   ")
+        await gv.drain_pending_commits()
+    finally:
+        gv.DEBOUNCE_SECONDS = old
+
+    messages = _log_messages(d)
+    assert len(messages) == baseline + 2
+    assert messages[0] == "save: living-room.yaml"
+    assert messages[1] == "tune PWM duty cycle"
+
+
 async def test_commit_file_respects_preexisting_user_identity(tmp_path: Path):
     """Hass-4 regression: a pre-existing repo's user.name/email must survive.
 

@@ -311,7 +311,12 @@ def _get_commit_lock() -> asyncio.Lock:
     return _commit_lock
 
 
-async def commit_file(config_dir: Path, relpath: str, action: str) -> None:
+async def commit_file(
+    config_dir: Path,
+    relpath: str,
+    action: str,
+    message: str | None = None,
+) -> None:
     """Schedule an async debounced commit for *relpath* in *config_dir*.
 
     Debounces per-path: if a commit is already pending for *relpath*,
@@ -319,6 +324,11 @@ async def commit_file(config_dir: Path, relpath: str, action: str) -> None:
     back-to-back saves on the same file (save, then pin, then schedule)
     coalesce into a single commit with the message from the *last*
     call. This mirrors how a user thinks about "one change" in the UI.
+
+    When *message* is provided and non-empty, it replaces the
+    auto-generated ``f"{action}: {relpath}"`` subject. Used for bug #24
+    — the Save button in the editor prompts for a commit message on
+    user-initiated saves, and that message flows in here.
 
     Respects :attr:`settings.auto_commit_on_save`. When the toggle is
     off, this is a no-op — no git, no debounce timer, no background
@@ -335,11 +345,16 @@ async def commit_file(config_dir: Path, relpath: str, action: str) -> None:
         existing = _pending.get(relpath)
         if existing is not None:
             existing.task.cancel()
-        task = asyncio.create_task(_delayed_commit(Path(config_dir), relpath, action))
+        task = asyncio.create_task(_delayed_commit(Path(config_dir), relpath, action, message))
         _pending[relpath] = _PendingCommit(action=action, task=task)
 
 
-async def _delayed_commit(config_dir: Path, relpath: str, action: str) -> None:
+async def _delayed_commit(
+    config_dir: Path,
+    relpath: str,
+    action: str,
+    message: str | None = None,
+) -> None:
     this_task = asyncio.current_task()
     try:
         await asyncio.sleep(DEBOUNCE_SECONDS)
@@ -363,12 +378,17 @@ async def _delayed_commit(config_dir: Path, relpath: str, action: str) -> None:
     loop = asyncio.get_running_loop()
     try:
         async with _get_commit_lock():
-            await loop.run_in_executor(None, _do_commit, config_dir, relpath, action)
+            await loop.run_in_executor(None, _do_commit, config_dir, relpath, action, message)
     except Exception:
         logger.exception("Auto-commit of %s failed", relpath)
 
 
-def _do_commit(config_dir: Path, relpath: str, action: str) -> None:
+def _do_commit(
+    config_dir: Path,
+    relpath: str,
+    action: str,
+    message: str | None = None,
+) -> None:
     """Stage and commit a single path. Safe to call even if nothing changed."""
     if not _is_git_repo(config_dir):
         logger.debug("Not a git repo: %s; skipping auto-commit of %s", config_dir, relpath)
@@ -389,12 +409,13 @@ def _do_commit(config_dir: Path, relpath: str, action: str) -> None:
         # git_author_name/email in the Settings drawer takes effect on
         # the very next auto-commit, no restart.
         override_args = _identity_override_args(config_dir)
+        subject = message.strip() if message and message.strip() else f"{action}: {relpath}"
         result = _run(
             [
                 "git",
                 *override_args,
                 "commit",
-                "-m", f"{action}: {relpath}",
+                "-m", subject,
                 "--", relpath,
             ],
             cwd=config_dir,

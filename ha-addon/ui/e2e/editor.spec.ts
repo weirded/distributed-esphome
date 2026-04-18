@@ -49,9 +49,11 @@ test('editor modal has Save, Validate, and Save & Upgrade buttons', async ({ pag
 
 test('clicking Save fires the save API and shows a toast', async ({ page }) => {
   let saveHits = 0;
-  await page.route('**/ui/api/targets/*/content', route => {
+  let lastBody: { content?: string; commit_message?: string } | null = null;
+  await page.route('**/ui/api/targets/*/content', async route => {
     if (route.request().method() === 'POST') {
       saveHits++;
+      lastBody = route.request().postDataJSON() as typeof lastBody;
       return route.fulfill({ json: { ok: true } });
     }
     return route.fallback();
@@ -60,8 +62,16 @@ test('clicking Save fires the save API and shows a toast', async ({ page }) => {
   await openEditor(page);
   await page.getByRole('button', { name: /^save$/i }).click();
 
-  // Server received the save POST
+  // Bug #24: Save now opens a commit-message dialog (auto-commit ON by
+  // default per the fixture). Type a message and confirm. The same dialog
+  // also handles the blank-message → fallback-subject path.
+  const commitDialog = page.getByRole('dialog').filter({ hasText: /commit message for save/i });
+  await expect(commitDialog).toBeVisible();
+  await commitDialog.getByPlaceholder(/^save:/).fill('tidied wifi block');
+  await commitDialog.getByRole('button', { name: /save and commit/i }).click();
+
   await expect.poll(() => saveHits).toBeGreaterThan(0);
+  expect(lastBody?.commit_message).toBe('tidied wifi block');
 });
 
 test('clicking Validate saves, fires the validate API, and shows a toast', async ({ page }) => {
@@ -115,14 +125,21 @@ test('clicking Save & Upgrade fires save then opens the Upgrade modal', async ({
   await openEditor(page);
   await page.getByRole('button', { name: /save & upgrade/i }).click();
 
-  // Save fires immediately.
+  // Bug #24: Save & Upgrade with auto-commit on opens the commit-message
+  // dialog first. Confirm with the default (blank) message, then expect
+  // save + the Upgrade modal.
+  const commitDialog = page.getByRole('dialog').filter({ hasText: /commit message for save & upgrade/i });
+  await expect(commitDialog).toBeVisible();
+  await commitDialog.getByRole('button', { name: /save, commit & upgrade/i }).click();
+
+  // Save fires after confirming the commit-message dialog.
   await expect.poll(() => saveHits).toBeGreaterThan(0);
 
   // The Upgrade modal should now be open. Compile has NOT been called yet.
   expect(compileHits, 'compile should not fire until the user confirms in the modal').toBe(0);
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: /^upgrade$/i }).click();
+  const upgradeDialog = page.getByRole('dialog').filter({ hasText: /upgrade/i }).last();
+  await expect(upgradeDialog).toBeVisible();
+  await upgradeDialog.getByRole('button', { name: /^upgrade$/i }).click();
 
   // Now compile fires.
   await expect.poll(() => compileHits).toBeGreaterThan(0);

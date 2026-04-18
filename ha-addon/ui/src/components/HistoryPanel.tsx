@@ -370,10 +370,20 @@ export function HistoryPanel({
                     setFromHash(entry.hash);
                   } else {
                     // Default: show what this commit changed — parent ↔ this.
+                    // Bug 23: the earliest commit has no parent (entries[idx+1]
+                    // is undefined); diffing that against nothing/working tree
+                    // was surprising. Fall back to from=to=entry which renders
+                    // an empty "no differences" panel — the honest answer when
+                    // we can't compute a predecessor.
                     const idx = entries.indexOf(entry);
-                    const parent = entries[idx + 1]?.hash ?? '';
-                    setFromHash(parent);
-                    setToHash(entry.hash);
+                    const parent = entries[idx + 1]?.hash;
+                    if (parent) {
+                      setFromHash(parent);
+                      setToHash(entry.hash);
+                    } else {
+                      setFromHash(entry.hash);
+                      setToHash(entry.hash);
+                    }
                   }
                 }}
                 onSetFrom={() => setFromHash(entry.hash)}
@@ -504,6 +514,11 @@ function CommitRow({
   disabled: boolean;
 }) {
   const when = formatRelativeTime(entry.date);
+  // Bug 22: absolute local time alongside the relative one. Short form
+  // ("Apr 18, 14:32") stays readable on narrow rows; full ISO appears
+  // on hover as a tooltip for anyone who needs the exact timestamp.
+  const whenAbsolute = formatAbsoluteTime(entry.date);
+  const whenIso = entry.date ? new Date(entry.date * 1000).toISOString() : '';
   const ringClass = isTo
     ? 'border-[var(--accent)]'
     : isFrom
@@ -519,7 +534,13 @@ function CommitRow({
     >
       <code className="font-mono text-[var(--text-muted)] shrink-0">{entry.short_hash}</code>
       <span className="truncate flex-1">{entry.message}</span>
-      <span className="text-[var(--text-muted)] whitespace-nowrap">{when}</span>
+      <span
+        className="text-[var(--text-muted)] whitespace-nowrap flex flex-col items-end leading-tight"
+        title={whenIso}
+      >
+        <span>{when}</span>
+        <span className="text-[10px] opacity-70">{whenAbsolute}</span>
+      </span>
       <span className="text-[var(--text-muted)] whitespace-nowrap font-mono">
         <span className="text-green-400">+{entry.lines_added}</span>{' '}
         <span className="text-red-400">-{entry.lines_removed}</span>
@@ -575,4 +596,24 @@ function formatRelativeTime(epochSeconds: number): string {
   if (h < 48) return `${h}h ago`;
   const d = Math.round(h / 24);
   return `${d}d ago`;
+}
+
+// Bug 22: "Apr 18, 14:32" for commits in the current year, "Apr 18
+// 2025, 14:32" otherwise. Keeps the cell narrow while still being
+// unambiguous — the full ISO timestamp is on the row title attribute.
+function formatAbsoluteTime(epochSeconds: number): string {
+  if (!epochSeconds) return '';
+  const d = new Date(epochSeconds * 1000);
+  const now = new Date();
+  const datePart = d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
+  });
+  const timePart = d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return `${datePart}, ${timePart}`;
 }

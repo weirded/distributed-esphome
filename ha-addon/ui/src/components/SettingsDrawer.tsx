@@ -49,22 +49,25 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
     { revalidateOnFocus: false },
   );
 
-  // Bug #17: auto-commit-toggle-off confirmation state. `true` when
-  // the Dialog is open; a pending-promise handle lets us resolve the
-  // user's choice inside the patch() flow.
-  const [turnOffOpen, setTurnOffOpen] = useState(false);
-  const [turnOffBusy, setTurnOffBusy] = useState(false);
+  // Bug #21 (supersedes #17): confirmation state for the
+  // auto-commit-toggle-on prompt. Fires when the user flips the
+  // toggle from OFF → ON with dirty files: from that point on all
+  // future saves will auto-commit, but the existing uncommitted
+  // state won't unless it gets touched. The prompt asks whether to
+  // commit those stragglers before the new behavior kicks in.
+  const [turnOnOpen, setTurnOnOpen] = useState(false);
+  const [turnOnBusy, setTurnOnBusy] = useState(false);
 
   async function patch(partial: Partial<AppSettings>): Promise<boolean> {
-    // Bug #17: intercept the auto-commit flip-to-off when there are
+    // Bug #21: intercept the auto-commit flip-to-ON when there are
     // uncommitted changes. Instead of patching straight away, we open
     // the confirmation dialog; its buttons will finish the PATCH.
     if (
-      partial.auto_commit_on_save === false
-      && data?.auto_commit_on_save === true
+      partial.auto_commit_on_save === true
+      && data?.auto_commit_on_save === false
       && dirtyTargets.length > 0
     ) {
-      setTurnOffOpen(true);
+      setTurnOnOpen(true);
       return false;
     }
     try {
@@ -218,24 +221,25 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
         </SheetBody>
       </SheetContent>
 
-      {/* Bug #17: confirmation shown when the user flips auto-commit
-          off while there are uncommitted changes somewhere in the
-          fleet. Three outcomes: Commit-then-turn-off, turn-off-anyway,
-          or cancel (leaves the toggle untouched). */}
+      {/* Bug #21: confirmation when the user flips auto-commit OFF →
+          ON with uncommitted changes. Subsequent saves will start
+          auto-committing, but the existing dirty files won't get
+          committed until the user touches them again. Offer to flush
+          them now so history stays continuous. */}
       <Dialog
-        open={turnOffOpen}
-        onOpenChange={(o) => { if (!o && !turnOffBusy) setTurnOffOpen(false); }}
+        open={turnOnOpen}
+        onOpenChange={(o) => { if (!o && !turnOnBusy) setTurnOnOpen(false); }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Turn off auto-commit?</DialogTitle>
+            <DialogTitle>Turn on auto-commit?</DialogTitle>
           </DialogHeader>
           <div className="px-4 py-3 text-sm text-[var(--text)]">
             <p>
               You have uncommitted changes to <strong>{dirtyTargets.length}</strong>{' '}
-              file{dirtyTargets.length === 1 ? '' : 's'}. Turning off auto-commit
-              leaves them in the working tree — they stay on disk but they
-              won't show up in history until you commit them manually.
+              file{dirtyTargets.length === 1 ? '' : 's'}. From now on every save will
+              auto-commit — but those existing edits won't be committed
+              automatically until you touch each file again.
             </p>
             {dirtyTargets.length > 0 && (
               <ul className="mt-2 flex flex-wrap gap-1">
@@ -254,38 +258,38 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
               </ul>
             )}
             <p className="mt-3 text-xs text-[var(--text-muted)]">
-              Commit them now to preserve the history, or turn off anyway
-              if you want to commit them yourself later.
+              Commit them now to keep history continuous, or turn on
+              anyway if you'd rather commit them yourself later.
             </p>
           </div>
           <DialogFooter>
             <DialogClose>
-              <Button variant="secondary" size="sm" disabled={turnOffBusy}>Cancel</Button>
+              <Button variant="secondary" size="sm" disabled={turnOnBusy}>Cancel</Button>
             </DialogClose>
             <Button
               variant="outline"
               size="sm"
-              disabled={turnOffBusy}
+              disabled={turnOnBusy}
               onClick={async () => {
-                setTurnOffBusy(true);
+                setTurnOnBusy(true);
                 try {
-                  await patchRaw({ auto_commit_on_save: false });
-                  toast.success('Auto-commit turned off; uncommitted changes left in place');
-                  setTurnOffOpen(false);
+                  await patchRaw({ auto_commit_on_save: true });
+                  toast.success('Auto-commit turned on; existing uncommitted changes left in place');
+                  setTurnOnOpen(false);
                 } catch (err) {
                   toast.error('Failed to update setting: ' + (err as Error).message);
                 } finally {
-                  setTurnOffBusy(false);
+                  setTurnOnBusy(false);
                 }
               }}
             >
-              Turn off anyway
+              Turn on anyway
             </Button>
             <Button
               size="sm"
-              disabled={turnOffBusy}
+              disabled={turnOnBusy}
               onClick={async () => {
-                setTurnOffBusy(true);
+                setTurnOnBusy(true);
                 try {
                   // One commit per dirty file. Default message on each
                   // matches the manual-commit flow's (manual) marker.
@@ -301,16 +305,16 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   } else {
                     toast.error('No files committed');
                   }
-                  await patchRaw({ auto_commit_on_save: false });
-                  setTurnOffOpen(false);
+                  await patchRaw({ auto_commit_on_save: true });
+                  setTurnOnOpen(false);
                 } catch (err) {
                   toast.error('Failed: ' + (err as Error).message);
                 } finally {
-                  setTurnOffBusy(false);
+                  setTurnOnBusy(false);
                 }
               }}
             >
-              Commit {dirtyTargets.length} and turn off
+              Commit {dirtyTargets.length} and turn on
             </Button>
           </DialogFooter>
         </DialogContent>

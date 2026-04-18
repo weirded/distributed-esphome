@@ -423,16 +423,23 @@ export async function getTargetContent(filename: string): Promise<string> {
  * Save YAML content to a target file. Returns the final target name,
  * which may differ from *filename* when saving a staged new device
  * (#62 — ``.pending.<name>.yaml`` → ``<name>.yaml`` on first save).
+ *
+ * Bug #24: ``commitMessage`` is an optional user-entered subject line
+ * that's passed to the auto-commit. When omitted (or auto-commit is
+ * off) the server's default ``"save: <file>"`` applies.
  */
 export async function saveTargetContent(
   filename: string,
   content: string,
+  commitMessage?: string,
 ): Promise<{ renamedTo: string | null }> {
+  const body: Record<string, unknown> = { content };
+  if (commitMessage && commitMessage.trim()) body.commit_message = commitMessage.trim();
   const data = await parseResponse<SaveTargetResponse>(
     await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     }),
     'saving target content',
   );

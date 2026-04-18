@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Calendar, Clock, Download, Pin, User } from 'lucide-react';
+import { Calendar, Clock, Download, HomeIcon, Pin, User } from 'lucide-react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -36,6 +36,10 @@ interface Props {
   onClearAll: () => void;
   onOpenLog: (jobId: string) => void;
   onEdit: (target: string) => void;
+  /** Bug 20: click on the Queue's Commit-column hash opens the History
+   * panel preset to from=config_hash, to=Current. Same flow as the
+   * Log modal's "Diff since compile" button. */
+  onOpenHistoryDiff: (target: string, fromHash: string) => void;
 }
 
 const STATE_ORDER: Record<string, number> = {
@@ -86,6 +90,7 @@ export function QueueTab({
   onClearAll,
   onOpenLog,
   onEdit,
+  onOpenHistoryDiff,
 }: Props) {
   // QS.27: persist sort across reloads via localStorage.
   const [sorting, setSorting] = usePersistedState<SortingState>(
@@ -286,18 +291,22 @@ export function QueueTab({
     // wasn't a git repo.
     columnHelper.accessor(row => row.config_hash || '', {
       id: 'config_hash',
-      header: ({ column }) => <SortHeader label="Config" column={column} />,
+      header: ({ column }) => <SortHeader label="Commit" column={column} />,
       cell: ({ row: { original: job } }) => {
         if (!job.config_hash) {
           return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
         }
+        // Bug 20: clickable hash opens the History panel preset to
+        // diff-since-this-compile (from=config_hash, to=Current).
         return (
-          <code
-            className="font-mono text-[11px] text-[var(--text-muted)]"
-            title={`Config git HEAD at compile time: ${job.config_hash}`}
+          <button
+            type="button"
+            className="font-mono text-[11px] text-[var(--text-muted)] underline-offset-2 hover:underline cursor-pointer"
+            title={`Config git HEAD at compile time: ${job.config_hash}\nClick to see what's changed since this compile.`}
+            onClick={() => onOpenHistoryDiff(job.target, job.config_hash as string)}
           >
             {job.config_hash.slice(0, 7)}
-          </code>
+          </button>
         );
       },
       sortingFn: 'alphanumeric',
@@ -307,10 +316,24 @@ export function QueueTab({
     // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
     // Hover reveals the full cron expression + tz so users can reconcile with
     // the Schedules tab.
-    columnHelper.accessor(row => row.scheduled ? (row.schedule_kind ?? 'schedule') : 'user', {
+    columnHelper.accessor(row => row.ha_action ? 'ha_action' : row.scheduled ? (row.schedule_kind ?? 'schedule') : 'user', {
       id: 'triggered_by',
       header: ({ column }) => <SortHeader label="Triggered" column={column} />,
       cell: ({ row: { original: job } }) => {
+        // Bug 27: HA-service-action trigger gets its own badge.
+        // Checked before scheduled/user so a scheduled-compile-that-
+        // somehow-came-through-HA still reads as HA (shouldn't happen
+        // in practice; this is a safety ordering).
+        if (job.ha_action) {
+          return (
+            <span
+              className="inline-flex items-center gap-1 text-[12px]"
+              title="Triggered by a Home Assistant service action (esphome_fleet.compile)"
+            >
+              <HomeIcon className="size-3" aria-hidden="true" /> HA action
+            </span>
+          );
+        }
         if (!job.scheduled) {
           // UX.5: "User" → "Manual" until AU.* auth lets us attribute to a
           // specific HA user. Tooltip spells out "manual action from the UI".
@@ -485,7 +508,7 @@ export function QueueTab({
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, targetNameMap, downloadMenuOpenJobId]);
+  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, onOpenHistoryDiff, targetNameMap, downloadMenuOpenJobId]);
 
   const table = useReactTable({
     data: filteredQueue,
