@@ -160,3 +160,11 @@ Surfaced by the 2026-04-16 archive sweep. Each item was deferred (or filed as a 
 - [x] **18** *(1.6.0-dev.17)* — Queue tab now has a **Config** column showing the short git hash (`job.config_hash.slice(0, 7)`) of what was compiled, with a tooltip revealing the full 40-char SHA. Dash for pre-AV.7 jobs and jobs enqueued when the config dir wasn't a git repo. Rendered in a muted mono font so it doesn't visually compete with the other sortable columns, but still always visible — this is the key that links Queue rows to the History panel's "Diff since compile" shortcut.
 
 - [x] **19** *(1.6.0-dev.17)* — Fresh-install auto-commit default now depends on whether a git repo was already there. `init_repo()` returns `True` when Fleet initialised a brand-new repo (no repo before), `False` when the directory was already a git repo. `init_settings()` takes an optional `fresh_repo_init` parameter; on first-boot seed it uses that to pick the default: **fresh Fleet-init → `auto_commit_on_save = True`** (the dataclass default, the Pat-no-git case where Fleet owns history), **pre-existing repo → `auto_commit_on_save = False`** (Pat-with-git case where Fleet shouldn't spray `save: <file>` commits into the user's curated log). Existing installs are unaffected — the override only applies when `/data/settings.json` doesn't exist yet. `main.py` reordered so `init_repo` runs before `init_settings` in `create_app`, sync (no event loop yet), and the return value flows into the settings seed.
+
+- [ ] 20 - Config hash on the queue tab should open up the drawer with the diff that has been selected. 
+
+- [ ] 21 - the direction of the change made for number 17 is incorrect. The case that matters more is when I go from auto-commit off to auto-commit on. In that case, if I have dirty files, I should ask the user whether to commit those because all subsequent changes will be automatically committed also. Please flip that around. 
+
+- [ ] 22 - version history only shows a relative time right now in the drawer. It should also show the absolute date and time. 
+
+- [ ] 23 - 
