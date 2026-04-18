@@ -1118,6 +1118,18 @@ def create_app() -> web.Application:
         except Exception:
             logger.exception("HA integration auto-install raised unexpectedly")
 
+        # AV.1: auto-init /config/esphome/ as a local git repo so
+        # subsequent saves have a free history / diff / rollback story.
+        # Runs in an executor so subprocess calls don't block the event
+        # loop during startup. Safe on a user's pre-existing repo — we
+        # skip init there and only append missing .gitignore entries.
+        try:
+            from git_versioning import init_repo  # noqa: PLC0415
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, init_repo, Path(cfg.config_dir))
+        except Exception:
+            logger.exception("git auto-init raised unexpectedly")
+
         # Use the locally installed ESPHome package version as the initial
         # active version.  The pypi_version_refresher background task will
         # contact the HA Supervisor API shortly after startup and update the

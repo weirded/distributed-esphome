@@ -1085,3 +1085,95 @@ async def test_patch_settings_persists_across_get(tmp_path, _settings_init):
         assert data["auto_commit_on_save"] is False
     finally:
         await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# auto-versioning (AV.1 / AV.2)
+# ---------------------------------------------------------------------------
+
+async def test_editor_save_triggers_auto_commit(tmp_path, _settings_init):
+    """AV.2: save via POST /ui/api/targets/{f}/content produces a git commit."""
+    import subprocess
+
+    import git_versioning as gv
+    gv._reset_for_tests()
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        # Seed a config file and init the repo under the test config dir.
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        # Short debounce so the test doesn't stall.
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            resp = await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# edited\n"},
+            )
+            assert resp.status == 200
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        log = subprocess.run(
+            ["git", "log", "--format=%s"],
+            cwd=str(ta.config_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        assert "save: bedroom.yaml" in log
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_editor_save_skips_commit_when_toggle_off(tmp_path, _settings_init):
+    """AV.2: turning off auto_commit_on_save disables the git interaction."""
+    import subprocess
+
+    import git_versioning as gv
+    gv._reset_for_tests()
+
+    # Flip the toggle before the save.
+    from settings import update_settings
+    await update_settings({"auto_commit_on_save": False})
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        baseline_log = subprocess.run(
+            ["git", "log", "--format=%s"],
+            cwd=str(ta.config_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            resp = await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# edited-but-no-commit\n"},
+            )
+            assert resp.status == 200
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        after_log = subprocess.run(
+            ["git", "log", "--format=%s"],
+            cwd=str(ta.config_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        assert after_log == baseline_log
+    finally:
+        gv._reset_for_tests()
+        await ta.close()

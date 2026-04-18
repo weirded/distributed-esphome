@@ -1513,6 +1513,8 @@ async def save_target_content(request: web.Request) -> web.Response:
         return json_error("Invalid JSON")
     content = body.get("content", "")
 
+    from git_versioning import commit_file  # noqa: PLC0415
+
     is_staged = filename.startswith(_PENDING_PREFIX)
     if is_staged:
         final_name = filename[len(_PENDING_PREFIX):]
@@ -1527,6 +1529,7 @@ async def save_target_content(request: web.Request) -> web.Response:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
         logger.info("Saved staged %s → %s (%d bytes)", filename, final_name, len(content))
+        await commit_file(Path(config_dir), final_name, "create")
         return web.json_response({"ok": True, "renamed_to": final_name})
 
     try:
@@ -1537,6 +1540,7 @@ async def save_target_content(request: web.Request) -> web.Response:
     from scanner import _config_cache  # noqa: PLC0415
     _config_cache.pop(filename, None)
     logger.info("Saved %s (%d bytes)%s", filename, len(content), _who(request))
+    await commit_file(Path(config_dir), filename, "save")
     _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
