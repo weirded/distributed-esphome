@@ -17,7 +17,24 @@ test('gear icon opens the Settings drawer with all sections', async ({ page }) =
   await expect(page.getByText('Config versioning')).toBeVisible();
   await expect(page.getByText('Job history')).toBeVisible();
   await expect(page.getByText('Disk management')).toBeVisible();
+  await expect(page.getByText('Authentication')).toBeVisible();
+  await expect(page.getByText('Timeouts')).toBeVisible();
+  await expect(page.getByText('Polling')).toBeVisible();
   await expect(page.getByText('About')).toBeVisible();
+});
+
+test('server token field masks by default and can be revealed', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+
+  const drawer = page.locator('[data-slot="sheet-content"]');
+  const tokenInput = drawer.locator('input[type="password"]').first();
+  await expect(tokenInput).toHaveValue('test-token-abc');
+
+  // Click the eye button to reveal
+  await drawer.getByRole('button', { name: 'Show token' }).click();
+  const revealed = drawer.locator('input[type="text"][value="test-token-abc"]').first();
+  await expect(revealed).toBeVisible();
 });
 
 test('auto-commit toggle flips and persists after reopen', async ({ page }) => {

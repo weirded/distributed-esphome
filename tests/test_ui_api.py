@@ -61,7 +61,16 @@ async def _make_ui_app(tmp_path: Path) -> _UiApp:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
 
-    cfg = AppConfig(token="ui-test-token", config_dir=str(config_dir))
+    cfg = AppConfig(config_dir=str(config_dir))
+    # SP.8: server token now lives in Settings, not AppConfig. Ensure
+    # the scratch settings module has it set for auth-requiring tests.
+    import settings as _settings_mod
+    _settings_mod._reset_for_tests()
+    _settings_mod.init_settings(
+        settings_path=tmp_path / "settings.json",
+        options_path=tmp_path / "options.json",
+    )
+    await _settings_mod.update_settings({"server_token": "ui-test-token"})
     queue = JobQueue(queue_file=tmp_path / "queue.json")
     registry = WorkerRegistry()
 
@@ -990,6 +999,9 @@ async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_i
         resp = await ta.get("/ui/api/settings")
         assert resp.status == 200
         data = await resp.json()
+        # Token is auto-generated + test harness sets "ui-test-token"
+        # (see _make_ui_app); assert on shape, not the value.
+        assert isinstance(data.pop("server_token"), str)
         assert data == {
             "auto_commit_on_save": True,
             "git_author_name": "HA User",
@@ -997,6 +1009,11 @@ async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_i
             "job_history_retention_days": 365,
             "firmware_cache_max_gb": 2.0,
             "job_log_retention_days": 30,
+            "job_timeout": 600,
+            "ota_timeout": 120,
+            "worker_offline_threshold": 30,
+            "device_poll_interval": 60,
+            "require_ha_auth": True,
         }
     finally:
         await ta.close()

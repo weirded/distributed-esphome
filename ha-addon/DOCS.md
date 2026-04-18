@@ -18,30 +18,27 @@ Start the add-on, then open the web UI via the **ESPHome Fleet** entry in the HA
 
 ### Add-on configuration
 
-The add-on has two separate configuration surfaces:
+Everything user-facing is configured from the **Settings drawer** inside the web UI — click the gear icon in the top-right of the header. As of 1.6.0 the Supervisor **Configuration** tab is intentionally empty: all the old options (`token`, timeouts, thresholds, `require_ha_auth`) moved into the Settings drawer so edits apply instantly without restarting the add-on. Existing values from pre-1.6 installs are auto-migrated on first boot.
 
-- **Supervisor's Configuration tab** (click the add-on in Home Assistant → Configuration) — holds the deployment-level knobs listed in the table below. Changes here restart the add-on.
-- **The in-app Settings drawer** (gear icon in the header) — holds the product feature settings introduced in 1.6 (auto-versioning, job history, disk budgets, git author). Changes apply immediately without a restart.
+The Settings drawer, section by section:
 
-Supervisor options:
+| Section | Setting | Default | What it does |
+|---|---|---|---|
+| Config versioning | Auto-commit on save | on | Every save creates a local git commit in `/config/esphome/`. Turn off if you manage this directory with your own git workflow. |
+| Config versioning | Commit author name / email | `HA User` / `ha@distributed-esphome.local` | Identity used on Fleet-created commits. Respects the repo's own `user.name`/`user.email` if you've set one — the Settings values only kick in when the repo has nothing configured. |
+| Job history | Retention (days) | 365 | How long to keep per-job compile history. `0` = unlimited. |
+| Disk management | Firmware cache size (GB) | 2.0 | Maximum disk space the server will use to cache compiled firmware. |
+| Disk management | Job log retention (days) | 30 | How long to keep per-job build logs on disk. `0` = unlimited. |
+| Authentication | Server token | *(auto-generated)* | Shared bearer token workers and direct-port API use. Changing it will disconnect existing workers until their `SERVER_TOKEN` env var is updated. Masked by default — click the eye to reveal, the copy button to grab for a worker snippet. |
+| Authentication | Require HA auth on direct port | on | When on, port-8765 requests outside the Ingress tunnel must carry a valid HA bearer token or this server token. Leave on unless you have a specific reason to allow anonymous direct-port access. Ingress access is unaffected either way. |
+| Timeouts | Job timeout (seconds) | 600 | Maximum wall-clock seconds a single compile job may run. Bump if you have unusually large configs or a slow worker. |
+| Timeouts | OTA timeout (seconds) | 120 | Maximum seconds for the OTA upload after a successful compile. Bump if you have a slow / lossy WiFi link to some devices. |
+| Timeouts | Worker offline threshold (seconds) | 30 | Seconds without a heartbeat before a worker is flagged offline in the Workers tab. Don't set below the worker's heartbeat interval (default 10s) — 30s gives three missed beats before the UI flips. |
+| Polling | Device poll interval (seconds) | 60 | How often the server polls each ESPHome device over its native API to refresh online status and running-firmware version. |
 
-| Option | Default | What it does |
-|---|---|---|
-| `token` | *(auto-generated)* | Shared bearer token workers use to authenticate to the add-on. Leave blank to auto-generate on first boot (persisted to `/data/auth_token`). Change this if you want a specific value or need to rotate it — any workers with the old token will need to be reconnected. |
-| `job_timeout` | `600` | Seconds a single compile job is allowed to run before the worker aborts it. Bump this if you have unusually large configs or a slow worker; the default handles typical ESP32 builds comfortably. |
-| `ota_timeout` | `120` | Seconds allowed for the OTA upload to a device after a successful compile. Bump this if you have a slow / lossy WiFi link to some devices. |
-| `worker_offline_threshold` | `30` | Seconds without a heartbeat before a worker is considered offline in the Workers tab. Don't set this below the worker's `HEARTBEAT_INTERVAL` (default 10s) — the default of 30s gives three missed heartbeats before a worker is flagged. |
-| `device_poll_interval` | `60` | Seconds between each round of polling ESPHome devices over their native API to refresh running-firmware / online status on the Devices tab. |
-| `require_ha_auth` | `true` | When true, direct-port access on `:8765` (outside Home Assistant Ingress) requires a valid Home Assistant bearer token or the add-on's own shared token. Leave this on unless you have a specific reason to allow anonymous direct-port reads. Ingress access is unaffected. |
+Settings are stored in `/data/settings.json` inside the add-on and survive updates.
 
-In-app Settings drawer (gear icon, top right of the header), as of 1.6.0:
-
-- **Config versioning → Auto-commit on save.** Fleet keeps a local git history of everything under `/config/esphome/` so you can see diffs and restore previous versions without thinking about git. Turn this off if you manage this directory with your own git workflow and don't want Fleet writing commits into it.
-- **Config versioning → Commit author name / email.** Who shows up as the author on Fleet-created commits. Respects a pre-existing repo's own `user.name`/`user.email` if you've set one — these Settings values only apply when the repo has nothing configured.
-- **Job history → Retention (days).** How long to keep the record of past compile jobs. `0` = unlimited.
-- **Disk management → Firmware cache size (GB) / Job log retention (days).** Per-cache disk budgets so the add-on doesn't silently fill your volume.
-
-Settings are persisted to `/data/settings.json` inside the add-on and survive updates. On first boot after upgrading to 1.6.0, any of these fields that previously lived in the add-on Configuration tab are seeded into `settings.json` automatically. After the upgrade, editing them in Supervisor has no effect — edit them in the Settings drawer instead.
+After upgrading to 1.6.0 from an earlier release, your pre-existing `options.json` values (token, timeouts, thresholds, `require_ha_auth`, plus any 1.5 disk/history fields) are one-shot imported into `settings.json` on first boot. From then on, editing values in Supervisor has no effect — edit them in the Settings drawer instead. The Supervisor **Configuration** tab is intentionally empty post-1.6.
 
 ## What's on the Web UI
 

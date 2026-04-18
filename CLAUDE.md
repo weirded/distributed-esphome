@@ -145,6 +145,10 @@ These aren't grep-checkable but matter just as much. They're how the codebase st
 - **Think about the UX before shipping.** Walk through the change mentally: does the layout make sense on real data? Would it look sloppy to a user?
 - **Update `.gitignore` whenever a new tool is introduced.** Most tools generate cache/lock/build/report directories — add them in the same commit that introduces the tool.
 
+## Docker Image
+
+The runtime image must keep `gcc`, `libffi-dev`, `libssl-dev`, and `git` installed — they are **not** build-only. ESPHome compiles C/C++ firmware at runtime via PlatformIO, and the server/worker lazy-install arbitrary ESPHome versions via `pip install esphome==X.Y.Z` at runtime (`scanner.ensure_esphome_installed`, `VersionManager._install`), whose transitive deps occasionally ship sdist-only on `linux/arm64` and need a compiler. The ~280 MB apt layer on `ha-addon/Dockerfile:19` is therefore intentional. `git` accounts for ~70–100 MB of it and is required because some PlatformIO/ESPHome dependencies pull from git URLs. Do **not** attempt to "optimize" this with a multi-stage build that drops build tooling from the final stage — that breaks on-demand ESPHome install on ARM hosts (the majority of HA users). Keep the chained `RUN apt-get update && install && rm -rf /var/lib/apt/lists/*` pattern exactly as-is: splitting it either bloats the layer (cleanup becomes a no-op) or creates a stale-index race.
+
 ## Performance Expectations
 
 This is a home-lab tool used by one or two people intermittently, not a high-traffic web service. Optimize for **idle efficiency**, not peak throughput.

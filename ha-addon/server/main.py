@@ -209,11 +209,14 @@ async def auth_middleware(request: web.Request, handler):
         if peer_ip and peer_ip == _normalize_peer_ip(HA_SUPERVISOR_IP):
             return await handler(request)
 
-        cfg: AppConfig = request.app["config"]
-        if cfg.token:
+        # SP.8: read the token live from Settings, so flipping it in
+        # the drawer propagates to the next request with no restart.
+        from settings import get_settings  # noqa: PLC0415
+        token = get_settings().server_token
+        if token:
             from helpers import constant_time_compare  # noqa: PLC0415
             auth_header = request.headers.get(HEADER_AUTHORIZATION, "")
-            if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], cfg.token):
+            if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], token):
                 return await handler(request)
 
             # Diagnose the refusal. Each branch logs a distinct structured
@@ -255,7 +258,6 @@ async def timeout_checker(app: web.Application) -> None:
     """
     queue: JobQueue = app["queue"]
     registry: WorkerRegistry = app["registry"]
-    cfg: AppConfig = app["config"]
     while True:
         await asyncio.sleep(30)
         try:
@@ -264,8 +266,15 @@ async def timeout_checker(app: web.Application) -> None:
             # JOB_TIMEOUT (600s default) before the elapsed-time check
             # noticed. Now check_timeouts also re-queues WORKING jobs
             # whose assigned worker has no recent heartbeat.
+            #
+            # SP.8: both the offline-threshold probe and the job-timeout
+            # value read live from Settings each iteration, so Settings
+            # drawer edits take effect on the next 30s tick.
+            from settings import get_settings  # noqa: PLC0415
+            s = get_settings()
+
             def _is_online(cid: str) -> bool:
-                return registry.is_online(cid, threshold_secs=cfg.worker_offline_threshold)
+                return registry.is_online(cid, threshold_secs=s.worker_offline_threshold)
 
             timed_out = await queue.check_timeouts(is_worker_online=_is_online)
             if timed_out:
@@ -679,11 +688,12 @@ async def _old_schedule_checker(app: web.Application) -> None:
                             elif (now - once_dt).total_seconds() <= misfire_grace:
                                 version = meta.get("pin_version") or get_esphome_version()
                                 run_id = str(_uuid.uuid4())
+                                from settings import get_settings  # noqa: PLC0415
                                 job = await queue.enqueue(
                                     target=target,
                                     esphome_version=version,
                                     run_id=run_id,
-                                    timeout_seconds=cfg.job_timeout,
+                                    timeout_seconds=get_settings().job_timeout,
                                     ota_address=_get_ota_address(target),
                                 )
                                 if job is not None:
@@ -740,13 +750,14 @@ async def _old_schedule_checker(app: web.Application) -> None:
                         write_device_meta(cfg.config_dir, target, fresh_meta)
                         continue
 
+                    from settings import get_settings  # noqa: PLC0415
                     version = meta.get("pin_version") or get_esphome_version()
                     run_id = str(_uuid.uuid4())
                     job = await queue.enqueue(
                         target=target,
                         esphome_version=version,
                         run_id=run_id,
-                        timeout_seconds=cfg.job_timeout,
+                        timeout_seconds=get_settings().job_timeout,
                         ota_address=_get_ota_address(target),
                     )
                     if job is not None:
@@ -1040,7 +1051,12 @@ def create_app() -> web.Application:
 
     registry = WorkerRegistry()
 
-    device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
+    # SP.8: device_poll_interval is now settings-driven. Pass the
+    # current value as the initial interval; DevicePoller re-reads
+    # live via get_settings() at each iteration, so drawer edits
+    # take effect without a restart.
+    from settings import get_settings as _get_settings_for_init  # noqa: PLC0415
+    device_poller = DevicePoller(poll_interval=_get_settings_for_init().device_poll_interval)
 
     # FD.5: firmware upload needs a body budget larger than aiohttp's
     # 1 MB default. ESP32 `firmware.factory.bin` is 1-4 MB typically;
@@ -1107,7 +1123,8 @@ def create_app() -> web.Application:
     async def on_startup(app: web.Application) -> None:
         logger.info("Starting ESPHome Fleet")
         logger.info("Config dir: %s", cfg.config_dir)
-        logger.info("Token configured: %s", bool(cfg.token))
+        from settings import get_settings as _get_settings_startup  # noqa: PLC0415
+        logger.info("Token configured: %s", bool(_get_settings_startup().server_token))
 
         # HI.8: auto-install the bundled HA custom integration into
         # /config/custom_components/esphome_fleet on every boot.
@@ -1191,8 +1208,9 @@ def create_app() -> web.Application:
         # the user to paste credentials.
         try:
             from supervisor_discovery import register_discovery  # noqa: PLC0415
+            from settings import get_settings as _get_s  # noqa: PLC0415
             app["_rt"]["supervisor_discovery_uuid"] = await register_discovery(
-                cfg.port, token=cfg.token,
+                cfg.port, token=_get_s().server_token,
             )
         except Exception:
             logger.debug("Supervisor discovery registration raised", exc_info=True)
@@ -1219,10 +1237,17 @@ def create_app() -> web.Application:
                     local_slots = local_slots_file.read_text().strip() or "0"
             except Exception:
                 pass
+            # SP.8: local-worker is a subprocess started once at add-on
+            # boot. Its SERVER_TOKEN is captured at spawn time; if the
+            # user later rotates the token via the Settings drawer, the
+            # local worker keeps using the old token until the add-on
+            # restarts (documented behavior; remote workers have the
+            # same property). Read the current value fresh at spawn.
+            from settings import get_settings as _get_s_lw  # noqa: PLC0415
             local_env = {
                 **os.environ,
                 "SERVER_URL": f"http://127.0.0.1:{cfg.port}",
-                "SERVER_TOKEN": cfg.token,
+                "SERVER_TOKEN": _get_s_lw().server_token,
                 "MAX_PARALLEL_JOBS": local_slots,
                 "ESPHOME_VERSIONS_DIR": "/data/esphome-versions",
                 "HOSTNAME": "local-worker",

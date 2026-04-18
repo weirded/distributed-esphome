@@ -294,7 +294,8 @@ async def get_next_job(request: web.Request) -> web.Response:
         my_perf = my_info.get("perf_score", 0)
         my_cpu = my_info.get("cpu_usage")
         my_effective = my_perf * (1 - (my_cpu or 0) / 100)
-        cfg_threshold = cfg.worker_offline_threshold
+        from settings import get_settings  # noqa: PLC0415
+        cfg_threshold = get_settings().worker_offline_threshold
         # Count active jobs per worker from the queue
         active_jobs_by_worker: dict[str, int] = {}
         for j in queue.get_all():
@@ -651,12 +652,13 @@ async def ws_worker_log(request: web.Request) -> web.WebSocketResponse:
 
 @routes.get("/api/v1/status")
 async def get_status(request: web.Request) -> web.Response:
-    cfg = _cfg(request)
     registry = request.app["registry"]
     queue = request.app["queue"]
+    from settings import get_settings  # noqa: PLC0415
+    threshold = get_settings().worker_offline_threshold
 
     online_workers = sum(
-        1 for w in registry.get_all() if registry.is_online(w.client_id, cfg.worker_offline_threshold)
+        1 for w in registry.get_all() if registry.is_online(w.client_id, threshold)
     )
 
     return web.json_response(

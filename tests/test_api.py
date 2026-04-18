@@ -74,7 +74,15 @@ class _App:
 
 async def _make_app(tmp_path: Path, token: str = TOKEN) -> _App:
     """Spin up a fresh isolated test app for a single test."""
-    cfg = AppConfig(token=token, config_dir=str(tmp_path))
+    cfg = AppConfig(config_dir=str(tmp_path))
+    # SP.8: token comes from Settings now. Wire the scratch store.
+    import settings as _s
+    _s._reset_for_tests()
+    _s.init_settings(
+        settings_path=tmp_path / "settings.json",
+        options_path=tmp_path / "options.json",
+    )
+    await _s.update_settings({"server_token": token})
     queue = JobQueue(queue_file=tmp_path / "queue.json")
     registry = WorkerRegistry()
 

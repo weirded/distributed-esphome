@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
+import { Copy, Eye, EyeOff } from 'lucide-react';
 
 import { getSettings, updateSettings, type AppSettings } from '@/api/client';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -113,6 +115,56 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
                   max={3650}
                   value={data.job_log_retention_days}
                   onCommit={v => patch({ job_log_retention_days: v })}
+                />
+              </Section>
+              <Section title="Authentication">
+                <SecretRow
+                  label="Server token"
+                  help="Shared bearer token for build workers and direct-port API access. Changing this will disconnect existing workers until their SERVER_TOKEN env var is updated."
+                  value={data.server_token}
+                  onCommit={v => patch({ server_token: v })}
+                />
+                <BoolRow
+                  label="Require Home Assistant auth on direct port"
+                  help="When on, requests to port 8765 (outside the Home Assistant Ingress tunnel) must carry a valid HA bearer token or this server token. Leave on unless you have a specific reason to allow anonymous direct-port access."
+                  value={data.require_ha_auth}
+                  onChange={v => patch({ require_ha_auth: v })}
+                />
+              </Section>
+              <Section title="Timeouts">
+                <IntRow
+                  label="Job timeout (seconds)"
+                  help="Maximum wall-clock seconds a single compile job may run before the server marks it timed-out."
+                  min={60}
+                  max={14400}
+                  value={data.job_timeout}
+                  onCommit={v => patch({ job_timeout: v })}
+                />
+                <IntRow
+                  label="OTA timeout (seconds)"
+                  help="Maximum seconds for the OTA upload to a device after a successful compile."
+                  min={15}
+                  max={1800}
+                  value={data.ota_timeout}
+                  onCommit={v => patch({ ota_timeout: v })}
+                />
+                <IntRow
+                  label="Worker offline threshold (seconds)"
+                  help="Seconds without a worker heartbeat before it's flagged offline in the Workers tab."
+                  min={15}
+                  max={3600}
+                  value={data.worker_offline_threshold}
+                  onCommit={v => patch({ worker_offline_threshold: v })}
+                />
+              </Section>
+              <Section title="Polling">
+                <IntRow
+                  label="Device poll interval (seconds)"
+                  help="How often the server polls each ESPHome device over its native API to refresh online status and running-firmware version."
+                  min={10}
+                  max={3600}
+                  value={data.device_poll_interval}
+                  onCommit={v => patch({ device_poll_interval: v })}
                 />
               </Section>
               <Section title="About">
@@ -265,6 +317,95 @@ function IntRow(props: Omit<NumericRowProps, 'step' | 'integer'>) {
 
 function NumRow(props: Omit<NumericRowProps, 'integer'>) {
   return <NumericRow {...props} integer={false} />;
+}
+
+function SecretRow({
+  label,
+  help,
+  value,
+  onCommit,
+}: {
+  label: string;
+  help?: string;
+  value: string;
+  onCommit: (v: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState<string>(value);
+  const [focused, setFocused] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(value);
+  }, [value, focused]);
+
+  async function commit() {
+    setFocused(false);
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      toast.error(`${label} must not be empty`);
+      setDraft(value);
+      return;
+    }
+    if (/\s/.test(trimmed)) {
+      toast.error(`${label} must not contain whitespace`);
+      setDraft(value);
+      return;
+    }
+    if (trimmed === value) return;
+    const ok = await onCommit(trimmed);
+    if (!ok) setDraft(value);
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success('Token copied');
+    } catch {
+      toast.error('Clipboard copy failed');
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <label className="text-sm text-[var(--text)]">{label}</label>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          type={revealed ? 'text' : 'password'}
+          className="flex-1 font-mono text-xs"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={revealed ? 'Hide token' : 'Show token'}
+          title={revealed ? 'Hide token' : 'Show token'}
+          onClick={() => setRevealed(r => !r)}
+        >
+          {revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Copy token"
+          title="Copy token"
+          onClick={copy}
+        >
+          <Copy className="size-4" />
+        </Button>
+      </div>
+      {help && <p className="text-xs text-[var(--text-muted)]">{help}</p>}
+    </div>
+  );
 }
 
 function StringRow({

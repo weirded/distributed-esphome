@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import tempfile
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -43,11 +44,34 @@ OPTIONS_FILE = Path("/data/options.json")
 # is absent, their values are seeded from options.json if present. After
 # that, settings.json is the only source of truth — edits in Supervisor
 # Configuration have no effect and are documented in DOCS.md.
+#
+# Note: the `token` in options.json maps to ``server_token`` here — the
+# field got renamed during the move to make it obviously distinct from
+# any per-worker / per-user token in the codebase.
 IMPORT_FROM_OPTIONS: tuple[str, ...] = (
     "job_history_retention_days",
     "firmware_cache_max_gb",
     "job_log_retention_days",
+    "job_timeout",
+    "ota_timeout",
+    "worker_offline_threshold",
+    "device_poll_interval",
+    "require_ha_auth",
 )
+
+# Legacy token file, written by pre-1.6 releases when no explicit token
+# was set in options.json. We honour it once at import time so existing
+# installs don't suddenly issue a fresh token on upgrade.
+LEGACY_TOKEN_FILE = Path("/data/auth_token")
+
+# Supervisor HTTP endpoint that returns this add-on's user-stored
+# options. Critical for the SP.8 migration path: when config.yaml
+# drops its ``options:``/``schema:`` blocks, Supervisor stops
+# projecting user options into /data/options.json (leaving it as
+# ``{}``) — but the user's values are still stored in Supervisor's
+# own state. We query this endpoint so first-boot imports still see
+# the full pre-strip option set and don't rotate tokens on upgrade.
+SUPERVISOR_INFO_URL = "http://supervisor/addons/self/info"
 
 
 class SettingsValidationError(ValueError):
@@ -76,6 +100,21 @@ class AppSettings:
     job_history_retention_days: int = 365
     firmware_cache_max_gb: float = 2.0
     job_log_retention_days: int = 30
+    # --- Fields migrated from Supervisor options.json in 1.6 (SP.8) ---
+    # Shared Bearer token used by workers and (when require_ha_auth is
+    # true) direct-port UI access. Empty = auto-generate on first boot.
+    server_token: str = ""
+    # Seconds a compile job may run before the server marks it timed-out.
+    job_timeout: int = 600
+    # Seconds for OTA upload after compile.
+    ota_timeout: int = 120
+    # Seconds without a worker heartbeat before it's flagged offline.
+    worker_offline_threshold: int = 30
+    # Seconds between ESPHome-device API polls (online / running version).
+    device_poll_interval: int = 60
+    # When true, direct-port access on :8765 (outside Ingress) requires
+    # a valid HA Bearer or the add-on's own server token.
+    require_ha_auth: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +176,25 @@ def _validate_str(max_len: int) -> Callable[[Any, str], str]:
     return _v
 
 
+def _validate_token(value: Any, field: str) -> str:
+    """Tokens: non-empty string, loose length cap, no whitespace.
+
+    Empty server token is permitted only through the import/auto-generate
+    path, not via a direct PATCH — users shouldn't be able to blank the
+    token out from the drawer.
+    """
+    if not isinstance(value, str):
+        raise SettingsValidationError(field, f"expected string, got {type(value).__name__}")
+    stripped = value.strip()
+    if not stripped:
+        raise SettingsValidationError(field, "must not be empty")
+    if len(stripped) > 512:
+        raise SettingsValidationError(field, "must be 512 characters or fewer")
+    if any(c.isspace() for c in stripped):
+        raise SettingsValidationError(field, "must not contain whitespace")
+    return stripped
+
+
 # Per-field validators. Any PATCH that names a key not listed here is
 # rejected — keeps typos from silently disappearing.
 _VALIDATORS: dict[str, Callable[[Any, str], Any]] = {
@@ -153,6 +211,21 @@ _VALIDATORS: dict[str, Callable[[Any, str], Any]] = {
     "firmware_cache_max_gb": _validate_float_range(0.1, 1024.0),
     # 0 = unlimited; 3650 = 10y.
     "job_log_retention_days": _validate_int_range(0, 3650),
+    # --- SP.8 migrated fields ---
+    "server_token": _validate_token,
+    # Compile budget: 60s floor (something silly like 5s would time
+    # out every real build), 4h ceiling (a compile that long is stuck).
+    "job_timeout": _validate_int_range(60, 14400),
+    # OTA budget: 15s floor (WiFi handshake alone can take that),
+    # 30min ceiling.
+    "ota_timeout": _validate_int_range(15, 1800),
+    # Worker offline threshold: at least as long as a heartbeat
+    # interval (default 10s on the client) + one missed beat, so
+    # 15s floor. 1h ceiling — anything longer and the UI lies.
+    "worker_offline_threshold": _validate_int_range(15, 3600),
+    # Device poll: 10s floor (below that we hammer devices), 1h ceiling.
+    "device_poll_interval": _validate_int_range(10, 3600),
+    "require_ha_auth": _validate_bool,
 }
 
 
@@ -213,6 +286,41 @@ def _read_json(path: Path) -> dict[str, Any]:
     return {}
 
 
+def _read_supervisor_options() -> dict[str, Any]:
+    """Fetch this add-on's user-stored options from Supervisor.
+
+    Supervisor persists user options server-side even when the add-on's
+    config.yaml has no ``options:``/``schema:`` block (SP.8 state).
+    The values in ``/data/options.json`` are Supervisor's schema-driven
+    projection of those options — so stripping the schema empties the
+    in-container file, but the user's configured values are still
+    accessible via this HTTP endpoint.
+
+    Returns ``{}`` on any failure (missing ``SUPERVISOR_TOKEN`` env,
+    Supervisor unreachable, unexpected JSON shape). Silent outside the
+    HA add-on context — ideal for tests and bare ``python`` runs.
+    """
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        return {}
+    try:
+        req = urllib.request.Request(
+            SUPERVISOR_INFO_URL,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310 (Supervisor-local URL is trusted)
+            payload = json.loads(resp.read())
+        opts = payload.get("data", {}).get("options", {})
+        if isinstance(opts, dict):
+            return opts
+    except Exception:
+        logger.debug("Supervisor options probe failed; ignoring", exc_info=True)
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -241,6 +349,7 @@ def init_settings(
     if _settings_path.exists():
         _settings = _load_from_file()
         logger.info("Loaded settings from %s", _settings_path)
+        _settings = _ensure_server_token(_settings)
         return _settings
 
     # First boot: seed from options.json for migrated fields, keep dataclass
@@ -257,6 +366,74 @@ def init_settings(
             _settings_path,
         )
     return _settings
+
+
+def _ensure_server_token(s: AppSettings) -> AppSettings:
+    """If ``server_token`` came back empty, recover it from the pre-1.6
+    sources before falling back to auto-generation.
+
+    Critical for upgrade continuity: a 1.6.0-dev.N → dev.N+1 bump that
+    first introduces ``server_token`` would, without this chain, rotate
+    the token on every existing install (new auto-gen value, all
+    remote workers 401 until their SERVER_TOKEN env is updated). So
+    consult the same sources ``_seed_from_options`` uses, in the same
+    priority order, before minting a new token:
+
+    1. options.json[token] — set by the user on pre-1.6 installs
+    2. /data/auth_token — pre-1.6 auto-generated token file
+    3. ``secrets.token_hex(16)`` — truly fresh install, nothing to
+       inherit from
+
+    The recovered/generated value is persisted back so subsequent
+    loads don't repeat the rescue work.
+    """
+    if s.server_token and s.server_token.strip():
+        return s
+
+    recovered = _recover_legacy_token()
+    if recovered:
+        logger.info("Recovered server_token from legacy source; preserving worker auth continuity")
+        token = recovered
+    else:
+        logger.warning("server_token was empty and no legacy source found; generating a new one")
+        token = secrets.token_hex(16)
+
+    updated = AppSettings(**{**asdict(s), "server_token": token})
+    try:
+        _atomic_write(_settings_path, asdict(updated))
+    except OSError:
+        logger.exception("Failed to persist recovered/regenerated server_token")
+    return updated
+
+
+def _recover_legacy_token() -> str | None:
+    """Look up the pre-1.6 token, priority: Supervisor → options.json → auth_token.
+
+    Priority ordering matches the hass-4 incident investigation:
+    Supervisor's live record is authoritative (survives config.yaml
+    schema strips); ``/data/options.json`` is the on-disk mirror
+    (may be empty post-strip); ``/data/auth_token`` is the pre-1.6
+    auto-generated-token fallback kept for installs that never set a
+    user token.
+    """
+    sup = _read_supervisor_options()
+    tok = sup.get("token", "")
+    if isinstance(tok, str) and tok.strip():
+        return tok.strip()
+
+    options = _read_json(_options_path)
+    tok = options.get("token", "")
+    if isinstance(tok, str) and tok.strip():
+        return tok.strip()
+
+    if LEGACY_TOKEN_FILE.exists():
+        try:
+            legacy = LEGACY_TOKEN_FILE.read_text().strip()
+            if legacy:
+                return legacy
+        except OSError:
+            logger.exception("Failed to read %s", LEGACY_TOKEN_FILE)
+    return None
 
 
 def _load_from_file() -> AppSettings:
@@ -282,9 +459,27 @@ def _load_from_file() -> AppSettings:
 
 
 def _seed_from_options() -> AppSettings:
-    """Build initial AppSettings, pulling migrated fields from options.json."""
+    """Build initial AppSettings, pulling migrated fields from Supervisor.
+
+    On first boot we want the user's pre-1.6 option values carried over
+    intact. Supervisor's HTTP API is the authoritative source — it
+    sees everything the user configured in the Supervisor UI regardless
+    of the current config.yaml schema (hass-4 incident: stripping the
+    schema in SP.8 emptied /data/options.json server-side, so reading
+    only that file lost every option). We merge in this order, later
+    wins:
+
+    1. ``/data/options.json`` — legacy on-disk file (kept so installs
+       still work if Supervisor isn't reachable).
+    2. ``http://supervisor/addons/self/info`` — the live source of
+       truth for what the user actually has configured.
+
+    Token migration continues to use the legacy-recovery helper
+    (Supervisor API → options.json → /data/auth_token → auto-generate)
+    so dev-loop / non-Supervisor installs still work.
+    """
     defaults = AppSettings()
-    options = _read_json(_options_path)
+    options = {**_read_json(_options_path), **_read_supervisor_options()}
     kwargs: dict[str, Any] = asdict(defaults)
     imported: list[str] = []
     for key in IMPORT_FROM_OPTIONS:
@@ -293,9 +488,21 @@ def _seed_from_options() -> AppSettings:
                 kwargs[key] = _VALIDATORS[key](options[key], key)
                 imported.append(key)
             except SettingsValidationError as exc:
-                logger.warning("Could not import %s from %s: %s", key, _options_path, exc)
+                logger.warning("Could not import %s: %s", key, exc)
+
+    recovered = _recover_legacy_token()
+    if recovered:
+        kwargs["server_token"] = recovered
+        imported.append("server_token from legacy source")
+    else:
+        kwargs["server_token"] = secrets.token_hex(16)
+        logger.info(
+            "Generated new server token (no existing token found in options.json, Supervisor, or %s)",
+            LEGACY_TOKEN_FILE,
+        )
+
     if imported:
-        logger.info("Imported from %s: %s", _options_path, ", ".join(imported))
+        logger.info("Imported options (Supervisor + options.json): %s", ", ".join(imported))
     return AppSettings(**kwargs)
 
 
@@ -362,3 +569,17 @@ def _reset_for_tests() -> None:
     _lock = None
     _settings_path = SETTINGS_FILE
     _options_path = OPTIONS_FILE
+
+
+def _set_for_tests(**overrides: Any) -> None:
+    """Test-only: synchronously set fields on the singleton.
+
+    Most consumers read ``get_settings().xxx`` live; tests that need
+    specific values without the async ``update_settings`` overhead
+    (e.g. a sync test helper building an aiohttp app) can use this to
+    seed the singleton directly. Creates the singleton if absent.
+    """
+    global _settings
+    current = asdict(_settings) if _settings else asdict(AppSettings())
+    current.update(overrides)
+    _settings = AppSettings(**current)

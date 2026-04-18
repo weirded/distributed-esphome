@@ -29,6 +29,13 @@ def _job_id(target: str) -> str:
     return f"sched:{target}"
 
 
+def _job_timeout() -> int:
+    """SP.8: read the live job_timeout from Settings so drawer edits
+    propagate to scheduled fires without a restart."""
+    from settings import get_settings  # noqa: PLC0415
+    return get_settings().job_timeout
+
+
 async def _fire_recurring(target: str) -> None:
     """Callback: enqueue a compile+OTA job for a recurring schedule."""
     from scanner import read_device_meta, write_device_meta, get_esphome_version  # noqa: PLC0415
@@ -54,7 +61,7 @@ async def _fire_recurring(target: str) -> None:
         target=target,
         esphome_version=version,
         run_id=run_id,
-        timeout_seconds=cfg.job_timeout,
+        timeout_seconds=_job_timeout(),
         ota_address=ota_address,
     )
     if job is not None:
@@ -93,7 +100,7 @@ async def _fire_once(target: str) -> None:
         target=target,
         esphome_version=version,
         run_id=run_id,
-        timeout_seconds=cfg.job_timeout,
+        timeout_seconds=_job_timeout(),
         ota_address=ota_address,
     )
     if job is not None:

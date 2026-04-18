@@ -58,7 +58,6 @@ from typing import Any
 import aiohttp
 from aiohttp import web
 
-from app_config import AppConfig
 from constants import HA_SUPERVISOR_IP
 
 logger = logging.getLogger(__name__)
@@ -174,7 +173,11 @@ async def ha_auth_middleware(request: web.Request, handler):
     if not _is_protected_ui_path(path):
         return await handler(request)
 
-    cfg: AppConfig = request.app["config"]
+    # SP.8: token + require_ha_auth come from the Settings singleton
+    # (live-read), so Settings drawer flips propagate to the next
+    # request with no restart. AppConfig no longer carries these fields.
+    from settings import get_settings  # noqa: PLC0415
+    settings = get_settings()
 
     # Path 1: Supervisor peer trust. Requests arriving from
     # 172.30.32.2 are proxied by Supervisor's Ingress; HA already
@@ -201,7 +204,7 @@ async def ha_auth_middleware(request: web.Request, handler):
     # so granting system access to `/ui/api/*` doesn't widen the blast
     # radius. `ha_user.name` = "esphome_fleet_integration" so mutation
     # audit lines can distinguish system vs user actions (AU.4).
-    if bearer and cfg.token and bearer == cfg.token:
+    if bearer and settings.server_token and bearer == settings.server_token:
         request["ha_user"] = {
             "name": "esphome_fleet_integration",
             "id": None,
@@ -217,7 +220,7 @@ async def ha_auth_middleware(request: web.Request, handler):
             return await handler(request)
 
     # Path 4: no (valid) auth — gated by require_ha_auth.
-    if cfg.require_ha_auth:
+    if settings.require_ha_auth:
         logger.info(
             "401 on %s: require_ha_auth=true and no valid HA auth "
             "(peer_ip=%s, has_bearer=%s)",

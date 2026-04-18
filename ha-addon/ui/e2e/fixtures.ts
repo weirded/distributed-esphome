@@ -353,6 +353,13 @@ export async function mockApi(page: Page) {
     job_history_retention_days: 365,
     firmware_cache_max_gb: 2.0,
     job_log_retention_days: 30,
+    // SP.8 fields (formerly in Supervisor options.json).
+    server_token: 'test-token-abc',
+    job_timeout: 600,
+    ota_timeout: 120,
+    worker_offline_threshold: 30,
+    device_poll_interval: 60,
+    require_ha_auth: true,
   };
   await page.route('**/ui/api/settings', async (route) => {
     const method = route.request().method();

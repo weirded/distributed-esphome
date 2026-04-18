@@ -19,7 +19,12 @@ from main import auth_middleware
 
 def _make_app(token: str = "secret-token") -> web.Application:
     """Minimal aiohttp app with the real auth middleware and a few dummy routes."""
-    cfg = AppConfig(token=token)
+    cfg = AppConfig()
+    # SP.8: server token lives in Settings; the sync test helper pokes
+    # it onto the singleton directly.
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token=token)
 
     async def worker_route(request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
@@ -176,7 +181,10 @@ async def test_ingress_path_header_is_forwarded_to_handler():
         received_headers["x-ingress-path"] = request.headers.get("X-Ingress-Path", "")
         return web.json_response({"ok": True})
 
-    cfg = AppConfig(token="tok")
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token="tok")
+    cfg = AppConfig()
     app = web.Application(middlewares=[auth_middleware])
     app["config"] = cfg
     app.router.add_get("/ui/api/check", ui_route)
@@ -202,7 +210,10 @@ async def test_ingress_path_absent_means_header_missing():
         received_headers["x-ingress-path"] = request.headers.get("X-Ingress-Path", "MISSING")
         return web.json_response({"ok": True})
 
-    cfg = AppConfig(token="tok")
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token="tok")
+    cfg = AppConfig()
     app = web.Application(middlewares=[auth_middleware])
     app["config"] = cfg
     app.router.add_get("/ui/api/check", ui_route)

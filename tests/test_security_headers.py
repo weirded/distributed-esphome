@@ -25,7 +25,10 @@ _EXPECTED_HEADERS = {
 
 
 def _make_app() -> web.Application:
-    cfg = AppConfig(token="t")
+    cfg = AppConfig()
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token="t")
 
     async def ui_route(_request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
@@ -105,7 +108,10 @@ async def test_handler_set_header_is_not_clobbered():
     """If a downstream handler explicitly sets one of the security headers
     (e.g. a more restrictive CSP for a specific page), the middleware must
     leave it alone rather than overwriting."""
-    cfg = AppConfig(token="t")
+    cfg = AppConfig()
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token="t")
 
     async def custom_csp_route(_request: web.Request) -> web.Response:
         resp = web.json_response({"ok": True})

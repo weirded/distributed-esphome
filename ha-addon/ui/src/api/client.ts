@@ -167,6 +167,13 @@ export interface AppSettings {
   job_history_retention_days: number;
   firmware_cache_max_gb: number;
   job_log_retention_days: number;
+  // SP.8 — moved from Supervisor options.json in 1.6.
+  server_token: string;
+  job_timeout: number;
+  ota_timeout: number;
+  worker_offline_threshold: number;
+  device_poll_interval: number;
+  require_ha_auth: boolean;
 }
 
 export async function getSettings(): Promise<AppSettings> {

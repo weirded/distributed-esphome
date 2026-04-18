@@ -240,8 +240,9 @@ async def get_server_info(request: web.Request) -> web.Response:
         esphome_install_status = "failed"
     else:
         esphome_install_status = "installing"
+    from settings import get_settings as _gs  # noqa: PLC0415
     return web.json_response({
-        "token": cfg.token,
+        "token": _gs().server_token,
         "port": cfg.port,
         "server_ip": server_ip,
         "server_addresses": addrs,
@@ -814,12 +815,13 @@ async def _get_workers_response(request: web.Request) -> web.Response:
     """Return list of registered build workers with online status."""
     registry = request.app["registry"]
     queue = request.app["queue"]
-    cfg = _cfg(request)
+    from settings import get_settings as _gs  # noqa: PLC0415
+    threshold = _gs().worker_offline_threshold
 
     result = []
     for worker in registry.get_all():
         d = worker.to_dict()
-        d["online"] = registry.is_online(worker.client_id, cfg.worker_offline_threshold)
+        d["online"] = registry.is_online(worker.client_id, threshold)
         if d.get("current_job_id"):
             job = queue.get(d["current_job_id"])
             if job:
@@ -1452,11 +1454,12 @@ async def start_compile(request: web.Request) -> web.Response:
             if pinned:
                 effective_version = pinned
 
+        from settings import get_settings as _gs  # noqa: PLC0415
         job = await queue.enqueue(
             target=target,
             esphome_version=effective_version,
             run_id=run_id,
-            timeout_seconds=cfg.job_timeout,
+            timeout_seconds=_gs().job_timeout,
             download_only=download_only,
             ota_address=ota_addresses.get(target),
             pinned_client_id=pinned_client_id,
@@ -1822,12 +1825,12 @@ async def rename_target(request: web.Request) -> web.Response:
 
     queue = request.app["queue"]
     server_version = get_esphome_version()
-    cfg = _cfg(request)
+    from settings import get_settings as _gs  # noqa: PLC0415
     await queue.enqueue(
         target=new_filename,
         esphome_version=server_version,
         run_id=str(uuid.uuid4()),
-        timeout_seconds=cfg.job_timeout,
+        timeout_seconds=_gs().job_timeout,
         ota_address=old_device_addr,
     )
     logger.info("Enqueued compile+OTA for renamed device %s", new_filename)
@@ -2062,8 +2065,9 @@ async def retry_jobs(request: web.Request) -> web.Response:
             pinned = meta.get("pin_version")
             target_versions[job.target] = pinned if pinned else server_version
 
+    from settings import get_settings as _gs_retry  # noqa: PLC0415
     new_jobs = await queue.retry(
-        job_ids, server_version, str(uuid.uuid4()), cfg.job_timeout,
+        job_ids, server_version, str(uuid.uuid4()), _gs_retry().job_timeout,
         target_versions=target_versions,
     )
     return web.json_response({"retried": len(new_jobs)})
@@ -2072,9 +2076,9 @@ async def retry_jobs(request: web.Request) -> web.Response:
 async def _remove_worker_handler(request: web.Request, client_id: str) -> web.Response:
     """Remove an offline worker from the registry."""
     registry = request.app["registry"]
-    cfg = _cfg(request)
+    from settings import get_settings as _gs  # noqa: PLC0415
 
-    if registry.is_online(client_id, cfg.worker_offline_threshold):
+    if registry.is_online(client_id, _gs().worker_offline_threshold):
         return web.json_response({"error": "Cannot remove an online worker"}, status=409)
     if not registry.remove(client_id):
         return web.json_response({"error": "Unknown client_id"}, status=404)
