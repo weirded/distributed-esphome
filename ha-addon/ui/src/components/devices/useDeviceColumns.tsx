@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Calendar, Clock, ExternalLink, Pin } from 'lucide-react';
+import { Calendar, Clock, ExternalLink, GitBranch, Pin } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { AddressSource, Job, Target } from '../../types';
 import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../../utils';
@@ -42,6 +42,8 @@ interface Options {
   onUnpin: (target: string) => void;
   /** AV.6: open the per-file History panel from the row hamburger menu. */
   onOpenHistory: (target: string) => void;
+  /** Bug #16: open the manual-commit dialog for this target. */
+  onCommitChanges: (target: string) => void;
   /**
    * #2 followup to QS.16: per-row hamburger open state is owned by
    * DevicesTab (not Radix's internal state) so it survives row re-mounts
@@ -101,6 +103,7 @@ export function useDeviceColumns(options: Options) {
     onPin,
     onUnpin,
     onOpenHistory,
+    onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
   } = options;
@@ -154,6 +157,21 @@ export function useDeviceColumns(options: Options) {
                 <span title={`One-time schedule: ${t.schedule_once}`} className="ml-1 inline-flex align-text-bottom opacity-70">
                   <Calendar className="size-3" aria-label="One-time schedule" />
                 </span>
+              )}
+              {/* Bug #16: uncommitted-changes indicator. Clicking the
+                  pill opens the per-file History panel so the user
+                  can review the diff and commit from there. */}
+              {t.has_uncommitted_changes && (
+                <button
+                  type="button"
+                  className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-yellow-500/40 bg-yellow-500/15 px-1.5 py-0 text-[10px] text-yellow-300 hover:bg-yellow-500/25 cursor-pointer align-text-bottom"
+                  onClick={(e) => { e.stopPropagation(); onOpenHistory(t.target); }}
+                  title="This device's YAML has uncommitted changes. Click to open the history panel and commit them."
+                  aria-label="Uncommitted changes"
+                >
+                  <GitBranch className="size-3" aria-hidden />
+                  Uncommitted
+                </button>
               )}
             </span>
             <div className="device-filename">{stripYaml(t.target)}</div>
@@ -438,6 +456,7 @@ export function useDeviceColumns(options: Options) {
           onPin={onPin}
           onUnpin={onUnpin}
           onOpenHistory={onOpenHistory}
+          onCommitChanges={onCommitChanges}
           onMenuOpenChange={(o) => setMenuOpenTarget(o ? t.target : null)}
         />
       ),
@@ -456,6 +475,7 @@ export function useDeviceColumns(options: Options) {
     onPin,
     onUnpin,
     onOpenHistory,
+    onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
   ]);

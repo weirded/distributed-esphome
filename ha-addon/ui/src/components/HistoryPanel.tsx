@@ -22,6 +22,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 // AV.6: per-file history + diff panel. Opens as a drawer from the
 // Editor modal's toolbar or the Devices hamburger. Combines the history
@@ -38,12 +46,28 @@ interface HistoryPanelProps {
    * new on-disk content.
    */
   onFileChanged?: () => void;
+  /**
+   * AV.7: optional preset for the From/To pickers. Used by the Queue
+   * tab's "Diff since last compile" entry point to deep-link the
+   * panel with `from = job.config_hash` and `to = "Current"` (working
+   * tree) so the user lands directly on the right comparison. When
+   * omitted, the panel picks sensible defaults (parent of HEAD ↔
+   * Current).
+   */
+  initialFromHash?: string | null;
+  initialToHash?: string | null;
 }
 
 // Sentinel used in the From/To dropdowns to mean "current working tree".
 const WORKING_TREE = '__WORKING_TREE__';
 
-export function HistoryPanel({ filename, onOpenChange, onFileChanged }: HistoryPanelProps) {
+export function HistoryPanel({
+  filename,
+  onOpenChange,
+  onFileChanged,
+  initialFromHash,
+  initialToHash,
+}: HistoryPanelProps) {
   const open = filename !== null;
 
   // SWR: history + status are fetched while the drawer is open.
@@ -74,19 +98,66 @@ export function HistoryPanel({ filename, onOpenChange, onFileChanged }: HistoryP
   const [fromHash, setFromHash] = useState<string>('');
   const [toHash, setToHash] = useState<string>(WORKING_TREE);
 
+  // Bug 14: "older version always on the left" is a hard UX rule.
+  // Return 1 if `a` is newer than `b`, -1 if older, 0 if same.
+  // Uses the `entries` list (newest-first) to compare; the
+  // WORKING_TREE sentinel is treated as the newest of all.
+  function compareRecency(a: string, b: string): number {
+    if (a === b) return 0;
+    if (a === WORKING_TREE) return 1;
+    if (b === WORKING_TREE) return -1;
+    if (!entries) return 0;
+    const aIdx = entries.findIndex(e => e.hash === a);
+    const bIdx = entries.findIndex(e => e.hash === b);
+    if (aIdx < 0 && bIdx < 0) return 0;
+    if (aIdx < 0) return -1;
+    if (bIdx < 0) return 1;
+    // Lower index = newer (newest-first ordering).
+    return bIdx - aIdx;
+  }
+
+  // Normalise the pair so From is always older than To. Silent swap
+  // — the user picked two commits; we present them in the canonical
+  // older-on-left order so the diff reads as "what changed going
+  // from older → newer."
+  useEffect(() => {
+    if (!fromHash || !toHash) return;
+    if (compareRecency(fromHash, toHash) > 0) {
+      setFromHash(toHash);
+      setToHash(fromHash);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromHash, toHash, entries]);
+
   // Each time the history list shows up (or changes), pick a sensible
   // default: From = parent of HEAD (= entries[1]) or HEAD itself if
-  // only one commit exists; To = working tree.
+  // only one commit exists; To = working tree. AV.7 callers can
+  // override via initialFromHash / initialToHash props to deep-link
+  // to a specific comparison (e.g. "diff since last compile").
   useEffect(() => {
     if (!entries || entries.length === 0) {
-      setFromHash('');
-      setToHash(WORKING_TREE);
+      setFromHash(initialFromHash || '');
+      setToHash(initialToHash ?? WORKING_TREE);
       return;
     }
-    // Only reset when the user hasn't already made a non-default selection.
-    setFromHash(prev => prev && entries.some(e => e.hash === prev) ? prev : entries[0].hash);
-    setToHash(prev => (prev === WORKING_TREE || entries.some(e => e.hash === prev)) ? prev : WORKING_TREE);
-  }, [entries]);
+    // Initial-hash props win if the caller supplied them AND the hash
+    // is recognised in the current entries list (or the sentinel).
+    if (initialFromHash && entries.some(e => e.hash === initialFromHash)) {
+      setFromHash(initialFromHash);
+    } else {
+      setFromHash(prev => prev && entries.some(e => e.hash === prev) ? prev : entries[0].hash);
+    }
+    if (initialToHash === WORKING_TREE || initialToHash === null || initialToHash === undefined) {
+      setToHash(prev => (prev === WORKING_TREE || entries.some(e => e.hash === prev)) ? prev : WORKING_TREE);
+    } else if (entries.some(e => e.hash === initialToHash)) {
+      setToHash(initialToHash);
+    }
+  // We only want the preset to take effect when the drawer re-opens
+  // for a new (filename, initialFromHash, initialToHash) triple — not
+  // on every entries re-fetch, which would yank the user's manual
+  // selection back. Limit to the props explicitly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, filename, initialFromHash, initialToHash]);
 
   // Bug #10: side-by-side diff. Fetch the file's content at both
   // hashes separately (or the working tree for WORKING_TREE / unset)
@@ -109,13 +180,13 @@ export function HistoryPanel({ filename, onOpenChange, onFileChanged }: HistoryP
   // --- Actions ---
 
   const [busy, setBusy] = useState(false);
+  // Bug 15: Restore confirmation is a proper shadcn Dialog, not a
+  // native window.confirm (which looks like a Jetsons-era browser
+  // popup). Holds the entry under review; null = closed.
+  const [restoreCandidate, setRestoreCandidate] = useState<FileHistoryEntry | null>(null);
 
   async function handleRollback(entry: FileHistoryEntry) {
     if (!filename) return;
-    const msg = status?.has_uncommitted_changes
-      ? `Restore ${entry.short_hash}? Your uncommitted changes to ${filename} will be overwritten.`
-      : `Restore ${entry.short_hash}? This will create a new revert commit.`;
-    if (!window.confirm(msg)) return;
     setBusy(true);
     try {
       const result = await rollbackFile(filename, entry.hash);
@@ -297,13 +368,70 @@ export function HistoryPanel({ filename, onOpenChange, onFileChanged }: HistoryP
                 }}
                 onSetFrom={() => setFromHash(entry.hash)}
                 onSetTo={() => setToHash(entry.hash)}
-                onRestore={() => handleRollback(entry)}
+                onRestore={() => setRestoreCandidate(entry)}
                 disabled={busy}
               />
             ))}
           </div>
         </SheetBody>
       </SheetContent>
+
+      {/* Bug 15: Restore confirmation. Proper shadcn Dialog; no window.confirm. */}
+      <Dialog
+        open={restoreCandidate !== null}
+        onOpenChange={(open) => { if (!open) setRestoreCandidate(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Restore {restoreCandidate?.short_hash}?</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 py-3 text-sm text-[var(--text)]">
+            {status?.has_uncommitted_changes ? (
+              <>
+                <p>
+                  Your <strong>uncommitted changes</strong> to{' '}
+                  <code className="font-mono text-xs">{filename}</code> will be overwritten.
+                </p>
+                <p className="text-[var(--text-muted)] mt-2 text-xs">
+                  The file on disk will be replaced with its content at{' '}
+                  <code className="font-mono">{restoreCandidate?.short_hash}</code>.
+                  {' '}No new commit will be created (auto-commit is off).
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  This will replace the current content of{' '}
+                  <code className="font-mono text-xs">{filename}</code> with its version at{' '}
+                  <code className="font-mono">{restoreCandidate?.short_hash}</code>.
+                </p>
+                <p className="text-[var(--text-muted)] mt-2 text-xs">
+                  A new{' '}
+                  <code className="font-mono">revert: …</code>{' '}commit will be created
+                  so the rollback is itself recorded in history.
+                </p>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <DialogClose>
+              <Button variant="secondary" size="sm" disabled={busy}>Cancel</Button>
+            </DialogClose>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={async () => {
+                const entry = restoreCandidate;
+                setRestoreCandidate(null);
+                if (entry) await handleRollback(entry);
+              }}
+            >
+              Restore this version
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }

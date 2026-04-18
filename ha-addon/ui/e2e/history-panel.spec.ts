@@ -31,12 +31,6 @@ test('hamburger "View history…" opens the History panel', async ({ page }) => 
 });
 
 test('Restore button on a commit triggers a rollback', async ({ page }) => {
-  // Auto-accept the confirm() dialog deterministically by overriding
-  // window.confirm in the main browser world.
-  await page.addInitScript(() => {
-    window.confirm = () => true;
-  });
-
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
@@ -48,10 +42,12 @@ test('Restore button on a commit triggers a rollback', async ({ page }) => {
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText('fedcba9', { exact: true }).first()).toBeVisible();
 
-  // Click Restore on the first commit row and assert the success
-  // toast shows up — that's proof the rollback POST completed and
-  // the mock's response came back.
+  // Bug 15: Restore opens a proper shadcn Dialog, not window.confirm.
+  // Click the row-level Restore button, then confirm in the dialog.
   await drawer.getByRole('button', { name: /^Restore$/ }).first().click();
+  const confirmDialog = page.getByRole('dialog').filter({ hasText: /Restore fedcba9/ });
+  await expect(confirmDialog).toBeVisible();
+  await confirmDialog.getByRole('button', { name: /^Restore this version$/ }).click();
   await expect(page.getByText(/Restored cafeba5/)).toBeVisible({ timeout: 5000 });
 });
 

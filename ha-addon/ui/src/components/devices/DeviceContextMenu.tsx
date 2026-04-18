@@ -47,6 +47,9 @@ interface Props {
   onUnpin: (target: string) => void;
   /** AV.6: open the per-file History panel. */
   onOpenHistory: (target: string) => void;
+  /** Bug #16: open the manual-commit dialog for this target. Only
+   * offered when the target has uncommitted changes. */
+  onCommitChanges: (target: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -61,6 +64,7 @@ function DeviceContextMenuImpl({
   onPin,
   onUnpin,
   onOpenHistory,
+  onCommitChanges,
   open,
   onOpenChange,
 }: Props) {
@@ -146,6 +150,12 @@ function DeviceContextMenuImpl({
           <DropdownMenuItem onClick={() => onOpenHistory(t.target)}>
             View history…
           </DropdownMenuItem>
+          {/* Bug #16: only shown when the target has uncommitted changes. */}
+          {t.has_uncommitted_changes && (
+            <DropdownMenuItem onClick={() => onCommitChanges(t.target)}>
+              Commit changes…
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             variant="destructive"
             onClick={() => onDelete(t.target)}
@@ -173,7 +183,9 @@ function propsEqual(prev: Props, next: Props): boolean {
     a.target === b.target &&
     a.has_restart_button === b.has_restart_button &&
     a.has_api_key === b.has_api_key &&
-    a.pinned_version === b.pinned_version
+    a.pinned_version === b.pinned_version &&
+    // Bug #16: dirty state controls the "Commit changes…" item's visibility.
+    a.has_uncommitted_changes === b.has_uncommitted_changes
   );
 }
 

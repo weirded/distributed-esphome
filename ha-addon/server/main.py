@@ -716,12 +716,14 @@ async def _old_schedule_checker(app: web.Application) -> None:
                                 version = meta.get("pin_version") or get_esphome_version()
                                 run_id = str(_uuid.uuid4())
                                 from settings import get_settings  # noqa: PLC0415
+                                from git_versioning import get_head  # noqa: PLC0415
                                 job = await queue.enqueue(
                                     target=target,
                                     esphome_version=version,
                                     run_id=run_id,
                                     timeout_seconds=get_settings().job_timeout,
                                     ota_address=_get_ota_address(target),
+                                    config_hash=get_head(Path(cfg.config_dir)),
                                 )
                                 if job is not None:
                                     job.scheduled = True
@@ -778,6 +780,7 @@ async def _old_schedule_checker(app: web.Application) -> None:
                         continue
 
                     from settings import get_settings  # noqa: PLC0415
+                    from git_versioning import get_head  # noqa: PLC0415
                     version = meta.get("pin_version") or get_esphome_version()
                     run_id = str(_uuid.uuid4())
                     job = await queue.enqueue(
@@ -786,6 +789,7 @@ async def _old_schedule_checker(app: web.Application) -> None:
                         run_id=run_id,
                         timeout_seconds=get_settings().job_timeout,
                         ota_address=_get_ota_address(target),
+                        config_hash=get_head(Path(cfg.config_dir)),
                     )
                     if job is not None:
                         job.scheduled = True

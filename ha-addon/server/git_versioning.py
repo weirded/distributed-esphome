@@ -526,15 +526,28 @@ def file_history(
 
 
 def _parse_log_with_numstat(raw: str, marker: str, field_sep: str) -> list[dict[str, object]]:
-    """Parse ``git log --numstat`` output with a per-commit header marker."""
+    """Parse ``git log --numstat`` output with a per-commit header marker.
+
+    Accumulates each commit's numstat rows into local ints, then writes
+    the final counts into the entry dict in one go — avoids a dict read
+    on every stat line (which mypy then flags as `call-overload` on
+    ``int(current["lines_added"])`` since the dict is ``dict[str, object]``).
+    """
     entries: list[dict[str, object]] = []
     current: dict[str, object] | None = None
+    added_total = 0
+    removed_total = 0
     for line in raw.splitlines():
         if not line.strip():
             continue
         if line.startswith(marker + field_sep):
+            # Flush the previous commit's accumulated counts.
             if current is not None:
+                current["lines_added"] = added_total
+                current["lines_removed"] = removed_total
                 entries.append(current)
+            added_total = 0
+            removed_total = 0
             fields = line.split(field_sep)
             if len(fields) < 7:
                 current = None
@@ -561,18 +574,20 @@ def _parse_log_with_numstat(raw: str, marker: str, field_sep: str) -> list[dict[
         parts = line.split("\t")
         if len(parts) < 3:
             continue
-        added, removed = parts[0], parts[1]
-        if added != "-":
+        added_str, removed_str = parts[0], parts[1]
+        if added_str != "-":
             try:
-                current["lines_added"] = int(current["lines_added"]) + int(added)  # type: ignore[arg-type]
+                added_total += int(added_str)
             except ValueError:
                 pass
-        if removed != "-":
+        if removed_str != "-":
             try:
-                current["lines_removed"] = int(current["lines_removed"]) + int(removed)  # type: ignore[arg-type]
+                removed_total += int(removed_str)
             except ValueError:
                 pass
     if current is not None:
+        current["lines_added"] = added_total
+        current["lines_removed"] = removed_total
         entries.append(current)
     return entries
 
@@ -769,6 +784,45 @@ def file_content_at(config_dir: Path, relpath: str, hash: str | None) -> str | N
         # viewer renders it as "added" / "deleted" cleanly.
         return ""
     return result.stdout
+
+
+def dirty_paths(config_dir: Path) -> set[str]:
+    """Bug #16: return every relpath under *config_dir* that has
+    uncommitted changes. One ``git status --porcelain`` call covers the
+    whole repo — cheap enough to run per `/ui/api/targets` refresh
+    (1 Hz SWR poll), much more efficient than N per-file probes.
+
+    Returns an empty set on non-repo dirs, empty-repo state, or git
+    errors. Rename lines (``R foo -> bar``) contribute BOTH the old
+    and new path so either side shows as dirty until committed.
+    Untracked files (``??`` status) are included so a newly-created
+    target before its first commit shows up.
+    """
+    config_dir = Path(config_dir)
+    if not _is_git_repo(config_dir):
+        return set()
+
+    try:
+        result = _run(["git", "status", "--porcelain"], cwd=config_dir, check=False)
+    except Exception:
+        logger.exception("git status failed in %s", config_dir)
+        return set()
+    if result.returncode != 0:
+        return set()
+
+    dirty: set[str] = set()
+    for line in result.stdout.splitlines():
+        # Porcelain v1 format: XY<space><path>[ -> <path2>]
+        if len(line) < 4:
+            continue
+        rest = line[3:]
+        if " -> " in rest:
+            old, new = rest.split(" -> ", 1)
+            dirty.add(old.strip())
+            dirty.add(new.strip())
+        else:
+            dirty.add(rest.strip())
+    return dirty
 
 
 def file_status(config_dir: Path, relpath: str) -> dict[str, object]:

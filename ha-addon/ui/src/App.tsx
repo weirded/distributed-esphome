@@ -5,6 +5,7 @@ import {
   cancelJobs,
   cleanWorkerCache,
   clearQueue,
+  commitFile,
   compile,
   deleteTarget,
 
@@ -47,6 +48,16 @@ import { SettingsDrawer } from './components/SettingsDrawer';
 import { HistoryPanel } from './components/HistoryPanel';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog';
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, Job, Target, Worker } from './types';
 import { stripYaml } from './utils';
@@ -141,6 +152,14 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // AV.6: per-file history panel. `null` = closed; otherwise the filename.
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
+  // AV.7: optional "from" hash preset passed to HistoryPanel so the
+  // "Diff since compile" flow lands on (from=job.config_hash, to=Current).
+  const [historyFromHash, setHistoryFromHash] = useState<string | null>(null);
+  // Bug #16: manual-commit dialog state. When set, the Commit-Changes
+  // dialog renders with this target prefilled.
+  const [commitDialogTarget, setCommitDialogTarget] = useState<string | null>(null);
+  const [commitDialogMessage, setCommitDialogMessage] = useState('');
+  const [commitDialogBusy, setCommitDialogBusy] = useState(false);
   // QS.6: SWR's default compare (stable-hash) already prevents re-renders
   // when polled data is structurally unchanged. The custom JSON.stringify
   // compare we used to have was strictly worse — O(n) serialization of the
@@ -709,6 +728,7 @@ export default function App() {
             onNewDevice={() => setNewDeviceModal({ mode: 'new' })}
             onDuplicate={(sourceTarget) => setNewDeviceModal({ mode: 'duplicate', sourceTarget })}
             onOpenHistory={(target) => setHistoryTarget(target)}
+            onCommitChanges={(target) => { setCommitDialogMessage(''); setCommitDialogTarget(target); }}
             onRefresh={() => mutateDevices()}
           />
         )}
@@ -790,6 +810,11 @@ export default function App() {
         onClose={() => setLogJobId(null)}
         onRetry={handleRetryJobs}
         onEdit={(target) => { setLogJobId(null); setEditorTarget(target); }}
+        onOpenHistoryDiff={(target, fromHash) => {
+          setLogJobId(null);
+          setHistoryFromHash(fromHash);
+          setHistoryTarget(target);
+        }}
         stacked={!!editorTarget}
       />
 
@@ -850,11 +875,73 @@ export default function App() {
       <SettingsDrawer open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* AV.6: per-file History + diff panel. Same Sheet pattern —
-          mounted once, internal SWR gates on `filename !== null`. */}
+          mounted once, internal SWR gates on `filename !== null`.
+          AV.7 passes an initialFromHash when opened via "Diff since
+          compile" so the panel lands on the right comparison. */}
       <HistoryPanel
         filename={historyTarget}
-        onOpenChange={(open) => { if (!open) setHistoryTarget(null); }}
+        initialFromHash={historyFromHash}
+        onOpenChange={(open) => { if (!open) { setHistoryTarget(null); setHistoryFromHash(null); } }}
       />
+
+      {/* Bug #16: manual-commit Dialog for the Devices-row "Commit
+          changes…" hamburger action. Optional message defaults to the
+          server-side "save: <file> (manual)" marker when left blank. */}
+      <Dialog
+        open={commitDialogTarget !== null}
+        onOpenChange={(open) => { if (!open) setCommitDialogTarget(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Commit changes to {commitDialogTarget}</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 py-3 flex flex-col gap-2 text-sm text-[var(--text)]">
+            <p className="text-xs text-[var(--text-muted)]">
+              Optional commit message. Leave blank to use the default{' '}
+              <code className="font-mono text-xs">save: {commitDialogTarget} (manual)</code>.
+            </p>
+            <Input
+              type="text"
+              className="font-mono text-xs"
+              placeholder={`save: ${commitDialogTarget} (manual)`}
+              value={commitDialogMessage}
+              onChange={e => setCommitDialogMessage(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <DialogClose>
+              <Button variant="secondary" size="sm" disabled={commitDialogBusy}>Cancel</Button>
+            </DialogClose>
+            <Button
+              size="sm"
+              disabled={commitDialogBusy || commitDialogTarget === null}
+              onClick={async () => {
+                const target = commitDialogTarget;
+                if (!target) return;
+                setCommitDialogBusy(true);
+                try {
+                  const result = await commitFile(target, commitDialogMessage.trim() || undefined);
+                  if (result.committed) {
+                    addToast(`Committed ${result.short_hash}`, 'success');
+                  } else {
+                    addToast('Nothing to commit', 'info');
+                  }
+                  setCommitDialogTarget(null);
+                  setCommitDialogMessage('');
+                  await mutateDevices();
+                } catch (err) {
+                  addToast('Commit failed: ' + (err as Error).message, 'error');
+                } finally {
+                  setCommitDialogBusy(false);
+                }
+              }}
+            >
+              Commit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* #22: Unified Upgrade modal — handles both immediate upgrades and scheduling */}
       {upgradeModalTarget && (() => {

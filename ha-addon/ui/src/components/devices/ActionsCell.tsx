@@ -39,6 +39,8 @@ interface Props {
   onUnpin: (target: string) => void;
   /** AV.6: open the per-file History panel. */
   onOpenHistory: (target: string) => void;
+  /** Bug #16: open the manual-commit dialog for this target. */
+  onCommitChanges: (target: string) => void;
   onMenuOpenChange: (open: boolean) => void;
 }
 
@@ -56,6 +58,7 @@ function ActionsCellImpl({
   onPin,
   onUnpin,
   onOpenHistory,
+  onCommitChanges,
   onMenuOpenChange,
 }: Props) {
   const upgradeVariant = t.needs_update ? 'success' : 'secondary';
@@ -84,6 +87,7 @@ function ActionsCellImpl({
         onPin={onPin}
         onUnpin={onUnpin}
         onOpenHistory={onOpenHistory}
+        onCommitChanges={onCommitChanges}
         open={menuOpen}
         onOpenChange={onMenuOpenChange}
       />
@@ -101,7 +105,8 @@ function propsEqual(prev: Props, next: Props): boolean {
     a.needs_update === b.needs_update &&
     a.has_restart_button === b.has_restart_button &&
     a.has_api_key === b.has_api_key &&
-    a.pinned_version === b.pinned_version
+    a.pinned_version === b.pinned_version &&
+    a.has_uncommitted_changes === b.has_uncommitted_changes
   );
 }
 

@@ -139,6 +139,9 @@ export const queue: Job[] = [
     created_at: new Date(Date.now() - 600_000).toISOString(),
     duration_seconds: 120,
     ota_result: 'success',
+    // AV.7: config_hash stamped at enqueue time so the log modal can
+    // offer a "Diff since compile" shortcut into the History panel.
+    config_hash: 'fedcba9876543210fedcba9876543210fedcba98',
   },
   {
     id: 'job-002',

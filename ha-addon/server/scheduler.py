@@ -57,12 +57,15 @@ async def _fire_recurring(target: str) -> None:
                 break
 
     run_id = str(uuid.uuid4())
+    from git_versioning import get_head  # noqa: PLC0415
+    from pathlib import Path as _P  # noqa: PLC0415
     job = await queue.enqueue(
         target=target,
         esphome_version=version,
         run_id=run_id,
         timeout_seconds=_job_timeout(),
         ota_address=ota_address,
+        config_hash=get_head(_P(cfg.config_dir)),
     )
     if job is not None:
         job.scheduled = True
@@ -96,12 +99,15 @@ async def _fire_once(target: str) -> None:
                 break
 
     run_id = str(uuid.uuid4())
+    from git_versioning import get_head  # noqa: PLC0415
+    from pathlib import Path as _P  # noqa: PLC0415
     job = await queue.enqueue(
         target=target,
         esphome_version=version,
         run_id=run_id,
         timeout_seconds=_job_timeout(),
         ota_address=ota_address,
+        config_hash=get_head(_P(cfg.config_dir)),
     )
     if job is not None:
         job.scheduled = True

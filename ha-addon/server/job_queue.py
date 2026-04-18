@@ -84,6 +84,14 @@ class Job:
     # #92: when scheduled, distinguish recurring (cron) from one-time fires so
     # the Queue tab can show which kind triggered the job. None for user-triggered.
     schedule_kind: Optional[str] = None  # "recurring" | "once" | None
+    # AV.7: HEAD of /config/esphome/ at enqueue time. `None` when the
+    # config dir isn't a git repo (hasn't been through AV.1 auto-init)
+    # or git_versioning is unavailable. When auto-commit is on, this is
+    # the committed state that got compiled. When auto-commit is off,
+    # it's whatever the user last committed — the "Diff since last
+    # compile" view pairs it with the current working tree to capture
+    # both committed AND uncommitted changes since the compile.
+    config_hash: Optional[str] = None
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -113,6 +121,7 @@ class Job:
             "is_followup": self.is_followup,
             "scheduled": self.scheduled,
             "schedule_kind": self.schedule_kind,
+            "config_hash": self.config_hash,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -148,6 +157,7 @@ class Job:
             is_followup=d.get("is_followup", False),
             scheduled=d.get("scheduled", False),
             schedule_kind=d.get("schedule_kind"),
+            config_hash=d.get("config_hash"),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -283,6 +293,7 @@ class JobQueue:
         download_only: bool = False,
         ota_address: Optional[str] = None,
         pinned_client_id: Optional[str] = None,
+        config_hash: Optional[str] = None,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -379,6 +390,7 @@ class JobQueue:
                 ota_address=ota_address,
                 pinned_client_id=pinned_client_id,
                 is_followup=is_followup,
+                config_hash=config_hash,
             )
             self._jobs[job.id] = job
             self._persist()
@@ -624,6 +636,7 @@ class JobQueue:
         run_id: str,
         timeout_seconds: int,
         target_versions: dict[str, str] | None = None,
+        config_hash: Optional[str] = None,
     ) -> list["Job"]:
         """Re-enqueue failed/timed_out/cancelled/success jobs as new PENDING jobs.
 
@@ -668,6 +681,7 @@ class JobQueue:
                     timeout_seconds=timeout_seconds,
                     ota_only=is_ota_failed,
                     pinned_client_id=pin_to,
+                    config_hash=config_hash,
                 )
                 self._jobs[new_job.id] = new_job
                 new_jobs.append(new_job)

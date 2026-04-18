@@ -104,6 +104,11 @@ export interface Target {
   schedule_tz?: string | null;
   /** Comma-separated tags from YAML metadata comment. */
   tags?: string | null;
+  /** Bug #16: True when the target's YAML has uncommitted changes
+   * relative to the git repo under /config/esphome/. Drives the
+   * row-level indicator + the conditional "Commit changes…"
+   * hamburger item. False when the dir isn't a git repo. */
+  has_uncommitted_changes?: boolean;
   /**
    * Chip MAC address, lower-case colon-separated (e.g.
    * ``"aa:bb:cc:dd:ee:ff"``). Sourced from mDNS TXT or native API
@@ -225,6 +230,10 @@ export interface Job {
   scheduled?: boolean;
   /** When `scheduled`, distinguishes recurring (cron) from one-time fires (#92). */
   schedule_kind?: 'recurring' | 'once' | null;
+  /** AV.7: git HEAD hash of /config/esphome/ at enqueue time. Used by
+   * the "Diff since compile" button in the log modal to open the
+   * History panel pre-set to (from=this_hash, to=working tree). */
+  config_hash?: string | null;
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;

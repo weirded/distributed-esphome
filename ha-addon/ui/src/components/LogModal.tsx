@@ -21,10 +21,17 @@ interface Props {
   onClose: () => void;
   onRetry: (ids: string[]) => void;
   onEdit?: (target: string) => void;
+  /**
+   * AV.7: open the HistoryPanel deep-linked to "diff since this compile"
+   * — from = job.config_hash, to = working tree. When omitted, the
+   * button isn't rendered (e.g. job pre-dates AV.7 and has no
+   * config_hash, or the parent didn't wire the history panel).
+   */
+  onOpenHistoryDiff?: (target: string, fromHash: string) => void;
   stacked?: boolean;
 }
 
-export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stacked }: Props) {
+export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOpenHistoryDiff, stacked }: Props) {
   const isOpen = jobId !== null;
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerMounted, setContainerMounted] = useState(false);
@@ -247,6 +254,16 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, stac
               title="Open config in editor"
             >
               Edit
+            </Button>
+          )}
+          {onOpenHistoryDiff && job && !job.validate_only && job.config_hash && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => { onOpenHistoryDiff(job.target, job.config_hash!); onClose(); }}
+              title="Show what's changed in the config since this compile started"
+            >
+              Diff since compile
             </Button>
           )}
           <Button variant="secondary" size="sm" onClick={handleCopy} title="Copy log to clipboard">

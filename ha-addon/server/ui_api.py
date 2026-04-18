@@ -557,6 +557,13 @@ async def get_targets(request: web.Request) -> web.Response:
 
     targets = scan_configs(cfg.config_dir)
 
+    # Bug #16: per-target uncommitted-changes flag. One bulk
+    # `git status --porcelain` for the whole repo, then O(1) lookup
+    # per target in the loop below. Empty set when the dir isn't a
+    # git repo — the flag defaults to False in that case.
+    from git_versioning import dirty_paths  # noqa: PLC0415
+    dirty_set = dirty_paths(Path(cfg.config_dir))
+
     # Build device lookup by compile_target filename
     devices_by_target: dict[str, Device] = {}
     if device_poller:
@@ -657,6 +664,10 @@ async def get_targets(request: web.Request) -> web.Response:
             # legacy schedules; the scheduler interprets those as UTC.
             "schedule_tz": meta.get("schedule_tz"),
             "tags": meta.get("tags"),
+            # Bug #16: dirty-state flag for the Devices-tab indicator.
+            # True when the target's YAML has uncommitted changes
+            # relative to its latest git commit.
+            "has_uncommitted_changes": target in dirty_set,
         }
         result.append(entry)
 
@@ -1657,6 +1668,7 @@ async def start_compile(request: web.Request) -> web.Response:
                 effective_version = pinned
 
         from settings import get_settings as _gs  # noqa: PLC0415
+        from git_versioning import get_head as _get_head  # noqa: PLC0415
         job = await queue.enqueue(
             target=target,
             esphome_version=effective_version,
@@ -1665,6 +1677,7 @@ async def start_compile(request: web.Request) -> web.Response:
             download_only=download_only,
             ota_address=ota_addresses.get(target),
             pinned_client_id=pinned_client_id,
+            config_hash=_get_head(Path(cfg.config_dir)),
         )
         if job is not None:
             enqueued += 1
@@ -2032,12 +2045,14 @@ async def rename_target(request: web.Request) -> web.Response:
     queue = request.app["queue"]
     server_version = get_esphome_version()
     from settings import get_settings as _gs  # noqa: PLC0415
+    from git_versioning import get_head as _get_head  # noqa: PLC0415
     await queue.enqueue(
         target=new_filename,
         esphome_version=server_version,
         run_id=str(uuid.uuid4()),
         timeout_seconds=_gs().job_timeout,
         ota_address=old_device_addr,
+        config_hash=_get_head(config_dir),
     )
     logger.info("Enqueued compile+OTA for renamed device %s", new_filename)
 
@@ -2279,9 +2294,11 @@ async def retry_jobs(request: web.Request) -> web.Response:
             target_versions[job.target] = pinned if pinned else server_version
 
     from settings import get_settings as _gs_retry  # noqa: PLC0415
+    from git_versioning import get_head as _get_head_retry  # noqa: PLC0415
     new_jobs = await queue.retry(
         job_ids, server_version, str(uuid.uuid4()), _gs_retry().job_timeout,
         target_versions=target_versions,
+        config_hash=_get_head_retry(Path(cfg.config_dir)),
     )
     return web.json_response({"retried": len(new_jobs)})
 
