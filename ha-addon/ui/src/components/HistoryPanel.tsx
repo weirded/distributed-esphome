@@ -250,6 +250,12 @@ export function HistoryPanel({ filename, onOpenChange, onFileChanged }: HistoryP
                 options={{
                   readOnly: true,
                   renderSideBySide: true,
+                  // Bug #12: Monaco's default is to collapse to inline/unified
+                  // view when the diff editor's width is below ~900px,
+                  // regardless of `renderSideBySide`. The history drawer is
+                  // ~870px of pane-width, so we have to opt out of the
+                  // auto-inline fallback to actually see two panes.
+                  useInlineViewWhenSpaceIsLimited: false,
                   renderOverviewRuler: false,
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
