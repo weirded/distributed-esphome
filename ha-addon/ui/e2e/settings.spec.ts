@@ -62,3 +62,49 @@ test('numeric retention field rejects out-of-range input', async ({ page }) => {
   // Value reverts to the previous committed value.
   await expect(retention).toHaveValue('365');
 });
+
+test('git author name and email persist after edit + reopen', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+
+  // Scope to the drawer so the Devices tab's "Search devices…" input
+  // doesn't match. `[data-slot="sheet-content"]` is the drawer root.
+  const drawer = page.locator('[data-slot="sheet-content"]');
+  const nameInput = drawer.locator('input[type="text"]').first();
+  const emailInput = drawer.locator('input[type="text"]').nth(1);
+  await expect(nameInput).toHaveValue('HA User');
+  await expect(emailInput).toHaveValue('ha@distributed-esphome.local');
+
+  // Change both and capture the PATCH for the name field.
+  const patchRequest = page.waitForRequest(req =>
+    req.url().includes('/ui/api/settings') && req.method() === 'PATCH',
+  );
+  await nameInput.fill('Stefan Zier');
+  await nameInput.blur();
+  const req = await patchRequest;
+  expect(JSON.parse(req.postData() ?? '{}')).toEqual({ git_author_name: 'Stefan Zier' });
+  await expect(page.getByText('Setting saved').first()).toBeVisible();
+
+  await emailInput.fill('stefan@zier.com');
+  await emailInput.blur();
+
+  // Reopen drawer and confirm persistence.
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const reopenedDrawer = page.locator('[data-slot="sheet-content"]');
+  await expect(reopenedDrawer.locator('input[type="text"]').first()).toHaveValue('Stefan Zier');
+  await expect(reopenedDrawer.locator('input[type="text"]').nth(1)).toHaveValue('stefan@zier.com');
+});
+
+test('empty git author name is rejected client-side', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings' }).click();
+
+  const drawer = page.locator('[data-slot="sheet-content"]');
+  const nameInput = drawer.locator('input[type="text"]').first();
+  await nameInput.fill('   ');  // whitespace only
+  await nameInput.blur();
+
+  await expect(page.getByText(/must not be empty/i)).toBeVisible();
+  await expect(nameInput).toHaveValue('HA User');  // reverted
+});

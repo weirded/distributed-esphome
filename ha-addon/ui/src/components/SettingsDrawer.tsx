@@ -71,6 +71,20 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
                   value={data.auto_commit_on_save}
                   onChange={v => patch({ auto_commit_on_save: v })}
                 />
+                <StringRow
+                  label="Commit author name"
+                  help="Used on Fleet-created commits. If /config/esphome/ has its own user.name set (per-repo, global, or system), that wins."
+                  maxLength={100}
+                  value={data.git_author_name}
+                  onCommit={v => patch({ git_author_name: v })}
+                />
+                <StringRow
+                  label="Commit author email"
+                  help="Paired with the name above. Free-form — no format validation."
+                  maxLength={256}
+                  value={data.git_author_email}
+                  onCommit={v => patch({ git_author_email: v })}
+                />
               </Section>
               <Section title="Job history">
                 <IntRow
@@ -251,4 +265,63 @@ function IntRow(props: Omit<NumericRowProps, 'step' | 'integer'>) {
 
 function NumRow(props: Omit<NumericRowProps, 'integer'>) {
   return <NumericRow {...props} integer={false} />;
+}
+
+function StringRow({
+  label,
+  help,
+  value,
+  maxLength,
+  onCommit,
+}: {
+  label: string;
+  help?: string;
+  value: string;
+  maxLength: number;
+  onCommit: (v: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState<string>(value);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(value);
+  }, [value, focused]);
+
+  async function commit() {
+    setFocused(false);
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      toast.error(`${label} must not be empty`);
+      setDraft(value);
+      return;
+    }
+    if (trimmed.length > maxLength) {
+      toast.error(`${label} must be ${maxLength} characters or fewer`);
+      setDraft(value);
+      return;
+    }
+    if (trimmed === value) return;
+    const ok = await onCommit(trimmed);
+    if (!ok) setDraft(value);
+  }
+
+  return (
+    <Row
+      label={label}
+      help={help}
+      control={
+        <Input
+          type="text"
+          className="w-56"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
+      }
+    />
+  );
 }

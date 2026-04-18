@@ -25,14 +25,30 @@ import settings as settings_mod
 
 
 @pytest.fixture(autouse=True)
-def _reset_modules(tmp_path: Path):
-    """Clean module state + wire settings to a scratch file per test."""
+def _reset_modules(tmp_path: Path, monkeypatch):
+    """Clean module state + wire settings to a scratch file per test.
+
+    We also scrub the git identity env so the developer's ambient
+    ``~/.gitconfig`` doesn't leak into ``_has_user_identity`` probes —
+    on CI / hass-4 there's no global config anyway, and that's the
+    behaviour these tests care about.
+    """
     gv._reset_for_tests()
     settings_mod._reset_for_tests()
     settings_mod.init_settings(
         settings_path=tmp_path / "settings.json",
         options_path=tmp_path / "options.json",
     )
+    for var in (
+        "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(fake_home / ".gitconfig-nonexistent"))
     yield
     gv._reset_for_tests()
     settings_mod._reset_for_tests()
@@ -240,7 +256,7 @@ async def test_commit_file_respects_preexisting_user_identity(tmp_path: Path):
 
 
 async def test_commit_file_uses_fleet_identity_on_fresh_init(tmp_path: Path):
-    """Fresh Fleet-init repo still shows 'HA User' as the commit author."""
+    """Fresh Fleet-init repo uses Settings-driven identity for commits."""
     d = _make_config_dir(tmp_path)
     gv.init_repo(d)
 
@@ -260,64 +276,114 @@ async def test_commit_file_uses_fleet_identity_on_fresh_init(tmp_path: Path):
         text=True,
         check=True,
     )
+    # Default AppSettings values land here since no PATCH has been made.
     assert result.stdout.strip() == "HA User <ha@distributed-esphome.local>"
 
 
-def test_init_repo_installs_identity_fallback_on_bare_preexisting(tmp_path: Path, monkeypatch):
-    """Pre-existing repo with NO user identity configured anywhere.
+async def test_commit_file_identity_follows_settings_change(tmp_path: Path):
+    """Live-effect: change git_author_name/email in Settings, next commit uses it.
 
-    Without a fallback, every subsequent auto-commit would fail with
-    *'Please tell me who you are'*. We install the Fleet identity as a
-    per-repo fallback only when no identity can be resolved.
+    This is the whole point of making the identity configurable —
+    Stefan opens the Settings drawer on hass-4, changes to his own
+    name + email, and the very next Fleet commit shows him as the
+    author without any restart.
     """
-    # Scrub any host-level git identity so `git var GIT_AUTHOR_IDENT`
-    # genuinely fails inside the test.
-    for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "fake-home" / ".gitconfig-nonexistent"))
-
     d = _make_config_dir(tmp_path)
-    subprocess.run(["git", "init", "-b", "main"], cwd=str(d), check=True, capture_output=True)
-    # Deliberately do NOT set user.name / user.email.
-
     gv.init_repo(d)
 
-    # After init, the repo should have Fleet identity set locally as
-    # the fallback — so commits won't error.
-    name = subprocess.run(
-        ["git", "config", "user.name"],
-        cwd=str(d),
-        capture_output=True,
-        text=True,
-    )
-    email = subprocess.run(
-        ["git", "config", "user.email"],
-        cwd=str(d),
-        capture_output=True,
-        text=True,
-    )
-    assert name.stdout.strip() == gv.GIT_AUTHOR_NAME
-    assert email.stdout.strip() == gv.GIT_AUTHOR_EMAIL
+    await settings_mod.update_settings({
+        "git_author_name": "Stefan Zier",
+        "git_author_email": "stefan@zier.com",
+    })
 
+    old = gv.DEBOUNCE_SECONDS
+    gv.DEBOUNCE_SECONDS = 0.05
+    try:
+        (d / "living-room.yaml").write_text("edited after settings change\n")
+        await gv.commit_file(d, "living-room.yaml", "save")
+        await gv.drain_pending_commits()
+    finally:
+        gv.DEBOUNCE_SECONDS = old
 
-def test_init_repo_does_not_override_existing_identity(tmp_path: Path):
-    d = _make_config_dir(tmp_path)
-    subprocess.run(["git", "init", "-b", "main"], cwd=str(d), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Stefan Zier"], cwd=str(d), check=True)
-    subprocess.run(["git", "config", "user.email", "stefan@zier.com"], cwd=str(d), check=True)
-
-    gv.init_repo(d)
-
-    name = subprocess.run(
-        ["git", "config", "user.name"],
+    result = subprocess.run(
+        ["git", "log", "--format=%an <%ae>", "-1"],
         cwd=str(d),
         capture_output=True,
         text=True,
         check=True,
     )
-    assert name.stdout.strip() == "Stefan Zier"
+    assert result.stdout.strip() == "Stefan Zier <stefan@zier.com>"
+
+
+async def test_commit_file_repo_identity_still_wins_over_settings(tmp_path: Path):
+    """If the repo has its own user.name/email, Settings values are ignored."""
+    d = _make_config_dir(tmp_path)
+    subprocess.run(["git", "init", "-b", "main"], cwd=str(d), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Repo Owner"], cwd=str(d), check=True)
+    subprocess.run(["git", "config", "user.email", "owner@example.com"], cwd=str(d), check=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(d), check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=str(d),
+        check=True,
+        capture_output=True,
+    )
+
+    # Even with Settings pointing at a Fleet identity, the repo's own
+    # config should take precedence.
+    await settings_mod.update_settings({
+        "git_author_name": "Should Not Appear",
+        "git_author_email": "should-not-appear@nope.test",
+    })
+
+    gv.init_repo(d)
+
+    old = gv.DEBOUNCE_SECONDS
+    gv.DEBOUNCE_SECONDS = 0.05
+    try:
+        (d / "living-room.yaml").write_text("edited\n")
+        await gv.commit_file(d, "living-room.yaml", "save")
+        await gv.drain_pending_commits()
+    finally:
+        gv.DEBOUNCE_SECONDS = old
+
+    result = subprocess.run(
+        ["git", "log", "--format=%an <%ae>", "-1"],
+        cwd=str(d),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == "Repo Owner <owner@example.com>"
+
+
+def test_init_repo_does_not_write_identity_into_repo_config(tmp_path: Path):
+    """Fresh init no longer writes user.name/email to .git/config.
+
+    Identity is injected at commit time via ``-c`` overrides, so the
+    repo-local config stays pristine — a user who later runs
+    ``git config user.name Stefan`` in /config/esphome takes over
+    cleanly without having to unset our value first.
+    """
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+
+    name = subprocess.run(
+        ["git", "config", "--local", "--get", "user.name"],
+        cwd=str(d),
+        capture_output=True,
+        text=True,
+    )
+    email = subprocess.run(
+        ["git", "config", "--local", "--get", "user.email"],
+        cwd=str(d),
+        capture_output=True,
+        text=True,
+    )
+    # `git config --local --get` returns exit code 1 when the key
+    # isn't set; stdout is empty either way.
+    assert name.stdout.strip() == ""
+    assert email.stdout.strip() == ""
 
 
 async def test_commit_file_debounces_coalesces_rapid_calls(tmp_path: Path):

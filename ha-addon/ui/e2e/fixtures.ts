@@ -348,6 +348,8 @@ export async function mockApi(page: Page) {
   // virtue of mockApi running once per beforeEach.
   const settingsState: Record<string, unknown> = {
     auto_commit_on_save: true,
+    git_author_name: 'HA User',
+    git_author_email: 'ha@distributed-esphome.local',
     job_history_retention_days: 365,
     firmware_cache_max_gb: 2.0,
     job_log_retention_days: 30,

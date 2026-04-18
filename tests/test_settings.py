@@ -49,9 +49,41 @@ def _reset():
 def test_dataclass_defaults_match_spec():
     s = AppSettings()
     assert s.auto_commit_on_save is True
+    assert s.git_author_name == "HA User"
+    assert s.git_author_email == "ha@distributed-esphome.local"
     assert s.job_history_retention_days == 365
     assert s.firmware_cache_max_gb == 2.0
     assert s.job_log_retention_days == 30
+
+
+async def test_update_settings_accepts_git_author(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    updated = await update_settings({
+        "git_author_name": "Stefan Zier",
+        "git_author_email": "stefan@zier.com",
+    })
+    assert updated.git_author_name == "Stefan Zier"
+    assert updated.git_author_email == "stefan@zier.com"
+
+
+async def test_update_settings_trims_git_author_whitespace(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    updated = await update_settings({"git_author_name": "  Stefan Zier  "})
+    assert updated.git_author_name == "Stefan Zier"
+
+
+async def test_update_settings_rejects_empty_git_author_name(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    with pytest.raises(SettingsValidationError) as exc:
+        await update_settings({"git_author_name": "   "})
+    assert exc.value.field == "git_author_name"
+
+
+async def test_update_settings_rejects_overlong_git_author_email(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    with pytest.raises(SettingsValidationError) as exc:
+        await update_settings({"git_author_email": "a" * 500 + "@x.com"})
+    assert exc.value.field == "git_author_email"
 
 
 def test_init_creates_settings_file_when_absent(tmp_path: Path):
@@ -64,6 +96,8 @@ def test_init_creates_settings_file_when_absent(tmp_path: Path):
     on_disk = json.loads(settings_file.read_text())
     assert on_disk == {
         "auto_commit_on_save": True,
+        "git_author_name": "HA User",
+        "git_author_email": "ha@distributed-esphome.local",
         "job_history_retention_days": 365,
         "firmware_cache_max_gb": 2.0,
         "job_log_retention_days": 30,
@@ -307,6 +341,8 @@ def test_settings_as_dict_round_trips():
         out = settings_as_dict()
     assert out == {
         "auto_commit_on_save": False,
+        "git_author_name": "HA User",
+        "git_author_email": "ha@distributed-esphome.local",
         "job_history_retention_days": 365,
         "firmware_cache_max_gb": 2.0,
         "job_log_retention_days": 30,

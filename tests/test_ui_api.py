@@ -992,6 +992,8 @@ async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_i
         data = await resp.json()
         assert data == {
             "auto_commit_on_save": True,
+            "git_author_name": "HA User",
+            "git_author_email": "ha@distributed-esphome.local",
             "job_history_retention_days": 365,
             "firmware_cache_max_gb": 2.0,
             "job_log_retention_days": 30,

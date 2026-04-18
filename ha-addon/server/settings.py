@@ -67,6 +67,12 @@ class AppSettings:
     """User-facing settings editable at runtime via ``/ui/api/settings``."""
 
     auto_commit_on_save: bool = True
+    # Author used on Fleet-originated auto-commits (AV.2). Only applied
+    # when the repo itself has no ``user.name``/``user.email`` configured
+    # at any level (repo-local, global, system) — a user with their own
+    # repo-local identity keeps it. See git_versioning.py.
+    git_author_name: str = "HA User"
+    git_author_email: str = "ha@distributed-esphome.local"
     job_history_retention_days: int = 365
     firmware_cache_max_gb: float = 2.0
     job_log_retention_days: int = 30
@@ -117,10 +123,30 @@ def _validate_float_range(lo: float, hi: float) -> Callable[[Any, str], float]:
     return _v
 
 
+def _validate_str(max_len: int) -> Callable[[Any, str], str]:
+    def _v(value: Any, field: str) -> str:
+        if not isinstance(value, str):
+            raise SettingsValidationError(field, f"expected string, got {type(value).__name__}")
+        stripped = value.strip()
+        if not stripped:
+            raise SettingsValidationError(field, "must not be empty")
+        if len(stripped) > max_len:
+            raise SettingsValidationError(field, f"must be {max_len} characters or fewer")
+        return stripped
+
+    return _v
+
+
 # Per-field validators. Any PATCH that names a key not listed here is
 # rejected — keeps typos from silently disappearing.
 _VALIDATORS: dict[str, Callable[[Any, str], Any]] = {
     "auto_commit_on_save": _validate_bool,
+    # Git author. Don't validate email format — git itself accepts
+    # arbitrary strings (e.g. "ha@distributed-esphome.local" isn't a
+    # routable email), so requiring an RFC-shaped address would reject
+    # legitimate values.
+    "git_author_name": _validate_str(100),
+    "git_author_email": _validate_str(256),
     # 0 = unlimited is explicitly allowed (matches JH.3 spec). 3650 = 10y.
     "job_history_retention_days": _validate_int_range(0, 3650),
     # Hard floor at 0.1 GB so a typo ("0") doesn't nuke cached firmware.

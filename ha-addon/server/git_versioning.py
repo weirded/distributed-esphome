@@ -28,8 +28,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-GIT_AUTHOR_NAME = "HA User"
-GIT_AUTHOR_EMAIL = "ha@distributed-esphome.local"
+# Hard-coded fallback used ONLY if the settings module hasn't been
+# initialised (test harnesses) and the repo has no configured identity.
+# The user-facing defaults live in settings.AppSettings so they're
+# editable in the Settings drawer; this constant just exists to keep
+# git_versioning importable without a live settings singleton.
+_FALLBACK_AUTHOR_NAME = "HA User"
+_FALLBACK_AUTHOR_EMAIL = "ha@distributed-esphome.local"
 
 # .gitignore entries that should always exist on an ESPHome config dir —
 # secrets shouldn't end up in commits, and the ESPHome build cache is
@@ -38,6 +43,41 @@ GITIGNORE_ENTRIES: tuple[str, ...] = ("secrets.yaml", ".esphome/")
 
 # 2-second debounce window for auto-commits (per path).
 DEBOUNCE_SECONDS = 2.0
+
+
+def _settings_identity() -> tuple[str, str]:
+    """Return the (name, email) from Settings, with a defensive fallback.
+
+    Kept wrapped so git_versioning doesn't crash if called before
+    settings have been initialised (e.g. during early startup or in a
+    test that imports git_versioning without running init_settings).
+    """
+    try:
+        from settings import get_settings  # noqa: PLC0415
+
+        s = get_settings()
+        return (s.git_author_name, s.git_author_email)
+    except Exception:
+        return (_FALLBACK_AUTHOR_NAME, _FALLBACK_AUTHOR_EMAIL)
+
+
+def _has_user_identity(config_dir: Path) -> bool:
+    """True if the repo can resolve both ``user.name`` and ``user.email``.
+
+    Checks the effective value (repo-local → global → system). Modern
+    git will *synthesize* an identity from OS gecos + hostname when
+    nothing is explicitly configured — but that path triggers a
+    "configured automatically" warning on every commit, which we
+    don't want. So we only treat explicitly-configured identities as
+    "present"; a synthesized one means we should inject our fallback.
+    """
+    try:
+        name = _run(["git", "config", "--get", "user.name"], cwd=config_dir, check=False)
+        email = _run(["git", "config", "--get", "user.email"], cwd=config_dir, check=False)
+    except Exception:
+        logger.exception("git config probe failed in %s", config_dir)
+        return False
+    return bool(name.stdout.strip() and email.stdout.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -91,10 +131,9 @@ def init_repo(config_dir: Path) -> None:
         if _is_git_repo(config_dir):
             logger.info("%s is already a git repo; skipping auto-init", config_dir)
             # Do NOT touch the user's curated .gitignore on a pre-existing
-            # repo — Pat-with-git owns that file. We only ensure there's
-            # a usable commit identity so auto-commits don't throw the
-            # "please tell me who you are" warning on every write.
-            _ensure_identity_fallback(config_dir)
+            # repo — Pat-with-git owns that file. Identity is handled at
+            # commit time (see ``_identity_override_args``) so we don't
+            # need to write to .git/config here either.
             return
 
         # Fresh init. `-b main` sets the default branch deterministically
@@ -102,14 +141,23 @@ def init_repo(config_dir: Path) -> None:
         _run(["git", "init", "-b", "main"], cwd=config_dir)
         _ensure_gitignore(config_dir)
 
-        # Per-repo user.name / user.email so we don't need a global git
-        # config baked into the container image.
-        _run(["git", "config", "user.name", GIT_AUTHOR_NAME], cwd=config_dir)
-        _run(["git", "config", "user.email", GIT_AUTHOR_EMAIL], cwd=config_dir)
-
+        # Initial commit. Use ``-c user.name/email`` derived from
+        # Settings so the author reflects whatever the user has
+        # configured in the drawer (default: ``HA User``). A later
+        # change to the Settings values won't retroactively rewrite
+        # history — but every subsequent commit picks up the new
+        # value via the same override path.
         _run(["git", "add", "-A"], cwd=config_dir)
+        name, email = _settings_identity()
         result = _run(
-            ["git", "commit", "-m", "Initial commit by distributed-esphome", "--allow-empty"],
+            [
+                "git",
+                "-c", f"user.name={name}",
+                "-c", f"user.email={email}",
+                "commit",
+                "-m", "Initial commit by distributed-esphome",
+                "--allow-empty",
+            ],
             cwd=config_dir,
             check=False,
         )
@@ -128,36 +176,19 @@ def init_repo(config_dir: Path) -> None:
         logger.exception("Unexpected failure during git auto-init of %s", config_dir)
 
 
-def _ensure_identity_fallback(config_dir: Path) -> None:
-    """Set a Fleet identity only if the repo has nothing explicitly configured.
+def _identity_override_args(config_dir: Path) -> list[str]:
+    """Build ``-c user.name=... -c user.email=...`` args when needed.
 
-    Respects the user's own ``user.name``/``user.email`` — whether set
-    per-repo, per-user, or system-wide. Only installs the Fleet default
-    when both are genuinely unset anywhere. Modern git (2.30+) happily
-    synthesizes an identity from the OS ``/etc/passwd`` gecos + hostname
-    but prints a noisy *"configured automatically"* warning on every
-    commit — that's the case we want to short-circuit on pre-existing
-    repos where nobody's told git who to be.
+    Returns an empty list if the repo already has ``user.name`` and
+    ``user.email`` configured — in that case we respect the user's own
+    identity. Returns the override args derived from Settings if the
+    repo has nothing configured; the Settings values (editable in the
+    drawer) become the Fleet identity for this commit.
     """
-    try:
-        name = _run(["git", "config", "--get", "user.name"], cwd=config_dir, check=False)
-        email = _run(["git", "config", "--get", "user.email"], cwd=config_dir, check=False)
-    except Exception:
-        logger.exception("git config probe failed in %s", config_dir)
-        return
-
-    if name.stdout.strip() and email.stdout.strip():
-        return
-
-    logger.info(
-        "%s has no git identity configured; setting Fleet fallback so auto-commits work",
-        config_dir,
-    )
-    try:
-        _run(["git", "config", "user.name", GIT_AUTHOR_NAME], cwd=config_dir)
-        _run(["git", "config", "user.email", GIT_AUTHOR_EMAIL], cwd=config_dir)
-    except Exception:
-        logger.exception("Failed to set fallback git identity in %s", config_dir)
+    if _has_user_identity(config_dir):
+        return []
+    name, email = _settings_identity()
+    return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
 
 def _gitignore_equivalents(entry: str) -> set[str]:
@@ -338,14 +369,15 @@ def _do_commit(config_dir: Path, relpath: str, action: str) -> None:
             logger.warning("git add failed for %s: %s", relpath, (add.stderr or add.stdout).strip())
             return
 
-        # Don't override ``user.name``/``user.email`` on the commit —
-        # we respect whatever the repo (or user, or system) has
-        # configured. On a fresh Fleet-init repo we set ``HA User`` at
-        # init time, so that's the default for new installs. On a
-        # pre-existing user repo, the user's own identity is preserved.
+        # Inject Settings-driven identity only if the repo has nothing
+        # configured. Live-read at commit time — editing
+        # git_author_name/email in the Settings drawer takes effect on
+        # the very next auto-commit, no restart.
+        override_args = _identity_override_args(config_dir)
         result = _run(
             [
                 "git",
+                *override_args,
                 "commit",
                 "-m", f"{action}: {relpath}",
                 "--", relpath,

@@ -162,6 +162,8 @@ export async function getServerInfo(): Promise<ServerInfo> {
 // — update this interface in the same commit.
 export interface AppSettings {
   auto_commit_on_save: boolean;
+  git_author_name: string;
+  git_author_email: string;
   job_history_retention_days: number;
   firmware_cache_max_gb: number;
   job_log_retention_days: number;
