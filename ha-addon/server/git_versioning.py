@@ -116,10 +116,21 @@ def _is_git_repo(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def init_repo(config_dir: Path) -> None:
+def init_repo(config_dir: Path) -> bool:
     """Initialize *config_dir* as a git repo if it isn't one already.
 
-    Idempotent. On a pre-existing repo we only append missing
+    Returns:
+        True  — we initialised a fresh repo (Fleet owns it).
+        False — the directory was already a git repo (user owns it),
+                or initialisation failed / was skipped.
+
+    The return value is used by :func:`settings.init_settings` to pick
+    a sensible ``auto_commit_on_save`` default on first boot: fresh
+    install → auto-commit on (Pat-no-git case); pre-existing repo →
+    auto-commit off so Fleet doesn't spray ``save: foo.yaml`` commits
+    into the user's curated log (Pat-with-git case).
+
+    On a pre-existing repo we only append missing
     :data:`GITIGNORE_ENTRIES` and set a fallback user identity (so
     commits don't fail on a bare repo with no author configured) —
     the user's own config is never overridden.
@@ -127,7 +138,7 @@ def init_repo(config_dir: Path) -> None:
     config_dir = Path(config_dir)
     if not config_dir.is_dir():
         logger.warning("config_dir %s does not exist; skipping git auto-init", config_dir)
-        return
+        return False
 
     try:
         if _is_git_repo(config_dir):
@@ -136,7 +147,7 @@ def init_repo(config_dir: Path) -> None:
             # repo — Pat-with-git owns that file. Identity is handled at
             # commit time (see ``_identity_override_args``) so we don't
             # need to write to .git/config here either.
-            return
+            return False
 
         # Fresh init. `-b main` sets the default branch deterministically
         # so we don't depend on the host git's init.defaultBranch config.
@@ -170,12 +181,14 @@ def init_repo(config_dir: Path) -> None:
                 "git init succeeded but initial commit failed in %s: %s",
                 config_dir, (result.stderr or result.stdout).strip(),
             )
+        return True
     except FileNotFoundError:
         logger.exception("git binary not found on PATH; auto-versioning disabled")
     except subprocess.TimeoutExpired:
         logger.exception("git operation timed out during init of %s", config_dir)
     except Exception:
         logger.exception("Unexpected failure during git auto-init of %s", config_dir)
+    return False
 
 
 def _identity_override_args(config_dir: Path) -> list[str]:
@@ -769,7 +782,11 @@ def file_content_at(config_dir: Path, relpath: str, hash: str | None) -> str | N
     if not _is_git_repo(config_dir):
         return None
     if not (4 <= len(hash) <= 40 and all(c in "0123456789abcdef" for c in hash.lower())):
-        logger.warning("Rejected content-at request with malformed hash: %r", hash)
+        # Bug #15 (reopened): drop from WARNING to DEBUG. The 400
+        # response the handler returns is evidence enough; WARNING
+        # turns a client-side bug into log noise that operators can't
+        # act on.
+        logger.debug("Rejected content-at request with malformed hash: %r", hash)
         return None
 
     try:

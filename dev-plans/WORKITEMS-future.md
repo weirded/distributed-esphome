@@ -4,20 +4,6 @@ Items with less certainty on scope or priority. Will be shaped into a release wh
 
 Section order here is not a priority signal.
 
-## File Tree Editor
-
-Browse and edit any file in the ESPHome config directory, including subdirectories. VS Code-style file tree sidebar in the editor modal.
-
-- [ ] **FT.1 `GET /ui/api/files`** — recursive directory listing, returns flat `[{path, size, binary}]`
-- [ ] **FT.2 `GET /ui/api/files/{path:.+}`** — read file by relative path (path traversal prevention)
-- [ ] **FT.3 `POST /ui/api/files/{path:.+}`** — write file (invalidates config cache for .yaml)
-- [ ] **FT.4 Install `@headless-tree/core` + `@headless-tree/react`** — headless tree library
-- [ ] **FT.5 `FileTree.tsx` component** — flat list → tree, expand/collapse, active highlight, binary grayed out
-- [ ] **FT.6 Sidebar layout** — editor body flex row: `[file tree 240px] | [monaco flex-1]`, sidebar toggle
-- [ ] **FT.7 File switching** — dirty check → load/save, language detection by extension
-- [ ] **FT.8 Conditional buttons** — Save & Upgrade/Validate/Rename only for entry-point YAML; includes get Save only
-- [ ] **FT.9 API functions** — `listFiles()`, `readFile()`, `writeFile()` in client.ts
-
 ## GitHub Sync (optional remote)
 
 Connect the local git repo to a GitHub (or any git remote) for backup and team collaboration. Private repos work identically to public. Pairs naturally with 1.6's auto-versioning (AV.*) — once every save is a git commit, pushing upstream is the obvious next step.

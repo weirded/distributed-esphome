@@ -279,6 +279,29 @@ export function QueueTab({
       },
       sortingFn: 'alphanumeric',
     }),
+    // Bug 18: surface the git hash the config was at when this job
+    // was enqueued (AV.7's config_hash). Short hash rendered in a
+    // muted mono font; hover shows the full SHA. Dash for jobs
+    // that predate AV.7 or were enqueued while /config/esphome/
+    // wasn't a git repo.
+    columnHelper.accessor(row => row.config_hash || '', {
+      id: 'config_hash',
+      header: ({ column }) => <SortHeader label="Config" column={column} />,
+      cell: ({ row: { original: job } }) => {
+        if (!job.config_hash) {
+          return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
+        }
+        return (
+          <code
+            className="font-mono text-[11px] text-[var(--text-muted)]"
+            title={`Config git HEAD at compile time: ${job.config_hash}`}
+          >
+            {job.config_hash.slice(0, 7)}
+          </code>
+        );
+      },
+      sortingFn: 'alphanumeric',
+    }),
     // #21/#92 + UX.5: triggered-by column — recurring schedule, one-time, or
     // manual. Recurring/once rows look up the parent target's cron / one-time
     // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.

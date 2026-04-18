@@ -871,8 +871,13 @@ export default function App() {
 
       {/* SP.4: Settings drawer — always mounted so the Sheet component
           can animate its own open/close; internal SWR fetch is gated
-          on the `open` prop so closed state is zero network traffic. */}
-      <SettingsDrawer open={settingsOpen} onOpenChange={setSettingsOpen} />
+          on the `open` prop so closed state is zero network traffic.
+          Bug #17: dirtyTargets drives the toggle-off confirmation. */}
+      <SettingsDrawer
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        dirtyTargets={targets.filter(t => t.has_uncommitted_changes).map(t => t.target)}
+      />
 
       {/* AV.6: per-file History + diff panel. Same Sheet pattern —
           mounted once, internal SWR gates on `filename !== null`.

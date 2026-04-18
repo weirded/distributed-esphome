@@ -3,8 +3,16 @@ import useSWR from 'swr';
 import { toast } from 'sonner';
 import { Copy, Eye, EyeOff } from 'lucide-react';
 
-import { getSettings, updateSettings, type AppSettings } from '@/api/client';
+import { commitFile, getSettings, updateSettings, type AppSettings } from '@/api/client';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -26,16 +34,39 @@ import {
 interface SettingsDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Bug #17: list of filenames that currently have uncommitted
+   * changes. When the user flips auto-commit from on → off with
+   * any dirty targets in this list, we show a confirmation dialog
+   * offering to commit them first. Empty array when everything's
+   * clean or the repo isn't a git repo at all. */
+  dirtyTargets?: string[];
 }
 
-export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: SettingsDrawerProps) {
   const { data, error, isLoading, mutate } = useSWR<AppSettings>(
     open ? 'settings' : null,
     getSettings,
     { revalidateOnFocus: false },
   );
 
+  // Bug #17: auto-commit-toggle-off confirmation state. `true` when
+  // the Dialog is open; a pending-promise handle lets us resolve the
+  // user's choice inside the patch() flow.
+  const [turnOffOpen, setTurnOffOpen] = useState(false);
+  const [turnOffBusy, setTurnOffBusy] = useState(false);
+
   async function patch(partial: Partial<AppSettings>): Promise<boolean> {
+    // Bug #17: intercept the auto-commit flip-to-off when there are
+    // uncommitted changes. Instead of patching straight away, we open
+    // the confirmation dialog; its buttons will finish the PATCH.
+    if (
+      partial.auto_commit_on_save === false
+      && data?.auto_commit_on_save === true
+      && dirtyTargets.length > 0
+    ) {
+      setTurnOffOpen(true);
+      return false;
+    }
     try {
       const updated = await updateSettings(partial);
       await mutate(updated, false);
@@ -46,6 +77,13 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
       await mutate();
       return false;
     }
+  }
+
+  async function patchRaw(partial: Partial<AppSettings>): Promise<void> {
+    // Bypass the dirty-check — used by the confirmation dialog's
+    // "Turn off anyway" / "Commit and turn off" branches.
+    const updated = await updateSettings(partial);
+    await mutate(updated, false);
   }
 
   return (
@@ -179,6 +217,104 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
           )}
         </SheetBody>
       </SheetContent>
+
+      {/* Bug #17: confirmation shown when the user flips auto-commit
+          off while there are uncommitted changes somewhere in the
+          fleet. Three outcomes: Commit-then-turn-off, turn-off-anyway,
+          or cancel (leaves the toggle untouched). */}
+      <Dialog
+        open={turnOffOpen}
+        onOpenChange={(o) => { if (!o && !turnOffBusy) setTurnOffOpen(false); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Turn off auto-commit?</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 py-3 text-sm text-[var(--text)]">
+            <p>
+              You have uncommitted changes to <strong>{dirtyTargets.length}</strong>{' '}
+              file{dirtyTargets.length === 1 ? '' : 's'}. Turning off auto-commit
+              leaves them in the working tree — they stay on disk but they
+              won't show up in history until you commit them manually.
+            </p>
+            {dirtyTargets.length > 0 && (
+              <ul className="mt-2 flex flex-wrap gap-1">
+                {dirtyTargets.slice(0, 8).map(t => (
+                  <li key={t}>
+                    <code className="rounded bg-[var(--surface2)] px-1.5 py-0.5 font-mono text-[11px]">
+                      {t}
+                    </code>
+                  </li>
+                ))}
+                {dirtyTargets.length > 8 && (
+                  <li className="text-xs text-[var(--text-muted)] self-center">
+                    …and {dirtyTargets.length - 8} more
+                  </li>
+                )}
+              </ul>
+            )}
+            <p className="mt-3 text-xs text-[var(--text-muted)]">
+              Commit them now to preserve the history, or turn off anyway
+              if you want to commit them yourself later.
+            </p>
+          </div>
+          <DialogFooter>
+            <DialogClose>
+              <Button variant="secondary" size="sm" disabled={turnOffBusy}>Cancel</Button>
+            </DialogClose>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={turnOffBusy}
+              onClick={async () => {
+                setTurnOffBusy(true);
+                try {
+                  await patchRaw({ auto_commit_on_save: false });
+                  toast.success('Auto-commit turned off; uncommitted changes left in place');
+                  setTurnOffOpen(false);
+                } catch (err) {
+                  toast.error('Failed to update setting: ' + (err as Error).message);
+                } finally {
+                  setTurnOffBusy(false);
+                }
+              }}
+            >
+              Turn off anyway
+            </Button>
+            <Button
+              size="sm"
+              disabled={turnOffBusy}
+              onClick={async () => {
+                setTurnOffBusy(true);
+                try {
+                  // One commit per dirty file. Default message on each
+                  // matches the manual-commit flow's (manual) marker.
+                  const results = await Promise.all(
+                    dirtyTargets.map(t => commitFile(t).catch(err => ({ committed: false, err: (err as Error).message, target: t }))),
+                  );
+                  const committed = results.filter(r => (r as { committed: boolean }).committed).length;
+                  const failed = results.length - committed;
+                  if (failed === 0) {
+                    toast.success(`Committed ${committed} file${committed === 1 ? '' : 's'}`);
+                  } else if (committed > 0) {
+                    toast.info(`Committed ${committed}, ${failed} failed`);
+                  } else {
+                    toast.error('No files committed');
+                  }
+                  await patchRaw({ auto_commit_on_save: false });
+                  setTurnOffOpen(false);
+                } catch (err) {
+                  toast.error('Failed: ' + (err as Error).message);
+                } finally {
+                  setTurnOffBusy(false);
+                }
+              }}
+            >
+              Commit {dirtyTargets.length} and turn off
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }

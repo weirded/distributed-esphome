@@ -162,17 +162,27 @@ export function HistoryPanel({
   // Bug #10: side-by-side diff. Fetch the file's content at both
   // hashes separately (or the working tree for WORKING_TREE / unset)
   // and feed them to Monaco's DiffEditor with renderSideBySide on.
-  const fromKey = open && filename ? ['fileContentAt', filename, fromHash || null] : null;
-  const toKey = open && filename ? ['fileContentAt', filename, toHash === WORKING_TREE ? null : toHash] : null;
+  //
+  // Bug #15 (reopened): the WORKING_TREE sentinel is a UI-only value.
+  // Both From and To must translate it to `null` before the fetch,
+  // otherwise the server 400s with "Rejected content-at request with
+  // malformed hash: '__WORKING_TREE__'" (which, even though it's only
+  // a log line, pollutes the add-on log). Helper below normalises.
+  function hashForApi(h: string): string | null {
+    if (!h || h === WORKING_TREE) return null;
+    return h;
+  }
+  const fromKey = open && filename ? ['fileContentAt', filename, hashForApi(fromHash)] : null;
+  const toKey = open && filename ? ['fileContentAt', filename, hashForApi(toHash)] : null;
 
   const { data: fromContent = '', isLoading: fromLoading } = useSWR<string>(
     fromKey,
-    () => getFileContentAt(filename!, fromHash || null),
+    () => getFileContentAt(filename!, hashForApi(fromHash)),
     { revalidateOnFocus: false },
   );
   const { data: toContent = '', isLoading: toLoading } = useSWR<string>(
     toKey,
-    () => getFileContentAt(filename!, toHash === WORKING_TREE ? null : toHash),
+    () => getFileContentAt(filename!, hashForApi(toHash)),
     { revalidateOnFocus: false },
   );
   const diffLoading = fromLoading || toLoading;

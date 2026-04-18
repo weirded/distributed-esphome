@@ -1071,11 +1071,25 @@ async def serve_index(request: web.Request) -> web.Response:
 def create_app() -> web.Application:
     cfg = AppConfig.load()
 
+    # AV.1 + Bug #19: run git auto-init FIRST, then settings. The
+    # return value tells us whether a pre-existing repo was found
+    # (False) or we created a fresh one (True). settings.init_settings
+    # uses that signal on first boot to pick the auto-commit-on-save
+    # default — pre-existing repo → off by default (Pat-with-git),
+    # fresh-init → on by default (Pat-no-git). Sync call here is fine;
+    # the event loop hasn't started yet.
+    try:
+        from git_versioning import init_repo  # noqa: PLC0415
+        fresh_repo = init_repo(Path(cfg.config_dir))
+    except Exception:
+        logger.exception("git auto-init raised unexpectedly")
+        fresh_repo = None  # "don't override the default"
+
     # SP.1/SP.2: load in-app settings (/data/settings.json) — created on
     # first boot after 1.6 upgrade and seeded from the current options.json
     # for any fields that have migrated. See ha-addon/server/settings.py.
     from settings import clear_supervisor_options_if_needed, init_settings  # noqa: PLC0415
-    init_settings()
+    init_settings(fresh_repo_init=fresh_repo)
     # Bug #9: after the settings have been safely imported, tell
     # Supervisor to drop its stale options cache so it stops spamming
     # "Option X does not exist in the schema" warnings on every read.
@@ -1172,17 +1186,9 @@ def create_app() -> web.Application:
         except Exception:
             logger.exception("HA integration auto-install raised unexpectedly")
 
-        # AV.1: auto-init /config/esphome/ as a local git repo so
-        # subsequent saves have a free history / diff / rollback story.
-        # Runs in an executor so subprocess calls don't block the event
-        # loop during startup. Safe on a user's pre-existing repo — we
-        # skip init there and only append missing .gitignore entries.
-        try:
-            from git_versioning import init_repo  # noqa: PLC0415
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, init_repo, Path(cfg.config_dir))
-        except Exception:
-            logger.exception("git auto-init raised unexpectedly")
+        # AV.1: git auto-init already ran synchronously in create_app
+        # (before settings, so the fresh-vs-existing signal can drive
+        # the auto-commit default — see Bug #19). No work to do here.
 
         # Use the locally installed ESPHome package version as the initial
         # active version.  The pypi_version_refresher background task will

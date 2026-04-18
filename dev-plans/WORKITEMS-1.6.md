@@ -57,8 +57,6 @@ Every save creates a git commit automatically. Users get per-file history, diff,
 
 - [x] **AV.7 Config diff on compile** *(1.6.0-dev.15)* — every `queue.enqueue()` / `queue.retry()` call now stamps the job with `config_hash = git_versioning.get_head(config_dir)`. Job model serialises + round-trips the field; UI types pick it up. The Queue-tab Log modal renders a **"Diff since compile"** button on every non-validate job that has a `config_hash`; clicking opens the AV.6 History panel pre-set to `from = job.config_hash, to = "Current (working tree)"` so the user lands directly on "what's changed since this compile started." **Auto-commit-off handling:** we always stamp `HEAD` at enqueue time regardless of the toggle. When auto-commit is on, that hash is the committed state that got compiled; when it's off, it's whatever the user last committed — pairing it with the working-tree default on the right surface captures both committed and uncommitted deltas. From/To pickers still let the user flip either side to any hash. Button is hidden on jobs that pre-date AV.7 (no `config_hash`) and on validate-only jobs. Tests: 2 new Playwright specs (shortcut opens drawer with preset from-hash; button hidden on no-config-hash jobs) + existing queue tests exercise the extra field end-to-end.
 
-- [ ] **AV.9 Git status in file tree** — if the file tree editor (FT section) lands in the same release, show modified/untracked badges on files using `git status --porcelain`. Deferred until FT exists (not in 1.6 scope).
-
 - [x] **AV.11 Manual commit endpoint + UI** *(1.6.0-dev.11)* — the escape valve for when auto-commit is off (Pat-with-git who didn't want Fleet writing commits, but still needs a path to flush pending edits through the UI). Also useful even when auto-commit is on — covers externally-made edits (Samba, SSH) that don't go through our write endpoints.
 
   **Endpoint.** `POST /ui/api/files/{filename}/commit` body `{message?: string}`. Runs `git add --all -- <filename>` + `git commit -m "<message>" -- <filename>`. Returns `{committed: boolean, hash?: string, short_hash?: string, message?: string}` — `committed: false` with no hash when there was nothing to commit. Uses the same Settings-driven author chain as AV.2 (respects repo `user.name`/`user.email` if set; falls back to Settings). Returns 200 either way (empty commit is not an error). Default message when body has no `message`: `"save: <filename>" (manual)` — the trailing marker distinguishes hand-triggered commits from auto-commit entries in the log.
@@ -89,94 +87,6 @@ Add a persistent append-only job history that survives both coalescing AND expli
 - [ ] **JH.6 Per-device last-success indicator** — augment the existing Devices tab columns with a `Last compiled` column (toggleable, off by default): shows "X ago ✓" from the most recent SUCCESS in history, red "X ago ✗" if the most recent terminal was a FAILED/TIMED_OUT, "never" if no history. Served via a single rollup in `/ui/api/targets` (add `last_compile: {at, state}` to each target payload — one SQL query per target, or one batched JOIN). Avoids the "click through to see if anything ever worked" problem.
 - [ ] **JH.7 Fleet-wide History tab (stretch)** — new top-level tab (after Schedules) listing all compile history across all targets, with filters for state / target / date range / triggered-by. Same table layout as Queue, but strictly read-only (no Retry / Clear / Cancel). Export-to-CSV button for offline analysis. Can slip to 1.6 if the per-device drawer (JH.5) turns out to be enough.
 - [ ] **JH.8 Tests** — unit tests: terminal transition records a row, idempotent on duplicate id, coalescing emits a history row before eviction, retention task deletes old rows only. Integration tests: full compile round-trip leaves a SUCCESS row in history; the `/ui/api/history` endpoint returns it; cancelling a job leaves a CANCELLED row; `/ui/api/history/stats` rollup matches the rows. Mocked Playwright: open the history drawer on a device row, see entries, expand one to see the log excerpt.
-
-## Device Organization
-
-Key/value tags (like AWS resource tags), stored in the per-device `# distributed-esphome:` comment block as a `tags:` map. Users can group the Devices table by any tag key (Notion-style table groups) and filter by `key=value`.
-
-Format in the YAML comment block:
-```yaml
-# distributed-esphome:
-#   tags:
-#     location: kitchen
-#     floor: "1"
-#     env: prod
-#     owner: stefan
-```
-
-The existing `tags` field landed in 1.4.0-dev.2 as a simple list of strings — that needs to migrate to a key/value map. `read_device_meta()` should accept both shapes during the transition (list → coerce to `{tag: ""}` or warn-and-ignore) and `write_device_meta()` always writes the map shape going forward.
-
-- [ ] **DO.1 Tag schema migration** — `read_device_meta()` accepts either list-of-strings (legacy) or string-keyed map; normalizes to map on read. `write_device_meta()` always writes the map. Add a unit test that round-trips both shapes.
-- [ ] **DO.2 Tag CRUD endpoints** — `POST /ui/api/targets/{f}/tags` (set, body `{key, value}`), `DELETE /ui/api/targets/{f}/tags/{key}` (clear). Reuses `read_device_meta()` / `write_device_meta()`. Validates key is non-empty, max 64 chars, no leading/trailing whitespace; value is string, max 256 chars (allow empty for "key present, no value").
-- [ ] **DO.3 Tag editor UI** — modal opened from the device hamburger menu ("Edit tags…"). Shows current tags as editable rows: `[key] [value] [×]` plus an "+ Add tag" button. Save persists via `POST /ui/api/targets/{f}/tags` for each changed entry. Datalist autocomplete on `key` from the union of all keys currently in use across the fleet.
-- [ ] **DO.4 Tag column** — toggleable "Tags" column on the Devices tab showing each device's tags as compact `key=value` chips (truncated, full set in tooltip). Sortable by string representation.
-- [ ] **DO.5 Group-by-tag selector** — top-of-table dropdown: "Group by: [None / location / floor / env / …]". When set, rows are grouped under sticky group headers showing the value (e.g., "location: kitchen — 4 devices"). Devices without that tag key fall into an "— unset —" group at the bottom. Group state persists in localStorage. Like Notion table groups: collapsible group headers, group-level select-all checkbox.
-- [ ] **DO.6 Filter by tag** — top-of-table filter chips: click a tag chip in any row to add it as a filter (`location=kitchen`). Multiple chips AND together. Clear-all button. Filter state in URL query string so it survives reloads and is shareable.
-- [ ] **DO.7 Bulk tag operations** — extend multi-select on the Devices tab: "Set tag…" (prompts for key+value, applies to all selected via `Promise.all`), "Remove tag…" (prompts for key, removes from all selected). Single summary toast per bulk action.
-- [ ] **DO.8 Bulk delete + bulk validate** *(formerly 6.6)* — extend multi-select: bulk delete and bulk validate alongside the existing bulk upgrade.
-
-## Disk Management
-
-LRU-based disk usage controls for both the server and workers. Currently nothing caps the growth of ESPHome version caches, PlatformIO toolchains, compiled firmware, build directories, or job logs. On a worker with limited disk (e.g., a Raspberry Pi), these can silently fill the volume.
-
-### Worker-side
-
-- [ ] **DM.1 Worker disk budget** — new env var `MAX_DISK_USAGE_GB` (default: unlimited). On each job completion, the worker checks total usage of `/esphome-versions/` (versions + builds + PlatformIO). If over budget, evicts in LRU order: oldest unused ESPHome version venvs first (already has `MAX_ESPHOME_VERSIONS` for version count — this adds a size-based cap), then oldest build cache directories, then oldest PlatformIO packages. Logs what was evicted at INFO.
-- [ ] **DM.2 Worker disk stats in heartbeat** — add `disk_total_mb`, `disk_used_mb`, `disk_free_mb` (for the `/esphome-versions` mount point) to the worker's `system_info` heartbeat. Server surfaces these on the Workers tab so operators can see when a worker is running low before it fails a compile.
-- [ ] **DM.3 Build cache LRU** — the per-target build cache (`/esphome-versions/cache/<target>/`) currently grows unboundedly. Add LRU eviction: track last-access time per target cache dir, evict oldest when total build cache exceeds `MAX_BUILD_CACHE_GB` (env var, default 10GB). The existing `MAX_ESPHOME_VERSIONS` (count-based) stays for version venvs; this adds size-based eviction for the build artifacts.
-
-### Server-side
-
-- [ ] **DM.4 Server disk budget for caches** — `firmware_cache_max_gb` (default 2.0) and `job_log_retention_days` (default 30) live in the Settings store (see SP.*). Background task prunes `/data/firmware/` and old job logs on a daily schedule, reading current values from `get_settings()` each run (live-effect). Exposed in the Settings drawer under `Disk management`.
-- [ ] **DM.5 Disk usage dashboard** — section on the Workers tab or a new Settings page showing: per-worker disk breakdown (versions, builds, PlatformIO, total), server-side cache sizes (PIO proxy cache, firmware, job logs), and the configured limits. Visual bar showing used/limit per category.
-
-## Worker Constraints
-
-Let users declare which workers can run which jobs. Originated in [issue #59](https://github.com/weirded/distributed-esphome/issues/59) ("Thread devices can't be reached from Windows desktop due to IPv6 limitation — can you auto-detect?"). **Reframed:** instead of trying to probe network reachability (fragile, slow, guesses wrong), let the user express their knowledge of the topology as declarative rules. This also generalizes to every other worker-selection need a user might have — "encrypted devices only go to the on-prem worker", "big configs only go to the beefy worker", "dev YAMLs only go to my laptop".
-
-### Foundation: durable worker identity
-
-The current `client_id` is an auto-generated UUID persisted to `/esphome-versions/.client_id` inside the worker's volume (`client.py:119,213-227`). If the volume wipes, the container gets rebuilt on a different host, or the user blows away their worker setup, they get a new UUID — breaking any saved config that referenced the old one. Worker constraints need a more durable identifier. The answer is: let the user name their workers.
-
-- [ ] **WC.1 `WORKER_NAME` env var** — new optional env on the client (`client.py`). When set, it becomes the worker's primary identifier instead of the auto-UUID. When unset, fall back to the current auto-UUID behavior for backwards compatibility. `WORKER_NAME` values must match `^[a-z0-9][a-z0-9-]{0,63}$` (same slug rules as device names) so they're safe in URLs and UI chips.
-- [ ] **WC.2 `WORKER_TAGS` env var** — comma-separated list of free-form tags, e.g. `WORKER_TAGS=ipv6,beefy,on-prem`. Sent at registration and on every heartbeat. Server surfaces them on `/ui/api/workers` for display and for constraint evaluation.
-- [ ] **WC.3 Server: name-keyed registry** — `registry.py` accepts a `name` field on `RegisterRequest` (via `protocol.py` — **PROTOCOL_VERSION bump**, see note below). Registry key preference: `name` if provided, else `client_id`. If two workers register with the same `name`, the later one wins (logs a warning about the collision). Existing UUID-keyed workers continue to work unchanged.
-- [ ] **WC.4 Protocol extension** — add `name: Optional[str]` and `tags: List[str]` to `RegisterRequest` and `HeartbeatRequest` in both `ha-addon/server/protocol.py` and `ha-addon/client/protocol.py` (byte-identical per PY-6). This is an **additive protocol change** — old workers sending neither field still register fine — so `PROTOCOL_VERSION` stays at its current value per the protocol.py docstring rule ("additive + optional unless PROTOCOL_VERSION is bumped").
-- [ ] **WC.5 UI: show worker name + tags** — Workers tab's Hostname column becomes "Name / Hostname": shows `WORKER_NAME` prominently if set, falls back to hostname. New toggleable "Tags" column rendering tags as chips. Connect Worker modal's generated `docker run` command includes `-e WORKER_NAME=<slug>` and an optional `-e WORKER_TAGS=<tags>` pre-filled with a hint.
-
-### Constraint expression
-
-Declarative matching between targets and workers, stored in the per-device `# distributed-esphome:` YAML comment block (same pattern as tags, pin_version, schedules). Constraints are **additive to the existing `pinned_client_id`** — pinning a specific worker on a job still wins over general constraints.
-
-- [ ] **WC.6 Target-side constraint fields** — extend the per-device metadata comment:
-  ```yaml
-  # distributed-esphome:
-  #   worker_requires:       # worker must have ALL of these tags
-  #     - ipv6
-  #   worker_forbids:        # worker must have NONE of these tags
-  #     - cloud
-  #   worker_only:           # whitelist by worker name (overrides tags if set)
-  #     - home-beefy
-  ```
-  `read_device_meta` / `write_device_meta` extended to parse + emit these three fields. Surfaced on `/ui/api/targets` as `worker_requires`, `worker_forbids`, `worker_only`.
-
-### Evaluation
-
-- [ ] **WC.7 `claim_next` constraint filter** — in `job_queue.claim_next()`, before a worker can claim a job, check whether its name/tags satisfy the job's target constraints. If not, the job is skipped for that worker and remains PENDING for the next eligible worker to claim. The existing `pinned_client_id` check runs first (explicit pin wins); constraints run second.
-- [ ] **WC.8 "No eligible worker" detection** — when a job has been PENDING for > N minutes AND no currently-online worker satisfies its constraints, mark it FAILED with a clear message: *"No eligible worker: target requires tags [ipv6]; online workers: home-pi (tags: []), office-desktop (tags: [beefy])"*. This is the "stuck forever" failure mode — better to fail loudly than hang.
-
-### UI
-
-- [ ] **WC.9 Constraint editor modal** — per-device hamburger menu item "Worker constraints…" opens a modal with three fields (required tags, forbidden tags, whitelisted worker names) plus an "Available tags / workers" hint that lists tags currently in use across the fleet. Saves via the existing `POST /ui/api/targets/{f}/meta` generic endpoint.
-- [ ] **WC.10 Queue tab: surface constraint misses** — when a job is PENDING longer than expected and the reason is constraints, the Queue tab's status text shows it (e.g. *"Waiting — no worker tagged `ipv6` is online"*) so the user doesn't stare at a pending job wondering what's wrong.
-- [ ] **WC.11 E2E coverage** — mocked Playwright test for the constraint editor modal. Prod hass-4 test: tag one worker with `ipv6`, set `worker_requires: [ipv6]` on a target, trigger compile, verify it lands on the tagged worker (and fails fast with the clear message if no tagged worker is online).
-
-### Notes & non-goals
-
-- **Not auto-detection.** This is deliberately user-declarative. We don't probe reachability, we don't ping from each worker, we don't parse YAML for `manual_ip` to infer things. Users know their network better than we do, and probe-based logic is a maintenance tax.
-- **Backwards compatibility.** Workers without `WORKER_NAME` keep UUIDs. Targets without `worker_requires`/`worker_forbids`/`worker_only` accept any worker. Zero breaking changes.
-- **Relationship to `pinned_client_id`.** Explicit pin in the UpgradeModal still overrides everything — that's a one-shot manual choice and shouldn't be filtered out by general constraints. Constraints are the persistent default; pins are the override.
-- **Related, out of scope:** per-worker `WORKER_CAN_RUN` whitelists (the inverse: worker declares which targets it accepts). Makes sense for shared workers in mixed-trust environments but not needed for the home-lab use case. Revisit in a future release if requested.
 
 ## Worker Update Documentation
 
@@ -239,9 +149,14 @@ Surfaced by the 2026-04-16 archive sweep. Each item was deferred (or filed as a 
 
 - [x] **14** *(1.6.0-dev.15)* — Diff always shows the older version on the left. HistoryPanel now has a silent normaliser that swaps From ↔ To whenever the user's selection would put the newer commit on the left. Uses the commit list's newest-first ordering plus a "working-tree is newest of all" rule for the `Current` sentinel. The row-click default already put parent→self (older→newer) in the correct slots; this just ensures manual picks via the dropdowns or Set-as-From/To buttons can't violate the invariant.
 
-- [ ] **15** — **`__WORKING_TREE__` sentinel regression on `/content-at` endpoint.** Observed on hass-4 at 2026-04-18 14:15:38 (post-dev.14 deploy): `WARNING git_versioning: Rejected content-at request with malformed hash: '__WORKING_TREE__'`. Bug #11 was marked closed on the grounds that "the UI converts `WORKING_TREE` to `null` / omits `hash` before hitting the API, so the server never sees the sentinel" — but that sentinel-scrub only covered the `/diff` call site. The dev.14 `HistoryPanel` still sends `__WORKING_TREE__` as `hash=` on one of the two parallel `/content-at` calls (the one for the "working tree" side). Fix is the same as #11 — at the `/content-at` fetch site, treat `WORKING_TREE` as "omit the `hash` query param" so the server short-circuits to the working-tree branch. Drop the log line to INFO at the same time (or remove it entirely — a 400 response is evidence enough). Low volume right now (one hit per history-panel session) so not urgent, but functionally means the "current working tree" pane in the diff renders empty / the stale server response until the user picks a specific commit on both sides.
+- [x] **15 (re-opened)** *(1.6.0-dev.17)* — `__WORKING_TREE__` sentinel no longer leaks to `/content-at`. HistoryPanel now funnels both From and To through a `hashForApi()` helper that maps the sentinel / empty string to `null` before the fetch; the server's `content-at` handler short-circuits to the working-tree read. The previous fix only scrubbed the To side (the From-as-working-tree case was still broken because `fromHash || null` treated the sentinel string as truthy). Also dropped the server's "malformed hash" log line from WARNING → DEBUG — a 400 response is operator-actionable; the WARNING was itself a client-side bug indicator.
 
 - [x] **15** *(1.6.0-dev.15)* — Restore confirmation replaced with a proper shadcn `Dialog` — title "Restore {short_hash}?", contextual body copy that differs depending on whether the working tree is clean or dirty (plain revert commit vs "your uncommitted changes will be overwritten"), Cancel / destructive-Restore footer. CLAUDE.md gained a new Design Judgment rule under the shadcn/ui section: **"No native JavaScript modals — ever"** — no `window.alert` / `window.confirm` / `window.prompt`, use shadcn `Dialog` for confirmations, `Sheet` for panels, `sonner` for toasts. Origin reference in the rule so future developers know why.
 
 - [x] **16** *(1.6.0-dev.15)* — Per-device uncommitted-changes indicator + commit action. Combined UX: **yellow "Uncommitted" pill** sits next to the device name on every Devices-tab row that has a dirty YAML, serving as both indicator AND drill-in — clicking it opens the History panel where the user can review the diff and commit from there. Hamburger menu gains a **"Commit changes…"** item that's only rendered when the row is dirty; opens a proper shadcn Dialog with an optional message field (defaults to `save: <file> (manual)` server-side), Cancel / Commit footer. Server side: new `git_versioning.dirty_paths()` helper runs one bulk `git status --porcelain` and returns the set of dirty relpaths; `/ui/api/targets` merges a per-target `has_uncommitted_changes` boolean into every row payload, so the 1 Hz SWR poll keeps the indicator fresh. Type: new `Target.has_uncommitted_changes?: boolean` in `src/types/index.ts`.
 
+- [x] **17** *(1.6.0-dev.17)* — Settings drawer intercepts the auto-commit on → off flip when any targets are dirty. Proper shadcn Dialog offers three outcomes: **Commit N and turn off** (primary; loops `POST /ui/api/files/{f}/commit` per dirty target via `Promise.all`, then flips the toggle), **Turn off anyway** (flips without committing), **Cancel** (leaves the toggle on). The dialog body shows the list of dirty filenames as chips (first 8, plus "…and N more" if the list is longer). Commits use the manual-commit endpoint's default message (`save: <file> (manual)`). Failed commits are reported in a single summary toast. Dirty-target list comes from App.tsx's existing `/ui/api/targets` SWR data — no extra endpoint call.
+
+- [x] **18** *(1.6.0-dev.17)* — Queue tab now has a **Config** column showing the short git hash (`job.config_hash.slice(0, 7)`) of what was compiled, with a tooltip revealing the full 40-char SHA. Dash for pre-AV.7 jobs and jobs enqueued when the config dir wasn't a git repo. Rendered in a muted mono font so it doesn't visually compete with the other sortable columns, but still always visible — this is the key that links Queue rows to the History panel's "Diff since compile" shortcut.
+
+- [x] **19** *(1.6.0-dev.17)* — Fresh-install auto-commit default now depends on whether a git repo was already there. `init_repo()` returns `True` when Fleet initialised a brand-new repo (no repo before), `False` when the directory was already a git repo. `init_settings()` takes an optional `fresh_repo_init` parameter; on first-boot seed it uses that to pick the default: **fresh Fleet-init → `auto_commit_on_save = True`** (the dataclass default, the Pat-no-git case where Fleet owns history), **pre-existing repo → `auto_commit_on_save = False`** (Pat-with-git case where Fleet shouldn't spray `save: <file>` commits into the user's curated log). Existing installs are unaffected — the override only applies when `/data/settings.json` doesn't exist yet. `main.py` reordered so `init_repo` runs before `init_settings` in `create_app`, sync (no event loop yet), and the return value flows into the settings seed.

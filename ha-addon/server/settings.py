@@ -387,12 +387,24 @@ def _read_supervisor_options() -> dict[str, Any]:
 def init_settings(
     settings_path: Path | None = None,
     options_path: Path | None = None,
+    fresh_repo_init: bool | None = None,
 ) -> AppSettings:
     """Load settings from disk, importing from ``options.json`` on first boot.
 
     Must be called exactly once at server startup before any consumer
     calls :func:`get_settings`. Idempotent: a second call re-reads the
     file (primarily for tests that mutate disk behind the module's back).
+
+    ``fresh_repo_init`` (bug #19): the boolean returned by
+    :func:`git_versioning.init_repo`. When ``True`` it signals Fleet
+    just created a brand-new git repo under ``/config/esphome/`` (no
+    repo was there before) — the ideal case for auto-commit-on-save.
+    When ``False`` the directory was already a git repo owned by the
+    user, and we default ``auto_commit_on_save`` to ``False`` so Fleet
+    doesn't spray ``save: foo.yaml`` commits into Pat-with-git's
+    curated log. ``None`` (not supplied) → keep the dataclass default
+    of ``True`` — used by tests and non-Supervisor harnesses that
+    don't have a git repo in play.
 
     Parameters let tests redirect to a scratch directory.
     """
@@ -415,6 +427,18 @@ def init_settings(
     # test harness running without /data), fall back to in-memory defaults
     # so the server still boots.
     _settings = _seed_from_options()
+
+    # Bug #19: pre-existing git repo → auto-commit OFF by default.
+    # The user picked git before us; we shouldn't start writing commits
+    # into their log on their behalf without consent. They can turn
+    # this back on in the Settings drawer if they want the Fleet
+    # safety net.
+    if fresh_repo_init is False:
+        _settings = AppSettings(**{**asdict(_settings), "auto_commit_on_save": False})
+        logger.info(
+            "Pre-existing git repo detected on first boot; defaulting auto_commit_on_save=False",
+        )
+
     try:
         _atomic_write(_settings_path, asdict(_settings))
         logger.info("Created %s with defaults (migrated fields imported from %s where present)", _settings_path, _options_path)
