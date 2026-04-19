@@ -13,7 +13,6 @@ import { pinTargetVersion, unpinTargetVersion } from '../api/client';
 import type { AddressSource, Device, Job, Target, Worker } from '../types';
 import { stripYaml, haDeepLink, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
-import { Button } from './ui/button';
 import {
   Dialog,
   DialogContent,
@@ -45,18 +44,22 @@ interface OptionalColumnDef {
   defaultVisible: boolean;
 }
 
+// #69: entries are ordered to match the actual column render order in
+// ``useDeviceColumns.tsx``. The picker renders checkboxes in this
+// order, so keeping them aligned means toggling a column on/off
+// matches the user's left-to-right reading of the table itself.
 const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'ha', label: 'HA', defaultVisible: true },
   { id: 'ip', label: 'IP', defaultVisible: true },
   { id: 'net', label: 'Net', defaultVisible: true },
-  { id: 'running', label: 'ESPHome', defaultVisible: true },
   { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
   { id: 'ap', label: 'AP', defaultVisible: false },
   { id: 'schedule', label: 'Schedule', defaultVisible: true },
   // JH.6: opt-in "Last compiled" column. Off by default so existing users
   // see no layout churn; power users toggle it on to spot stale devices.
   { id: 'last_compiled', label: 'Last compiled', defaultVisible: false },
+  { id: 'running', label: 'ESPHome', defaultVisible: true },
   { id: 'area', label: 'Area', defaultVisible: false },
   { id: 'comment', label: 'Comment', defaultVisible: false },
   { id: 'project', label: 'Project', defaultVisible: false },
@@ -169,6 +172,11 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   // shared ArchivedDevicesList component. State lives here rather
   // than in App.tsx because the button's local to this tab.
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // #70: "Duplicate existing device" picker state. Opened from the
+  // "Add device ▾" dropdown. Shows a list of existing targets the
+  // user can pick to duplicate; selection calls onDuplicate() which
+  // routes back to the NewDeviceModal in duplicate mode.
+  const [duplicatePickerOpen, setDuplicatePickerOpen] = useState(false);
 
   // VP.4 / QS.20: pin/unpin version from the hamburger menu. Memoized so
   // useDeviceColumns' dep array can actually cache — the hook re-runs only
@@ -354,23 +362,34 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
             )}
           </div>
           <div className="actions">
-            {/* CD.5: "+ New Device" button. #46: use default variant (primary
-                styling) so it reads as a real action button, matching the visual
-                weight of the Upgrade/Actions dropdown triggers next to it. */}
-            <Button size="sm" onClick={onNewDevice} title="Create a new device YAML">
-              + New Device
-            </Button>
-            {/* #62: fast entry into the archive viewer, parallel to the
-                Settings drawer path. Same ArchivedDevicesList component
-                renders either way so the two surfaces stay in sync. */}
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setArchiveOpen(true)}
-              title="Open archived devices — restore or permanently delete"
-            >
-              Archive…
-            </Button>
+            {/* #70: "Add device ▾" dropdown consolidates the three ways
+                a device lands in the fleet — blank-slate new, duplicate
+                from an existing YAML, or restore from the soft-delete
+                archive. Replaces the separate "+ New Device" + "Archive…"
+                buttons. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
+                Add device <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[220px]">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={onNewDevice}>
+                    New device…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setDuplicatePickerOpen(true)}
+                    disabled={targets.length === 0}
+                    title={targets.length === 0 ? "No existing devices to duplicate" : undefined}
+                  >
+                    Duplicate existing device…
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setArchiveOpen(true)}>
+                    Restore from archive…
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {/* Upgrade dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
@@ -532,6 +551,47 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           </DialogHeader>
           <div className="px-4 pb-4 pt-2">
             <ArchivedDevicesList />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* #70: "Duplicate existing device" picker — list every current
+          target as a clickable row; picking one forwards to
+          onDuplicate() which is wired to the NewDeviceModal in
+          duplicate mode in App.tsx. */}
+      <Dialog open={duplicatePickerOpen} onOpenChange={setDuplicatePickerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pick a device to duplicate</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 pb-4 pt-2 flex flex-col gap-2 max-h-[50vh] overflow-y-auto">
+            {targets.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)]">
+                No existing devices to duplicate.
+              </p>
+            ) : (
+              targets
+                .slice()
+                .sort((a, b) => (a.friendly_name || a.target).localeCompare(b.friendly_name || b.target))
+                .map((t) => (
+                  <button
+                    key={t.target}
+                    type="button"
+                    className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-left hover:border-[var(--accent)] cursor-pointer"
+                    onClick={() => {
+                      setDuplicatePickerOpen(false);
+                      onDuplicate(t.target);
+                    }}
+                  >
+                    <span className="flex-1 text-[13px] text-[var(--text)]">
+                      {t.friendly_name || t.device_name || t.target}
+                    </span>
+                    <span className="ml-2 text-[11px] font-mono text-[var(--text-muted)]">
+                      {t.target}
+                    </span>
+                  </button>
+                ))
+            )}
           </div>
         </DialogContent>
       </Dialog>

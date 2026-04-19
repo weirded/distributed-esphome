@@ -1,20 +1,37 @@
 /*
- * #60: scoped layout + theme overrides for react-day-picker inside the
- * TimeRangePicker popover. The default ``react-day-picker/style.css``
- * works fine structurally — nav chevrons live at top-right of the
- * month, day cells grid correctly — but ships with roomy defaults
- * that stretch the popover vertically and uses a light-theme palette
- * that clashes against our dark ``var(--surface)``. Scoped to the
- * ``.rdp-tight`` wrapper so overrides don't leak to any future
- * consumer of react-day-picker.
+ * #60, #64: scoped layout + theme overrides for react-day-picker inside
+ * the TimeRangePicker popover. The default ``react-day-picker/style.css``
+ * is structurally fine but ships with 44 px cell / 42 px button defaults
+ * and a light-theme palette that blow the popover out vertically and
+ * clash with our dark ``var(--surface)`` shell.
+ *
+ * CRITICAL (#64): rdp 9.x declares its sizing variables inside
+ * ``.rdp-root { --rdp-day-height: 44px; ... }`` — the same element the
+ * ``var(...)`` consumers live on. That means setting overrides on the
+ * outer ``.rdp-tight`` wrapper is defeated by rdp's own redeclaration on
+ * ``.rdp-root``, because the cascade resolves ``var(--rdp-day-height)``
+ * against the nearer declaration on the ancestor element. We have to
+ * match rdp's own selector (``.rdp-root``) so our rule wins on
+ * specificity — hence ``.rdp-tight .rdp-root`` below, not
+ * ``.rdp-tight``.
  */
 
-.rdp-tight {
+.rdp-tight .rdp-root {
   /* Tighter day cells so the 6-row grid fits without padding the
-     popover vertically. */
-  --rdp-day-height: 1.85rem;
-  --rdp-day-width: 1.85rem;
-  /* Keep the weekday header compact too — default ~1rem padding is
+     popover vertically. rdp 9 distinguishes ``day-*`` (the TD) from
+     ``day_button-*`` (the interactive inner button with its own padding);
+     overriding one without the other leaves a gap because the button
+     stays at 42 px and the cell shrinks around it (or vice versa). */
+  --rdp-day-height: 2rem;
+  --rdp-day-width: 2rem;
+  --rdp-day_button-height: 1.9rem;
+  --rdp-day_button-width: 1.9rem;
+  /* Shrink the nav strip + button sizes too so the caption row reads
+     as compact rather than occupying ~45 px of vertical space. */
+  --rdp-nav-height: 1.75rem;
+  --rdp-nav_button-height: 1.5rem;
+  --rdp-nav_button-width: 1.5rem;
+  /* Keep the weekday header compact — default ``0.5rem 0`` padding is
      loud against the 12 px text size we use elsewhere. */
   --rdp-weekday-padding: 0.125rem 0;
 }
@@ -53,4 +70,14 @@
 .rdp-tight .rdp-day_button:hover:not([data-disabled]) {
   background-color: var(--surface2);
   border-radius: 0.25rem;
+}
+
+/* #64 — zero out TD padding on day cells. rdp 9 itself doesn't add any,
+   but UA/Tailwind preflight and our own wrapper chain leave a ``6px 4px
+   6px 8px`` computed padding that inflates every row to ~43 px even
+   with the button shrunk to 30 px. Explicit ``padding: 0`` brings the
+   row back down to the button's own height. */
+.rdp-tight .rdp-day,
+.rdp-tight .rdp-weeks td {
+  padding: 0;
 }

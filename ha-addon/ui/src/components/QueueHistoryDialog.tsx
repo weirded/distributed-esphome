@@ -67,13 +67,12 @@ const SORTABLE: Record<string, SortColumn> = {
 };
 
 
-function triggeredLabel(row: JobHistoryEntry): string {
-  if (row.triggered_by === 'ha_action') return 'HA';
-  if (row.triggered_by === 'schedule') {
-    return row.trigger_detail === 'once' ? 'Scheduled·1x' : 'Scheduled';
-  }
-  return 'User';
-}
+// #65: Triggered column rendering is now shared with the Queue tab —
+// same icons + same labels — via getTriggerBadge(). The inline
+// ``triggeredLabel()`` helper this file carried before drifted from
+// the Queue's renderer (plain text "HA" / "User" / "Scheduled·1x"
+// vs Queue's rich icon+label badges); unifying them kills the drift.
+import { getTriggerBadge } from '@/utils/trigger';
 
 function friendlyFor(targets: Target[], filename: string): string {
   const t = targets.find((x) => x.target === filename);
@@ -285,10 +284,19 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
           </span>
         ),
       }),
-      ch.accessor((r) => triggeredLabel(r), {
+      ch.accessor((r) => getTriggerBadge(r).label, {
         id: 'triggered_by',
-        header: ({ column }) => <SortHeader label="Trigger" column={column} />,
-        cell: ({ row: { original: r } }) => triggeredLabel(r),
+        // #65: header matches the Queue tab's "Triggered" (was "Trigger"
+        // here, which was an inconsistency the user called out).
+        header: ({ column }) => <SortHeader label="Triggered" column={column} />,
+        cell: ({ row: { original: r } }) => {
+          const b = getTriggerBadge(r);
+          return (
+            <span className="inline-flex items-center gap-1 text-[12px]" title={b.title}>
+              {b.icon} {b.label}
+            </span>
+          );
+        },
       }),
       ch.accessor((r) => r.assigned_hostname ?? '', {
         id: 'assigned_hostname',

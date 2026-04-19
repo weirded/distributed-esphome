@@ -2043,10 +2043,16 @@ async def delete_target(request: web.Request) -> web.Response:
 
     try:
         if archive:
-            archive_dir = config_dir / ".archive"
-            archive_dir.mkdir(exist_ok=True)
-            dest = archive_dir / filename
-            path.rename(dest)
+            # Bug #63: archive-with-git-mv preserves rename history across
+            # the soft-delete boundary. When the file is tracked, a single
+            # commit shows as ``R original → .archive/original``; `git log
+            # --follow .archive/original` threads back through the device's
+            # entire pre-archive history. Falls back to a raw rename if the
+            # file was never committed.
+            from git_versioning import archive_and_commit  # noqa: PLC0415
+            ok = await archive_and_commit(config_dir, filename)
+            if not ok:
+                return web.json_response({"error": "archive failed"}, status=500)
         else:
             path.unlink()
     except Exception as exc:
@@ -2063,8 +2069,12 @@ async def delete_target(request: web.Request) -> web.Response:
     _config_cache.pop(filename, None)
 
     logger.info("Deleted config %s (archive=%s)%s", filename, archive, _who(request))
-    from git_versioning import commit_file  # noqa: PLC0415
-    await commit_file(config_dir, filename, "delete")
+    if not archive:
+        # Permanent-delete path still uses commit_file to record the
+        # raw deletion — archive_and_commit above already committed
+        # the rename case.
+        from git_versioning import commit_file  # noqa: PLC0415
+        await commit_file(config_dir, filename, "delete")
     _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
@@ -2105,14 +2115,16 @@ async def restore_archive(request: web.Request) -> web.Response:
     if dest.exists():
         return web.json_response({"error": f"{filename} already exists in config directory"}, status=409)
 
-    try:
-        src.rename(dest)
-    except Exception as exc:
-        return web.json_response({"error": str(exc)}, status=500)
+    # Bug #63: git-mv restore threads the file's history across the
+    # archive boundary. Falls back to raw rename when the archived
+    # file isn't git-tracked (pre-#63 archive that predates the move
+    # to un-ignored .archive/).
+    from git_versioning import restore_and_commit  # noqa: PLC0415
+    ok = await restore_and_commit(config_dir, filename)
+    if not ok:
+        return web.json_response({"error": "restore failed"}, status=500)
 
     logger.info("Restored config %s from archive", filename)
-    from git_versioning import commit_file  # noqa: PLC0415
-    await commit_file(config_dir, filename, "restore")
     return web.json_response({"ok": True})
 
 

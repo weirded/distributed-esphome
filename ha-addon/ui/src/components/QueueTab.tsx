@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Calendar, Clock, Download, History as HistoryIcon, HomeIcon, Pin, Terminal, User } from 'lucide-react';
+import { Calendar, Clock, Download, History as HistoryIcon, Pin } from 'lucide-react';
+import { classifyTrigger, getTriggerBadge } from '@/utils/trigger';
 import {
   useReactTable,
   getCoreRowModel,
@@ -320,78 +321,52 @@ export function QueueTab({
     // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
     // Hover reveals the full cron expression + tz so users can reconcile with
     // the Schedules tab.
+    // #65: shared trigger-badge helper (utils/trigger.tsx) returns the
+    // icon + label used on BOTH Queue and Compile-History surfaces —
+    // used to drift ("HA action" here vs "HA" there). Queue still adds
+    // the cron-string detail after the badge for scheduled jobs so the
+    // operator can reconcile against the Schedules tab.
     columnHelper.accessor(
-      row => row.ha_action ? 'ha_action'
-        : row.api_triggered ? 'api'
-          : row.scheduled ? (row.schedule_kind ?? 'schedule')
-            : 'user',
+      row => classifyTrigger(row),
       {
       id: 'triggered_by',
       header: ({ column }) => <SortHeader label="Triggered" column={column} />,
       cell: ({ row: { original: job } }) => {
-        // Bug 27: HA-service-action trigger gets its own badge.
-        // Checked before scheduled/user so a scheduled-compile-that-
-        // somehow-came-through-HA still reads as HA (shouldn't happen
-        // in practice; this is a safety ordering).
-        if (job.ha_action) {
-          return (
-            <span
-              className="inline-flex items-center gap-1 text-[12px]"
-              title="Triggered by a Home Assistant service action (esphome_fleet.compile)"
-            >
-              <HomeIcon className="size-3" aria-hidden="true" /> HA action
-            </span>
-          );
-        }
-        // Bug #61: direct API callers (curl, scripts, Postman) share
-        // the server-token Bearer with the HA integration but come in
-        // without the ``HomeAssistant/*`` User-Agent. Split them out
-        // under their own badge so operators can tell fleet
-        // automation from ad-hoc external API use.
-        if (job.api_triggered) {
-          return (
-            <span
-              className="inline-flex items-center gap-1 text-[12px]"
-              title="Triggered by a direct API call (server-token Bearer, not the HA integration)"
-            >
-              <Terminal className="size-3" aria-hidden="true" /> API
-            </span>
-          );
-        }
-        if (!job.scheduled) {
-          // UX.5: "User" → "Manual" until AU.* auth lets us attribute to a
-          // specific HA user. Tooltip spells out "manual action from the UI".
-          return (
-            <span className="inline-flex items-center gap-1 text-[12px]" title="Manual action (from the Fleet UI)">
-              <User className="size-3" aria-hidden="true" /> Manual
-            </span>
-          );
-        }
-        const target = targets.find(t => t.target === job.target);
-        if (job.schedule_kind === 'once') {
+        const badge = getTriggerBadge(job);
+        // Scheduled rows keep their cron/once detail as a secondary
+        // muted suffix — "Once @ 2026-04-21 14:00" / "Recurring · every Sunday at 2am".
+        if (job.scheduled && job.schedule_kind === 'once') {
+          const target = targets.find(t => t.target === job.target);
           const when = target?.schedule_once;
           const pretty = when ? new Date(when).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
           return (
             <span
               className="inline-flex items-center gap-1 text-[12px]"
-              title={when ? `Triggered by one-time schedule fired at ${when}` : 'Triggered by one-time schedule'}
+              title={when ? `Triggered by one-time schedule fired at ${when}` : badge.title}
             >
-              <Calendar className="size-3" aria-hidden="true" />
-              {pretty ? <>Once <span className="text-[var(--text-muted)]">@ {pretty}</span></> : 'Once'}
+              {badge.icon}
+              {pretty ? <>{badge.label} <span className="text-[var(--text-muted)]">@ {pretty}</span></> : badge.label}
             </span>
           );
         }
-        // Default for scheduled (covers 'recurring' and legacy nulls).
-        const cron = target?.schedule;
-        const tz = target?.schedule_tz;
-        const human = formatCronHuman(cron);
-        const tipParts: string[] = ['Triggered by recurring cron schedule'];
-        if (cron) tipParts.push(`cron: ${cron}`);
-        if (tz) tipParts.push(`tz: ${tz}`);
+        if (job.scheduled) {
+          const target = targets.find(t => t.target === job.target);
+          const cron = target?.schedule;
+          const tz = target?.schedule_tz;
+          const human = formatCronHuman(cron);
+          const tipParts: string[] = [badge.title];
+          if (cron) tipParts.push(`cron: ${cron}`);
+          if (tz) tipParts.push(`tz: ${tz}`);
+          return (
+            <span className="inline-flex items-center gap-1 text-[12px]" title={tipParts.join(' · ')}>
+              {badge.icon}
+              {human ? <>{badge.label} <span className="text-[var(--text-muted)]">· {human}</span></> : badge.label}
+            </span>
+          );
+        }
         return (
-          <span className="inline-flex items-center gap-1 text-[12px]" title={tipParts.join(' · ')}>
-            <Clock className="size-3" aria-hidden="true" />
-            {human ? <>Recurring <span className="text-[var(--text-muted)]">· {human}</span></> : 'Recurring'}
+          <span className="inline-flex items-center gap-1 text-[12px]" title={badge.title}>
+            {badge.icon} {badge.label}
           </span>
         );
       },
@@ -585,20 +560,6 @@ export function QueueTab({
             )}
           </div>
           <div className="actions">
-            {/* JH.7: fleet-wide compile history. Dialog (not tab) because
-                past history is a look-back action, not a live-state
-                navigation surface. Outlined button so it reads as
-                secondary to Retry / Clear which mutate state. */}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setHistoryOpen(true)}
-              title="Browse persistent compile history for the whole fleet"
-            >
-              <HistoryIcon className="size-3.5" aria-hidden="true" />
-              History
-            </Button>
-
             {/* Retry dropdown — UX.4: rerun-class actions use the green
                 success colors (same as per-row Retry/Rerun buttons).
                 Orange/amber is reserved for genuine warn states. */}
@@ -642,6 +603,22 @@ export function QueueTab({
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* #67: History button anchors to the far right of the
+                toolbar with a visible outline. Look-back action, not a
+                mutating one — ``outline`` variant picks up an actual
+                ``border-border`` class (``secondary`` didn't) so the
+                button reads as a tappable surface rather than a
+                link-styled blob. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHistoryOpen(true)}
+              title="Browse persistent compile history for the whole fleet"
+            >
+              <HistoryIcon className="size-3.5" aria-hidden="true" />
+              History
+            </Button>
           </div>
         </div>
         <div className="table-wrap">

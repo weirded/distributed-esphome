@@ -396,7 +396,11 @@ export function useDeviceColumns(options: Options) {
       cell: ({ row: { original: t } }) => {
         const lc = t.last_compile;
         if (!lc) {
-          return <span className="text-[12px] text-[var(--text-muted)]">never</span>;
+          // #68: consistent with other "unknown" cells across the table —
+          // render a muted em-dash rather than asserting "never", which
+          // overclaims given the history table might not have pre-dev.23
+          // compiles.
+          return <span className="text-[12px] text-[var(--text-muted)]">—</span>;
         }
         const ok = lc.state === 'success'
           && (lc.validate_only || lc.download_only || lc.ota_result === 'success');

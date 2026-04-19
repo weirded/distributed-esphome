@@ -36,12 +36,17 @@ logger = logging.getLogger(__name__)
 _FALLBACK_AUTHOR_NAME = "HA User"
 _FALLBACK_AUTHOR_EMAIL = "ha@distributed-esphome.local"
 
-# .gitignore entries that should always exist on an ESPHome config dir —
-# secrets shouldn't end up in commits, the ESPHome build cache is huge
-# and machine-local, and `.archive/` is Fleet's soft-delete holding pen
-# (the canonical delete already shows up in git as a delete; we don't
-# need to also track the archive-dir copy).
-GITIGNORE_ENTRIES: tuple[str, ...] = ("secrets.yaml", ".esphome/", ".archive/")
+# .gitignore entries that should always exist on an ESPHome config dir.
+# Secrets shouldn't end up in commits, and the ESPHome build cache is
+# huge + machine-local.
+#
+# #63 update (dev.35): ``.archive/`` is NO LONGER ignored. The archive
+# flow now uses `git mv` so a delete-then-restore preserves the file's
+# history across the archive/unarchive boundary, and `git log --follow`
+# threads through the move. The soft-delete copy in `.archive/<name>`
+# is a normal tracked file and shows up in `git status` like any other
+# config.
+GITIGNORE_ENTRIES: tuple[str, ...] = ("secrets.yaml", ".esphome/")
 
 # 2-second debounce window for auto-commits (per path).
 DEBOUNCE_SECONDS = 2.0
@@ -753,6 +758,198 @@ def _parse_log_with_numstat(raw: str, marker: str, field_sep: str) -> list[dict[
         current["lines_removed"] = removed_total
         entries.append(current)
     return entries
+
+
+ARCHIVE_DIRNAME = ".archive"
+
+
+async def archive_and_commit(config_dir: Path, relpath: str) -> bool:
+    """Bug #63: archive + commit in one shot.
+
+    Runs :func:`archive_with_git_mv` synchronously (git ops are fast
+    enough that the event loop doesn't care), then — if auto-commit is
+    on — commits BOTH sides of the move (deletion of the root path,
+    addition of ``.archive/<relpath>``) in a single commit so git's
+    rename detection on the commit diff picks it up as ``R``.
+
+    Returns True when the archive move itself succeeded. The commit is
+    best-effort — if auto-commit is off or the commit fails, the
+    on-disk move is still correct, and the next manual / auto commit
+    will catch up.
+    """
+    from settings import get_settings  # noqa: PLC0415
+
+    config_dir = Path(config_dir)
+    moved = archive_with_git_mv(config_dir, relpath)
+    if not moved:
+        return False
+    if not _is_git_repo(config_dir) or not get_settings().auto_commit_on_save:
+        return True
+
+    dest_rel = f"{ARCHIVE_DIRNAME}/{relpath}"
+    override = _identity_override_args(config_dir)
+    # Stage both sides — git mv already did this, but re-staging is a
+    # no-op and protects against the defensive "maybe some path slipped
+    # through" case.
+    _run(["git", "add", "--all", "--", relpath, dest_rel], cwd=config_dir, check=False)
+    commit = _run(
+        ["git", *override, "commit",
+         "-m", "Archived device (soft-delete)",
+         "--", relpath, dest_rel],
+        cwd=config_dir, check=False,
+    )
+    if commit.returncode != 0 and "nothing to commit" not in (commit.stderr + commit.stdout).lower():
+        logger.warning(
+            "archive commit failed for %s: %s",
+            relpath, (commit.stderr or commit.stdout).strip(),
+        )
+    return True
+
+
+async def restore_and_commit(config_dir: Path, filename: str) -> bool:
+    """Bug #63: restore + commit in one shot — inverse of
+    :func:`archive_and_commit`."""
+    from settings import get_settings  # noqa: PLC0415
+
+    config_dir = Path(config_dir)
+    moved = restore_with_git_mv(config_dir, filename)
+    if not moved:
+        return False
+    if not _is_git_repo(config_dir) or not get_settings().auto_commit_on_save:
+        return True
+
+    src_rel = f"{ARCHIVE_DIRNAME}/{filename}"
+    override = _identity_override_args(config_dir)
+    _run(["git", "add", "--all", "--", src_rel, filename], cwd=config_dir, check=False)
+    commit = _run(
+        ["git", *override, "commit",
+         "-m", "Restored archived device",
+         "--", src_rel, filename],
+        cwd=config_dir, check=False,
+    )
+    if commit.returncode != 0 and "nothing to commit" not in (commit.stderr + commit.stdout).lower():
+        logger.warning(
+            "restore commit failed for %s: %s",
+            filename, (commit.stderr or commit.stdout).strip(),
+        )
+    return True
+
+
+def archive_with_git_mv(config_dir: Path, relpath: str) -> bool:
+    """Bug #63: move *relpath* into ``.archive/`` using ``git mv`` so
+    the operation reads as a rename in git history.
+
+    Falls back to a filesystem rename when the source file isn't
+    currently tracked (fresh, uncommitted creates that the user
+    immediately deletes). Returns True on success, False on hard
+    failure. Non-repo paths go through the raw rename silently — the
+    caller is responsible for creating the archive directory.
+    """
+    config_dir = Path(config_dir)
+    src = config_dir / relpath
+    archive_dir = config_dir / ARCHIVE_DIRNAME
+    dest_rel = f"{ARCHIVE_DIRNAME}/{relpath}"
+    dest = config_dir / dest_rel
+
+    archive_dir.mkdir(exist_ok=True)
+
+    if not _is_git_repo(config_dir):
+        try:
+            src.rename(dest)
+            return True
+        except Exception:
+            logger.exception("archive rename failed for %s", relpath)
+            return False
+
+    # Check if src is tracked — an untracked file can't be `git mv`d.
+    tracked = _run(
+        ["git", "ls-files", "--error-unmatch", "--", relpath],
+        cwd=config_dir, check=False,
+    )
+    if tracked.returncode != 0:
+        try:
+            src.rename(dest)
+            return True
+        except Exception:
+            logger.exception("archive rename fallback failed for %s", relpath)
+            return False
+
+    try:
+        mv = _run(["git", "mv", relpath, dest_rel], cwd=config_dir, check=False)
+        if mv.returncode != 0:
+            logger.warning(
+                "git mv %s → %s failed: %s",
+                relpath, dest_rel, (mv.stderr or mv.stdout).strip(),
+            )
+            # Best-effort fallback: try a raw rename + let the next
+            # auto-commit pick it up as delete+add (rename detection
+            # may or may not kick in, but the file at least lands).
+            if src.exists() and not dest.exists():
+                try:
+                    src.rename(dest)
+                    return True
+                except Exception:
+                    logger.exception("fallback rename failed for %s", relpath)
+            return False
+        return True
+    except Exception:
+        logger.exception("archive_with_git_mv pipeline failed for %s", relpath)
+        return False
+
+
+def restore_with_git_mv(config_dir: Path, filename: str) -> bool:
+    """Bug #63: move *filename* from ``.archive/`` back to the config
+    root using ``git mv`` so history threads across archive → restore.
+
+    Returns True on success, False otherwise. Non-repo paths fall back
+    to a raw filesystem rename.
+    """
+    config_dir = Path(config_dir)
+    src_rel = f"{ARCHIVE_DIRNAME}/{filename}"
+    src = config_dir / src_rel
+    dest = config_dir / filename
+
+    if not src.exists():
+        return False
+
+    if not _is_git_repo(config_dir):
+        try:
+            src.rename(dest)
+            return True
+        except Exception:
+            logger.exception("restore rename failed for %s", filename)
+            return False
+
+    tracked = _run(
+        ["git", "ls-files", "--error-unmatch", "--", src_rel],
+        cwd=config_dir, check=False,
+    )
+    if tracked.returncode != 0:
+        try:
+            src.rename(dest)
+            return True
+        except Exception:
+            logger.exception("restore rename fallback failed for %s", filename)
+            return False
+
+    try:
+        mv = _run(["git", "mv", src_rel, filename], cwd=config_dir, check=False)
+        if mv.returncode != 0:
+            logger.warning(
+                "git mv %s → %s failed: %s",
+                src_rel, filename, (mv.stderr or mv.stdout).strip(),
+            )
+            if src.exists() and not dest.exists():
+                try:
+                    src.rename(dest)
+                    return True
+                except Exception:
+                    logger.exception("fallback rename failed for %s", filename)
+            return False
+        return True
+    except Exception:
+        logger.exception("restore_with_git_mv pipeline failed for %s", filename)
+        return False
 
 
 # ---------------------------------------------------------------------------
