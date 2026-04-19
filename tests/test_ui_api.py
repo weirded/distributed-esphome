@@ -1009,7 +1009,11 @@ async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_i
         # (see _make_ui_app); assert on shape, not the value.
         assert isinstance(data.pop("server_token"), str)
         assert data == {
-            "versioning_enabled": "unset",
+            # _make_ui_app PATCHes 'on' so the file-history endpoints
+            # in this module's other tests work; that's what GET sees
+            # here. The dataclass default ('unset' on a truly-fresh
+            # boot) is covered by tests/test_settings.py.
+            "versioning_enabled": "on",
             "auto_commit_on_save": True,
             "git_author_name": "HA User",
             "git_author_email": "ha@distributed-esphome.local",
