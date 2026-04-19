@@ -763,6 +763,26 @@ def _parse_log_with_numstat(raw: str, marker: str, field_sep: str) -> list[dict[
 ARCHIVE_DIRNAME = ".archive"
 
 
+def _staged_paths(config_dir: Path) -> set[str]:
+    """Return the set of paths that currently have staged changes.
+
+    Used by #95 to filter commit-time pathspecs down to what's actually
+    different from HEAD. Passing a pathspec that doesn't match anything
+    staged makes ``git commit -- pathspec`` emit
+    ``pathspec '...' did not match any file(s) known to git`` and return
+    non-zero even when the intended paths are in the index — see the
+    hass-4 WARNING on 2026-04-19. Empty set on any failure (treated as
+    "nothing known to be staged").
+    """
+    diff = _run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=config_dir, check=False,
+    )
+    if diff.returncode != 0:
+        return set()
+    return {line for line in diff.stdout.splitlines() if line}
+
+
 async def archive_and_commit(config_dir: Path, relpath: str) -> bool:
     """Bug #63: archive + commit in one shot.
 
@@ -788,14 +808,18 @@ async def archive_and_commit(config_dir: Path, relpath: str) -> bool:
 
     dest_rel = f"{ARCHIVE_DIRNAME}/{relpath}"
     override = _identity_override_args(config_dir)
-    # Stage both sides — git mv already did this, but re-staging is a
-    # no-op and protects against the defensive "maybe some path slipped
-    # through" case.
+    # Stage both sides — git mv already did this, but re-staging covers
+    # the raw-rename fallback where the source wasn't tracked.
     _run(["git", "add", "--all", "--", relpath, dest_rel], cwd=config_dir, check=False)
+    # #95: filter pathspecs to those actually staged so we never feed a
+    # "pathspec did not match" to ``git commit``.
+    wanted = _staged_paths(config_dir) & {relpath, dest_rel}
+    if not wanted:
+        return True
     commit = _run(
         ["git", *override, "commit",
          "-m", "Archived device (soft-delete)",
-         "--", relpath, dest_rel],
+         "--", *sorted(wanted)],
         cwd=config_dir, check=False,
     )
     if commit.returncode != 0 and "nothing to commit" not in (commit.stderr + commit.stdout).lower():
@@ -808,7 +832,13 @@ async def archive_and_commit(config_dir: Path, relpath: str) -> bool:
 
 async def restore_and_commit(config_dir: Path, filename: str) -> bool:
     """Bug #63: restore + commit in one shot — inverse of
-    :func:`archive_and_commit`."""
+    :func:`archive_and_commit`.
+
+    #95: when the ``.archive/<file>`` side was never tracked in git
+    (e.g. it was archived under the pre-#63 gitignored-``.archive/``
+    regime and restored after the upgrade), the src pathspec isn't
+    known to git, so we filter it out of the final ``git commit`` call.
+    """
     from settings import get_settings  # noqa: PLC0415
 
     config_dir = Path(config_dir)
@@ -821,15 +851,98 @@ async def restore_and_commit(config_dir: Path, filename: str) -> bool:
     src_rel = f"{ARCHIVE_DIRNAME}/{filename}"
     override = _identity_override_args(config_dir)
     _run(["git", "add", "--all", "--", src_rel, filename], cwd=config_dir, check=False)
+    wanted = _staged_paths(config_dir) & {src_rel, filename}
+    if not wanted:
+        return True
     commit = _run(
         ["git", *override, "commit",
          "-m", "Restored archived device",
-         "--", src_rel, filename],
+         "--", *sorted(wanted)],
         cwd=config_dir, check=False,
     )
     if commit.returncode != 0 and "nothing to commit" not in (commit.stderr + commit.stdout).lower():
         logger.warning(
             "restore commit failed for %s: %s",
+            filename, (commit.stderr or commit.stdout).strip(),
+        )
+    return True
+
+
+async def delete_archived_and_commit(config_dir: Path, filename: str) -> bool:
+    """#94: delete a file under ``.archive/`` and commit the removal.
+
+    Pre-#63 ``.archive/`` was gitignored, so deleting an archived file
+    was a pure ``os.unlink``. Post-#63 the directory is tracked, which
+    means a bare unlink leaves a dangling ``deleted:`` entry in the
+    working tree that only gets committed the next time some *other*
+    write path runs the auto-committer. Fix: do the delete through
+    ``git rm`` when the file is tracked, and commit immediately so the
+    history reflects the operation.
+
+    Falls back to a raw ``unlink()`` when the file was never tracked
+    (e.g. the pre-#63 archive case where the file predates tracking).
+    Returns True when the filesystem delete succeeded.
+    """
+    from settings import get_settings  # noqa: PLC0415
+
+    config_dir = Path(config_dir)
+    rel = f"{ARCHIVE_DIRNAME}/{filename}"
+    path = config_dir / rel
+
+    if not path.exists():
+        return False
+
+    if not _is_git_repo(config_dir):
+        try:
+            path.unlink()
+            return True
+        except Exception:
+            logger.exception("delete_archived unlink failed for %s", filename)
+            return False
+
+    tracked = _run(
+        ["git", "ls-files", "--error-unmatch", "--", rel],
+        cwd=config_dir, check=False,
+    )
+    if tracked.returncode != 0:
+        # Not tracked — nothing for git to record; raw unlink.
+        try:
+            path.unlink()
+            return True
+        except Exception:
+            logger.exception("delete_archived unlink fallback failed for %s", filename)
+            return False
+
+    rm = _run(["git", "rm", "--", rel], cwd=config_dir, check=False)
+    if rm.returncode != 0:
+        logger.warning(
+            "git rm %s failed: %s",
+            rel, (rm.stderr or rm.stdout).strip(),
+        )
+        # Clean up the working tree if git left the file in place.
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception:
+                logger.exception("cleanup unlink failed for %s", filename)
+        return True  # filesystem side is correct; the commit just didn't land
+
+    if not get_settings().auto_commit_on_save:
+        return True
+
+    override = _identity_override_args(config_dir)
+    wanted = _staged_paths(config_dir) & {rel}
+    if not wanted:
+        return True
+    commit = _run(
+        ["git", *override, "commit",
+         "-m", "Deleted archived device",
+         "--", *sorted(wanted)],
+        cwd=config_dir, check=False,
+    )
+    if commit.returncode != 0 and "nothing to commit" not in (commit.stderr + commit.stdout).lower():
+        logger.warning(
+            "delete_archived commit failed for %s: %s",
             filename, (commit.stderr or commit.stdout).strip(),
         )
     return True

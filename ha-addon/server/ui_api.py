@@ -2130,10 +2130,18 @@ async def restore_archive(request: web.Request) -> web.Response:
 
 @routes.delete("/ui/api/archive/{filename}")
 async def delete_archived(request: web.Request) -> web.Response:
-    """Permanently delete an archived config file."""
+    """Permanently delete an archived config file.
+
+    #94: routes through :func:`git_versioning.delete_archived_and_commit`
+    so the ``git rm`` lands in history when ``.archive/`` is tracked.
+    Pre-#94 this was a bare ``os.unlink`` that left a dangling
+    ``deleted:`` entry in the working tree until the next auto-commit
+    ran for some unrelated write.
+    """
     filename = request.match_info["filename"]
     cfg = _cfg(request)
-    archive_dir = Path(cfg.config_dir) / ".archive"
+    config_dir = Path(cfg.config_dir)
+    archive_dir = config_dir / ".archive"
     path = safe_resolve(archive_dir, filename)
     if path is None:
         return json_error("Invalid filename")
@@ -2141,12 +2149,15 @@ async def delete_archived(request: web.Request) -> web.Response:
     if not path.exists():
         return json_error("File not found", 404)
 
+    from git_versioning import delete_archived_and_commit  # noqa: PLC0415
     try:
-        path.unlink()
+        ok = await delete_archived_and_commit(config_dir, filename)
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
+    if not ok:
+        return web.json_response({"error": "delete failed"}, status=500)
 
-    logger.info("Permanently deleted archived config %s", filename)
+    logger.info("Deleted archived config %s", filename)
     return web.json_response({"ok": True})
 
 

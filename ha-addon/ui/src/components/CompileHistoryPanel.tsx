@@ -248,16 +248,19 @@ function HistoryRow({
           )}
         </span>
         <span className={`shrink-0 ${badge.cls}`}>{badge.label}</span>
-        {/* Bug #39: show when the compile actually *started* (claimed by
-            worker) alongside the "finished" relative time. Hover reveals
-            both absolute timestamps. */}
+        {/* #39 + #93: cell shows the relative "finished" time; hover
+            reveals submitted (user/scheduler/API submission = start of
+            the job's existence), worker pickup (if any), and the
+            finish. Previously we labelled ``assigned_at`` as "Started",
+            which read as "not started" on any row where a worker never
+            claimed the job — see #93. */}
         <span
           className="text-[12px] text-[var(--text-muted)] tabular-nums"
-          title={
-            row.started_at
-              ? `Started: ${fmtEpochAbsolute(row.started_at)}\nFinished: ${fmtEpochAbsolute(row.finished_at)}`
-              : fmtEpochAbsolute(row.finished_at)
-          }
+          title={[
+            row.submitted_at ? `Submitted: ${fmtEpochAbsolute(row.submitted_at)}` : null,
+            row.started_at ? `Worker picked up: ${fmtEpochAbsolute(row.started_at)}` : null,
+            row.finished_at ? `Finished: ${fmtEpochAbsolute(row.finished_at)}` : null,
+          ].filter(Boolean).join('\n')}
         >
           <Clock className="inline-block size-3 mr-1 -mt-0.5" aria-hidden="true" />
           {fmtEpochRelative(row.finished_at)}

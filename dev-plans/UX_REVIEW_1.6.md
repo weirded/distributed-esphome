@@ -1,7 +1,7 @@
 # UX Review — 1.6.0 New Surfaces
 
 **Review type:** Hyper-critical pre-ship walkthrough.
-**Method:** Live Playwright session against `hass-4` (running `1.6.0-dev.26`) at 1440×900, dark mode, with the production fleet (67 devices, 7 workers, real history). Screenshots saved under `.playwright-mcp/ux-review-1.6/`.
+**Method:** Live Playwright session against `hass-4` (running `1.6.0-dev.26`) at 1440×900, dark mode, with the production fleet (67 devices, 7 workers, real history).
 **Persona reference:** `dev-plans/USER_PERSONA.md` ("Pat" — tech-curious homeowner, 30–150 devices, info-dense over progressive disclosure, allergic to inconsistency, dark-mode default, keyboard-operable).
 **Scope:** SP.\* (Settings drawer), AV.\* (Auto-versioning history panel + manual commit), JH.5/6/7 (compile history surfaces). Bug fixes #1–#46 in the same release are spot-checked.
 
@@ -40,7 +40,7 @@ Queued as WORKITEMS-1.6.md bugs; this index records the disposition for every it
 ### 🚫 1.1 Restore-confirmation dialog says the wrong thing about auto-commit
 
 **Where:** History panel → click *Restore* on any commit row.
-**What I saw (`09-restore-dialog.png`):**
+**What I saw:**
 
 > "The file on disk will be replaced with its content at 315542d. **No new commit will be created (auto-commit is off).**"
 
@@ -55,7 +55,7 @@ The Settings drawer toggle for `Auto-commit on save` was demonstrably **on** at 
 ### 🚫 1.2 Manual-commit prompt placeholder shows the legacy raw subject, not the human-readable form
 
 **Where:** History panel → "You have uncommitted changes" banner → click *Commit…* → message field.
-**What I saw (`08-commit-dialog.png`):** placeholder reads `save: cyd-office-info.yaml (manual)` — the pre-#34 raw form. Meanwhile the actual commits in the list directly below render as the curated `_DEFAULT_SUBJECTS` strings: *"Automatically saved after editing in UI"*, *"Set one-time scheduled upgrade"*, etc.
+**What I saw:** placeholder reads `save: cyd-office-info.yaml (manual)` — the pre-#34 raw form. Meanwhile the actual commits in the list directly below render as the curated `_DEFAULT_SUBJECTS` strings: *"Automatically saved after editing in UI"*, *"Set one-time scheduled upgrade"*, etc.
 
 **Why this matters for Pat:** Pat is the one who flagged inconsistency as a top-tier irritation in `UX_REVIEW.md` ("notices when 'Upgrade' and 'COMPILING + OTA' refer to the same thing"). Showing the old jargon-ish form as the suggested default while the rest of the surface uses the new human form is exactly the kind of inconsistency that grates. It also implies #34 was incomplete — the developer-facing default is curated, the user-facing default is not.
 
@@ -66,7 +66,7 @@ The Settings drawer toggle for `Auto-commit on save` was demonstrably **on** at 
 ### 🚫 1.3 Settings drawer section ordering is feature-driven, not user-need-driven
 
 **Where:** Settings gear → drawer.
-**What I saw (`02-settings-drawer-top.png`, `05-settings-timeouts-polling-about.png`):** sections in this order:
+**What I saw:** sections in this order:
 1. Config versioning
 2. Job history
 3. Disk management
@@ -95,7 +95,7 @@ Add Lucide icons to the section headers (`Lock`, `GitBranch`, `History`, `HardDr
 ### 🚫 1.4 Compile-history log progress bar still renders as a static `===` strip
 
 **Where:** Queue tab → *History* button → expand any Success row OR Devices row → *Compile history…* → expand a Success row.
-**What I saw (`12-history-row-expanded.png`, `17-history-row-inline-log.png`):**
+**What I saw:**
 
 ```
 Uploading: [=====================================================] 100% Done...
@@ -115,7 +115,7 @@ Bug **#51** explicitly calls this out and is currently `[ ]` (open). The rendere
 ### 🚫 1.5 "Last compiled" column SUCCESS indicator renders as a tiny bullet
 
 **Where:** Devices tab → column picker → enable *Last compiled*.
-**What I saw (`19-last-compiled-column.png`):** `cyd-office-info` row shows `3m ago ·` — a small mid-line bullet character after the relative time. The JH.6 spec calls for `Xago ✓` (green check) on success, `Xago ✗` (red) on failure. What renders looks more like a stray separator or a missing icon glyph than the documented success badge.
+**What I saw:** `cyd-office-info` row shows `3m ago ·` — a small mid-line bullet character after the relative time. The JH.6 spec calls for `Xago ✓` (green check) on success, `Xago ✗` (red) on failure. What renders looks more like a stray separator or a missing icon glyph than the documented success badge.
 
 **Why this matters for Pat:** the whole *point* of JH.6 is "scan the Devices tab for stale or red devices at a glance." A tiny bullet doesn't read as a status — it reads as a typo. Pat would have to hover to find the truth.
 
@@ -127,14 +127,14 @@ Bug **#51** explicitly calls this out and is currently `[ ]` (open). The rendere
 
 These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in the live UI. Calling them out here so they don't get triaged "low" by mistake:
 
-| # | Title | Confirmed visible at | Notes |
-|---|---|---|---|
-| **#47** | Started + duration blank for cancelled jobs | `14-queue-history-modal.png`, `10-compile-history-drawer.png` | Both surfaces show `—` for cancelled rows. Not a bug per se but the user explicitly flagged it as confusing. Fill at least `started_at` (we have it) and show `cancelled` as the duration explanation, e.g. `cancelled before start` / `0s (cancelled)`. |
-| **#49** | "Time picker is super jank" | `15-history-date-presets.png` | Confirmed. Clicking the "Last 30 days" pill drops you straight into a Custom range picker that shows weekday headers cut off, no month/year label, and a `To: 23:59` time field. The promised preset-pill row (24h / 7d / 30d / 90d / 1y) is missing entirely. Pat hits this on every history-window change. |
-| **#51** | Progress bar in history is messed up | `12-`, `17-`, `16-`*.png* | Confirmed (see 1.4 above — promoted to ship-blocker). |
-| **#52** | Mono vs regular font inconsistency | `14-queue-history-modal.png` | Confirmed. Commit hash is mono; everything else is sans. Inconsistent with how the Queue tab's row layout treats hashes (also mono there but row-density differs). |
-| **#53** | Sorting in history modal doesn't change SQL | `14-queue-history-modal.png` | Could not confirm from UI alone — the `Finished ↓` arrow is visible and clickable, but proving it doesn't push down to SQLite needs a network-trace check. Worth running before ship. |
-| **#54** | Window-presets vs infinite scroll incoherence | `15-history-date-presets.png` | Counterpoint: presets are a SQL-window filter, infinite scroll is page-load. They're not conceptually contradictory — they could coexist if presented as "SQL filter window" + "loading more rows within that window". The user's read of "doesn't make much sense" is real though, because the *visual* presentation doesn't communicate the difference. Surface "Showing 26 rows from the last 30 days" near the row counter, not just "Showing 26 rows". |
+| # | Title | Notes |
+|---|---|---|
+| **#47** | Started + duration blank for cancelled jobs | Both surfaces show `—` for cancelled rows. Not a bug per se but the user explicitly flagged it as confusing. Fill at least `started_at` (we have it) and show `cancelled` as the duration explanation, e.g. `cancelled before start` / `0s (cancelled)`. |
+| **#49** | "Time picker is super jank" | Confirmed. Clicking the "Last 30 days" pill drops you straight into a Custom range picker that shows weekday headers cut off, no month/year label, and a `To: 23:59` time field. The promised preset-pill row (24h / 7d / 30d / 90d / 1y) is missing entirely. Pat hits this on every history-window change. |
+| **#51** | Progress bar in history is messed up | Confirmed (see 1.4 above — promoted to ship-blocker). |
+| **#52** | Mono vs regular font inconsistency | Confirmed. Commit hash is mono; everything else is sans. Inconsistent with how the Queue tab's row layout treats hashes (also mono there but row-density differs). |
+| **#53** | Sorting in history modal doesn't change SQL | Could not confirm from UI alone — the `Finished ↓` arrow is visible and clickable, but proving it doesn't push down to SQLite needs a network-trace check. Worth running before ship. |
+| **#54** | Window-presets vs infinite scroll incoherence | Counterpoint: presets are a SQL-window filter, infinite scroll is page-load. They're not conceptually contradictory — they could coexist if presented as "SQL filter window" + "loading more rows within that window". The user's read of "doesn't make much sense" is real though, because the *visual* presentation doesn't communicate the difference. Surface "Showing 26 rows from the last 30 days" near the row counter, not just "Showing 26 rows". |
 
 ---
 
@@ -143,7 +143,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.1 History-panel diff editor is cramped vertically
 
 **Where:** AV.6 history drawer.
-**What I saw (`07-history-panel.png`):** the Monaco DiffEditor sits at ~330px tall — about 17 lines of YAML. Configs at hass-4 routinely run 100+ lines (the BMS, the matter test, the gate controllers). Pat will scroll the diff editor scroll-within-a-drawer-within-the-page, three nested scroll contexts.
+**What I saw:** the Monaco DiffEditor sits at ~330px tall — about 17 lines of YAML. Configs at hass-4 routinely run 100+ lines (the BMS, the matter test, the gate controllers). Pat will scroll the diff editor scroll-within-a-drawer-within-the-page, three nested scroll contexts.
 
 **Fix:** make the diff editor consume the visible drawer height minus the From/To bar and a 1-line commit-list teaser. Move the commit list to a collapsible "Commits ▾" footer or to a left rail. The diff IS the headline content; commit list is navigation.
 
@@ -152,7 +152,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.2 History drawer covers the underlying tab but doesn't darken/disable it
 
 **Where:** AV.6, JH.5 drawers.
-**What I saw (`07-history-panel.png`, `10-compile-history-drawer.png`):** the drawer covers ~70% of viewport width but the Devices table on the left is still rendered at full opacity, stale (workers/devices keep updating in the background, badges flicker). Pat's eye keeps darting back to the still-live table.
+**What I saw:** the drawer covers ~70% of viewport width but the Devices table on the left is still rendered at full opacity, stale (workers/devices keep updating in the background, badges flicker). Pat's eye keeps darting back to the still-live table.
 
 **Fix:** add the standard shadcn Sheet `overlay` prop with a 40–60% black overlay over the underlying app. Other modal surfaces in the app (Restore dialog) already do this; the drawer is the odd one out.
 
@@ -161,7 +161,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.3 "Greyed-out menu items have no tooltip explaining why"
 
 **Where:** Devices row hamburger → *Restart* (greyed) and *Copy API Key* (greyed) on devices that lack a `restart_button` or an `api.encryption.key`.
-**What I saw (`06-hamburger-menu-dirty.png`):** both greyed, no `title=` / no tooltip. Pat hovers, gets nothing, clicks (no-op or disabled), guesses.
+**What I saw:** both greyed, no `title=` / no tooltip. Pat hovers, gets nothing, clicks (no-op or disabled), guesses.
 
 **Fix:** add the same `title=` pattern UX_REVIEW.md flagged for icon buttons. Strings: *"Add a `button.restart` to this YAML to enable Restart from the UI"* / *"Set `api.encryption.key` to enable API access"*. Also matches CLAUDE.md's "Disable, don't fail" rule — currently we disable but don't tell them how to enable.
 
@@ -179,7 +179,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.5 Two history items in the hamburger ("Compile history…" + "Config history…") could collide
 
 **Where:** Devices row hamburger.
-**What I saw (`06-hamburger-menu-dirty.png`):** under the **Device** group: *Compile history…* (JH.5). Under the **Config** group: *Config history…* (AV.6). The disambiguation works because of the group headers, but a Pat scanning quickly will see "two history items" and pause.
+**What I saw:** under the **Device** group: *Compile history…* (JH.5). Under the **Config** group: *Config history…* (AV.6). The disambiguation works because of the group headers, but a Pat scanning quickly will see "two history items" and pause.
 
 **Fix (small):** add lightweight Lucide icons next to each — `History` (clock-with-arrow) on Compile history, `GitBranch` on Config history. The icons reinforce the section grouping faster than the indented headers do.
 
@@ -197,7 +197,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.7 No min/max hints in numeric Settings inputs
 
 **Where:** Job timeout, OTA timeout, Worker offline threshold, Device poll interval, Retention (days), Firmware cache size (GB), Job log retention (days).
-**What I saw (`05-settings-timeouts-polling-about.png`):** plain `<input type="number">` with no helper text about valid ranges. Pat sets `Job timeout` to `0` — what happens? Sets it to `5` (way too low) — what happens?
+**What I saw:** plain `<input type="number">` with no helper text about valid ranges. Pat sets `Job timeout` to `0` — what happens? Sets it to `5` (way too low) — what happens?
 
 **Fix:** add `(default 600, min 60, max 7200)` to the helper text under each numeric setting. Server-side the validators in `settings.py` already know these bounds — surface them. Same shape as how the spec calls out `0 = unlimited` for Retention.
 
@@ -206,7 +206,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.8 Authentication section's "Server token" reveal/copy buttons have no tooltips
 
 **Where:** Settings → Authentication.
-**What I saw (`02-settings-drawer-top.png`):** masked password field, eye-icon (reveal), clipboard-icon (copy). Both icon-only with no `title=` / no `aria-label` visible to a hover. CLAUDE.md UI-7 explicitly says icon-only buttons need both `aria-label` AND `title`.
+**What I saw:** masked password field, eye-icon (reveal), clipboard-icon (copy). Both icon-only with no `title=` / no `aria-label` visible to a hover. CLAUDE.md UI-7 explicitly says icon-only buttons need both `aria-label` AND `title`.
 
 **Fix:** add `aria-label="Show server token"` + `title="Show server token"` to the eye, `aria-label="Copy server token to clipboard"` + matching `title=` to the clipboard. UI-7 is an enforced invariant — this might already fail `check-invariants.sh` if it's grep-aware enough.
 
@@ -215,7 +215,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.9 "Restore" button is shown on every commit row including HEAD itself
 
 **Where:** AV.6 commit list.
-**What I saw (`07-history-panel.png`):** every row has a Restore button — including the topmost (most recent) commit, where Restore is a no-op (`git checkout HEAD -- file` against an unchanged file). Pat clicks; nothing visible happens; trust dings.
+**What I saw:** every row has a Restore button — including the topmost (most recent) commit, where Restore is a no-op (`git checkout HEAD -- file` against an unchanged file). Pat clicks; nothing visible happens; trust dings.
 
 **Fix:** disable Restore (with `title="Already at this version"`) when the row is HEAD AND the working tree is clean for that file. The data to compute this is already on the page (HEAD is the first row's hash; `has_uncommitted_changes` is on `Target`).
 
@@ -224,7 +224,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.10 Times in Queue tab use 12-hour AM/PM, mixed with relative-time everywhere else
 
 **Where:** Queue tab Start/Finish columns.
-**What I saw (`13-queue-tab.png`):** `08:42:41 PM` / `1m ago`. Pat is plausibly European (per persona) and uses 24-hour time daily.
+**What I saw:** `08:42:41 PM` / `1m ago`. Pat is plausibly European (per persona) and uses 24-hour time daily.
 
 **Fix:** match the relative+absolute format used in the History panel commit list (`1h ago` over `Apr 18, 19:34`). 24-hour. Locale-aware via `Intl.DateTimeFormat` if we want to be properly global. At minimum, drop the AM/PM.
 
@@ -242,7 +242,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 ### ⚠️ 3.12 Scheduled-once jobs that get cancelled show in history with "—" for everything except finished_at
 
 **Where:** Compile history drawer + Queue History modal.
-**What I saw (`10-compile-history-drawer.png`, `14-queue-history-modal.png`):** rows like `Cancelled · 22m ago · — · Scheduled (once) · 2026.4.0 · 315542d`. Worker is `—`, duration is `—`, started is `—`. Pat sees these and asks "did this even happen?"
+**What I saw:** rows like `Cancelled · 22m ago · — · Scheduled (once) · 2026.4.0 · 315542d`. Worker is `—`, duration is `—`, started is `—`. Pat sees these and asks "did this even happen?"
 
 **Fix:** for Scheduled+Cancelled, render the trigger as `Scheduled (once) — cancelled before start` and drop the `—` placeholders. The data we have ABOUT the cancelled scheduled job is the schedule itself + the cancellation time + the reason. Render that. Currently we render the absence.
 
@@ -282,28 +282,6 @@ In priority order (highest-bang-per-fix first):
 **Total**: roughly one focused day of work. Items in 3.\* that aren't on the list are nice-to-haves; defer to a 1.6.1 polish pass if time is tight, but **don't ship 1.6 with 1.1, 1.2, 1.4, 1.5 unfixed** — those four are the ones that actively erode Pat's trust.
 
 ---
-
-## Appendix — screenshots
-
-All under `.playwright-mcp/ux-review-1.6/`:
-
-| File | What it shows |
-|---|---|
-| `01-devices-overview.png` | Devices tab default, Pat's 67-device fleet |
-| `02-settings-drawer-top.png` | SP.4 drawer top sections (Config versioning → Job history) |
-| `03-`/`04-`/`05-settings-*.png` | Mid + bottom drawer (Disk, Auth, Timeouts, Polling, About) |
-| `06-hamburger-menu-dirty.png` | Devices row hamburger with the dirty `cyd-office-info` row open — shows greyed Restart/Copy API Key items |
-| `07-history-panel.png` | AV.6 History panel — diff + commit list |
-| `08-commit-dialog.png` | AV.11 commit message inline prompt — placeholder bug |
-| `09-restore-dialog.png` | Restore confirmation — auto-commit-state bug |
-| `10-compile-history-drawer.png` | JH.5 per-device compile history |
-| `11-`/`12-history-row-expanded.png` | JH.5 expanded log row with progress-bar artifact |
-| `13-queue-tab.png` | Live Queue tab |
-| `14-queue-history-modal.png` | JH.7 fleet-wide compile history modal |
-| `15-history-date-presets.png` | Jank custom date picker (#49) |
-| `17-history-row-inline-log.png` | JH.7 expanded row, progress bar artifact |
-| `18-column-picker.png` | Devices column picker (Last compiled toggle) |
-| `19-last-compiled-column.png` | JH.6 column on, success-badge rendering quirk |
 
 ---
 

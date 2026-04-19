@@ -60,7 +60,10 @@ const SORTABLE: Record<string, SortColumn> = {
   state: 'state',
   esphome_version: 'esphome_version',
   duration_seconds: 'duration_seconds',
-  started_at: 'started_at',
+  // #93: the "Started" column now reads ``submitted_at`` (user
+  // submission time). Server-side `_SORT_COLUMNS` already accepts
+  // ``submitted_at`` as a whitelisted sort key.
+  submitted_at: 'submitted_at',
   finished_at: 'finished_at',
   triggered_by: 'triggered_by',
   assigned_hostname: 'assigned_hostname',
@@ -275,19 +278,23 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
           );
         },
       }),
-      ch.accessor((r) => r.started_at ?? 0, {
-        id: 'started_at',
+      // #93: "Started" now means "when the user / scheduler / API
+      // submitted the job" (= submitted_at on the DB side, = job
+      // created_at on the Job model). The previous wiring pointed at
+      // ``assigned_at`` (worker pickup) which read as "not started"
+      // for any row where a worker never claimed it — nonsensical on
+      // a finished row. Worker-pickup time is still shown in the
+      // tooltip for anyone who needs it.
+      ch.accessor((r) => r.submitted_at ?? 0, {
+        id: 'submitted_at',
         header: ({ column }) => <SortHeader label="Started" column={column} />,
         cell: ({ row: { original: r } }) => {
-          // #83: cancelled-before-start rows never *started* — show
-          // "not started" rather than a bare em-dash that reads as
-          // "unknown".
-          if (isScheduledCancelBeforeStart(r)) {
-            return <span className="text-[var(--text-muted)] italic">not started</span>;
-          }
+          const tooltip = r.started_at
+            ? `Submitted: ${fmtEpochAbsolute(r.submitted_at)}\nWorker picked up: ${fmtEpochAbsolute(r.started_at)}`
+            : `Submitted: ${fmtEpochAbsolute(r.submitted_at)}\n(No worker picked up this job — cancelled or rejected before start.)`;
           return (
-            <span className="text-[var(--text-muted)] tabular-nums" title={fmtEpochAbsolute(r.started_at)}>
-              {r.started_at ? fmtEpochRelative(r.started_at) : '—'}
+            <span className="text-[var(--text-muted)] tabular-nums" title={tooltip}>
+              {r.submitted_at ? fmtEpochRelative(r.submitted_at) : '—'}
             </span>
           );
         },

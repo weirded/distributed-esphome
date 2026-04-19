@@ -9,7 +9,6 @@ import {
   updateSettings,
   type AppSettings,
 } from '@/api/client';
-import { ArchivedDevicesList } from './ArchivedDevicesList';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -241,17 +240,13 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   onCommit={v => patch({ time_format: v as 'auto' | '12h' | '24h' })}
                 />
               </Section>
-              {/* CF.2: archived-config viewer. Server endpoints
-                  `/ui/api/archive` + `/ui/api/archive/{f}/restore` +
-                  DELETE have been live since 1.2.0 — this section is the
-                  first UI consumer. Rendered inside the Settings drawer
-                  (rather than as a new tab or modal) because the action
-                  is rare, it's adjacent to the other "manage server
-                  state" toggles, and a dedicated surface would
-                  over-weight how often users actually reach for it. */}
-              <Section title="Archived devices">
-                <ArchivedDevicesList />
-              </Section>
+              {/* #92: Archived-devices section lived here briefly
+                  (CF.2). It moved into the Devices-tab "Add device ▾"
+                  dropdown (#70's "Restore from archive…") where Pat
+                  actually expects to find it — an archived device is a
+                  device-lifecycle concern, not a server-settings one.
+                  Section removed here to avoid two entry points with
+                  the same list (which would diverge). */}
               <Section title="About">
                 <p className="text-xs text-[var(--text-muted)]">
                   Settings are stored in <code className="rounded bg-[var(--surface2)] px-1 py-0.5">/data/settings.json</code>{' '}
