@@ -571,10 +571,25 @@ class JobQueue:
                 return True
 
             if job.state != JobState.WORKING:
-                logger.warning(
-                    "submit_result: job %s (%s) in unexpected state %s",
-                    job_id, job.target, job.state,
-                )
+                # Bug #56: CANCELLED is an expected race here — the user
+                # (or smoke suite) cancels a job while a worker's still
+                # compiling, the worker runs to completion anyway, and
+                # submits its result through this code path. Cancel-
+                # during-compile is a documented affordance, not a bug,
+                # so log at INFO with a clearer message and leave WARNING
+                # for the genuinely-weird cases (duplicate submits, race
+                # with retry, etc.) that still deserve operator attention.
+                if job.state == JobState.CANCELLED:
+                    logger.info(
+                        "discarding submit_result for cancelled job %s (%s); "
+                        "worker %s finished after cancel",
+                        job_id, job.target, job.assigned_client_id or "?",
+                    )
+                else:
+                    logger.warning(
+                        "submit_result: job %s (%s) in unexpected state %s",
+                        job_id, job.target, job.state,
+                    )
                 return False
             job.state = JobState.SUCCESS if status == "success" else JobState.FAILED
             # Use the streamed log if the worker didn't send a final log
