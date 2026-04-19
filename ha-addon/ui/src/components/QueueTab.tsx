@@ -14,7 +14,7 @@ import {
 import type { Job, Target, Worker } from '../types';
 import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
-import { fmtDuration, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
+import { fmtDateTime, fmtDuration, fmtTimeOfDay, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -338,7 +338,7 @@ export function QueueTab({
         if (job.scheduled && job.schedule_kind === 'once') {
           const target = targets.find(t => t.target === job.target);
           const when = target?.schedule_once;
-          const pretty = when ? new Date(when).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+          const pretty = when ? fmtDateTime(new Date(when), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
           return (
             <span
               className="inline-flex items-center gap-1 text-[12px]"
@@ -377,9 +377,9 @@ export function QueueTab({
       header: ({ column }) => <SortHeader label="Start Time" column={column} />,
       cell: ({ row: { original: job } }) => {
         const d = new Date(job.created_at);
-        const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const time = fmtTimeOfDay(d);
         return (
-          <span className="text-[12px]" title={d.toLocaleString()}>
+          <span className="text-[12px]" title={fmtDateTime(d)}>
             {time}
             <div className="text-[10px] text-[var(--text-muted)]">{timeAgo(job.created_at)}</div>
           </span>
@@ -399,12 +399,12 @@ export function QueueTab({
         }
         if (!job.finished_at) return <span className="text-[12px]">—</span>;
         const finished = new Date(job.finished_at);
-        const time = finished.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const time = fmtTimeOfDay(finished);
         // Duration = wall clock from enqueue to finish, not just worker compile time
         const wallSeconds = (finished.getTime() - new Date(job.created_at).getTime()) / 1000;
         const dur = wallSeconds >= 0 ? fmtDuration(wallSeconds) : null;
         return (
-          <span className="text-[12px]" title={finished.toLocaleString()}>
+          <span className="text-[12px]" title={fmtDateTime(finished)}>
             {time}
             {dur && <div className="text-[10px] text-[var(--text-muted)]">Took {dur}</div>}
           </span>
@@ -569,14 +569,26 @@ export function QueueTab({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={onRetryAllFailed} disabled={!hasFailedJobs}>
+                  <DropdownMenuItem
+                    onClick={onRetryAllFailed}
+                    disabled={!hasFailedJobs}
+                    title={!hasFailedJobs ? 'No failed jobs in the current queue' : undefined}
+                  >
                     Retry All Failed
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleRetrySelected} disabled={queue.length === 0}>
+                  <DropdownMenuItem
+                    onClick={handleRetrySelected}
+                    disabled={queue.length === 0}
+                    title={queue.length === 0 ? 'Queue is empty' : undefined}
+                  >
                     Retry Selected
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleCancelSelected} disabled={queue.length === 0}>
+                  <DropdownMenuItem
+                    onClick={handleCancelSelected}
+                    disabled={queue.length === 0}
+                    title={queue.length === 0 ? 'Queue is empty' : undefined}
+                  >
                     Cancel Selected
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
@@ -590,14 +602,26 @@ export function QueueTab({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={onClearSucceeded} disabled={!hasSuccessfulJobs}>
+                  <DropdownMenuItem
+                    onClick={onClearSucceeded}
+                    disabled={!hasSuccessfulJobs}
+                    title={!hasSuccessfulJobs ? 'No succeeded jobs to clear' : undefined}
+                  >
                     Clear Succeeded
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={onClearFinished} disabled={!hasFinishedJobs}>
+                  <DropdownMenuItem
+                    onClick={onClearFinished}
+                    disabled={!hasFinishedJobs}
+                    title={!hasFinishedJobs ? 'No finished jobs to clear' : undefined}
+                  >
                     Clear All Finished
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={onClearAll} disabled={queue.length === 0}>
+                  <DropdownMenuItem
+                    onClick={onClearAll}
+                    disabled={queue.length === 0}
+                    title={queue.length === 0 ? 'Queue is empty' : undefined}
+                  >
                     Clear Entire Queue
                   </DropdownMenuItem>
                 </DropdownMenuGroup>

@@ -295,3 +295,41 @@ Surfaced by the 2026-04-16 archive sweep. Each item was deferred (or filed as a 
 
 - [x] **#74** *(1.6.0-dev.36)* — Archive-screen copy softened now that `.archive/` is tracked in git (#63). The old list intro said "permanent-delete removes the file from disk entirely and cannot be undone" and the two-step confirm was titled "Permanently delete <file>?" with body "You won't be able to restore it after this action." None of that is accurate any more — the prior contents live on in `.git/` and any git operator can recover them with `git log --diff-filter=D --follow`. New copy says "Delete removes the file from the working tree (the prior contents stay in the config's git history)" on the list intro, the confirm dialog title reads "Delete <file> from the archive?" with a matching body, and the destructive button is now just "Delete" (not "Delete permanently"). Toast + button tooltip updated to match. The device-level delete modal (`DeviceTableModals.DeleteModal`) still uses "Delete Permanently" — that flow has a separate Archive/Delete fork and the user's note was scoped to the archive screen.
 
+## UX Review 1.6 — Pat-centric polish
+
+Items surfaced by `dev-plans/UX_REVIEW_1.6.md` (pre-ship hyper-critical walkthrough against hass-4). Dispositions below are the user's call; items marked "don't fix" are annotated in UX_REVIEW_1.6.md with the rationale. Numbered #75+ so they thread into the global bug-number sequence; the UX review section id (e.g. `§1.1`) cross-references the source document.
+
+- [x] **#75** *(1.6.0-dev.37)* — **UX_REVIEW §1.1** — Restore confirmation dialog lies about auto-commit state. `HistoryPanel.tsx:~418` hard-codes "No new commit will be created (auto-commit is off)" regardless of the live `auto_commit_on_save` setting. Fix: read the setting via the same SWR hook the Settings drawer uses and branch the body copy on it. Cover with a Playwright test that toggles auto-commit, opens Restore, asserts the body text matches.
+
+- [x] **#76** *(1.6.0-dev.37)* — **UX_REVIEW §1.2** — Commit-prompt message-field placeholder still renders the legacy raw subject `save: <file> (manual)` in two spots (`App.tsx:~948`, `HistoryPanel.tsx:~281`) even though #34 landed the curated `_DEFAULT_SUBJECTS` map. Fix: placeholder should read the manual-commit default (`"Manually committed from UI"`) so the suggested default matches the rest of the surface.
+
+- [x] **#77** *(1.6.0-dev.37)* — **UX_REVIEW §1.5** — "Last compiled" column badge glyph (`✓ / ✗ / ·`) is inline text in `useDeviceColumns.tsx`; the UX review calls out that it should route through the shared `utils/jobState.getJobBadge` so Devices / Queue / JH.5 use identical chips. Current glyph is readable but the colour/shape can drift from the other surfaces on state changes (e.g. `cancelled`).
+
+- [x] **#78** *(1.6.0-dev.37)* — **UX_REVIEW §3.2** — AV.6 + JH.5 drawers don't darken the underlying tab; the Devices table keeps flickering at 1 Hz in peripheral vision while the drawer is focused. Fix: add the standard shadcn Sheet `overlay` prop with a 40–60% black overlay so the drawer feels modal. Restore dialog already does this — drawers are the outlier.
+
+- [x] **#79** *(1.6.0-dev.37)* — **UX_REVIEW §3.3** — Partial: Restart + Copy API Key hamburger items already carry `title` tooltips (landed via UX.11). Re-check all greyed hamburger items for parity and add tooltips wherever an item is conditionally disabled without a reason string. Also ensure tooltips are announced via `aria-disabled` semantics for screen readers.
+
+- [x] **#80** *(1.6.0-dev.37)* — **UX_REVIEW §3.7** — Numeric Settings inputs have no min / max / default hints. Job timeout, OTA timeout, Worker offline threshold, Device poll interval, Retention days, Firmware cache GB, Job log retention days all accept bare numbers with no helper text. `settings.py` validators already know the bounds — surface them inline (e.g. *"default 600, min 60, max 7200"*). Same shape as the existing "0 = unlimited" hint on Retention.
+
+- [x] **#81** *(1.6.0-dev.37)* — **UX_REVIEW §3.9** — AV.6 Restore button is active on the HEAD row even when the working tree is clean for that file (no-op click). Disable it with `title="Already at this version"` when `commit.hash === HEAD && !has_uncommitted_changes`. Data is already on the page (HEAD = first row's hash; dirty flag on `Target`).
+
+- [x] **#82** *(1.6.0-dev.37)* — **UX_REVIEW §3.10** — Time-of-day formatting is inconsistent: Queue Start/Finish uses `toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})` which renders 12-hour AM/PM in en-US locales. Make the format user-configurable in the Settings drawer (`time_format: 'auto' | '12h' | '24h'`), default `'auto'` which derives from the server's locale (via `Intl.DateTimeFormat().resolvedOptions().hour12`). Apply app-wide through the existing `utils/format.ts` helpers — don't duplicate the formatter.
+
+- [x] **#83** *(1.6.0-dev.37)* — **UX_REVIEW §3.12** — Scheduled + Cancelled rows in Queue History and CompileHistoryPanel render `—` for started / duration / worker when the schedule fires into a cancelled job. The data we have is the schedule + cancellation time + reason. Render those (e.g. `Scheduled (once) — cancelled before start`) instead of a row full of placeholders. Related to #47 but distinct — #47 fixed duration for cancelled-before-start; #83 covers the other columns and the trigger-label composition.
+
+- [x] **#84** *(already shipped)* — **UX_REVIEW §1.4 / #51** — log-excerpt progress-bar artifact. Landed at 1.6.0-dev.26 via #51's CR-aware ANSI renderer. Listed here so the cross-reference exists; no further work.
+
+- [x] **#85** *(already shipped)* — **UX_REVIEW §3.4** — Trigger-label consistency across Queue + Queue History. Landed at 1.6.0-dev.35 via #65 (`utils/trigger.tsx` shared renderer). Listed here so the cross-reference exists.
+
+- [x] **#86** *(already shipped)* — **UX_REVIEW §3.6** — Settings drawer save confirmation. `SettingsDrawer.tsx` toasts `"Setting saved"` on every successful PATCH. Listed here for cross-reference.
+
+- [x] **#87** *(already shipped)* — **UX_REVIEW §3.8** — Server-token eye + clipboard buttons both carry `aria-label` and `title` (UI-7 compliant). Listed here for cross-reference.
+
+- ~~**#88**~~ WONTFIX — **UX_REVIEW §1.3** — Settings drawer section ordering (Authentication-first + Lucide icons). User's call: the review's recommended order is wrong; Config-versioning-first is intentional because 1.6's headline feature is where Pat lands first. Authentication is already visually obvious as its own section. No icons either — the existing text headers are the agreed pattern.
+
+- ~~**#89**~~ WONTFIX — **UX_REVIEW §3.1** — History-panel diff editor vertical real-estate. Intentional: the commit list is peer content to the diff, not navigation; both want to stay visible at once. No change.
+
+- ~~**#90**~~ WONTFIX — **UX_REVIEW §3.5** — Lucide icons on the "Compile history…" + "Config history…" hamburger items. Leaving as-is: disambiguation via the group headers is sufficient and the items are already easy to scan.
+
+- ~~**#91**~~ WONTFIX — **UX_REVIEW §3.11** — Keyboard shortcuts beyond `Esc`. Not a pattern we use anywhere else in the app; introducing it here would be a one-off.
+

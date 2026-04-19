@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import {
   Sheet,
@@ -141,6 +142,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   help="How long to keep per-job compile history. 0 = unlimited."
                   min={0}
                   max={3650}
+                  defaultValue={365}
                   value={data.job_history_retention_days}
                   onCommit={v => patch({ job_history_retention_days: v })}
                 />
@@ -152,6 +154,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   min={0.1}
                   max={1024}
                   step={0.1}
+                  defaultValue={2.0}
                   value={data.firmware_cache_max_gb}
                   onCommit={v => patch({ firmware_cache_max_gb: v })}
                 />
@@ -160,6 +163,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   help="How long to keep per-job build logs on disk. 0 = unlimited."
                   min={0}
                   max={3650}
+                  defaultValue={30}
                   value={data.job_log_retention_days}
                   onCommit={v => patch({ job_log_retention_days: v })}
                 />
@@ -184,6 +188,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   help="Maximum wall-clock seconds a single compile job may run before the server marks it timed-out."
                   min={60}
                   max={14400}
+                  defaultValue={600}
                   value={data.job_timeout}
                   onCommit={v => patch({ job_timeout: v })}
                 />
@@ -192,6 +197,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   help="Maximum seconds for the OTA upload to a device after a successful compile."
                   min={15}
                   max={1800}
+                  defaultValue={120}
                   value={data.ota_timeout}
                   onCommit={v => patch({ ota_timeout: v })}
                 />
@@ -200,6 +206,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   help="Seconds without a worker heartbeat before it's flagged offline in the Workers tab."
                   min={15}
                   max={3600}
+                  defaultValue={30}
                   value={data.worker_offline_threshold}
                   onCommit={v => patch({ worker_offline_threshold: v })}
                 />
@@ -210,8 +217,28 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   help="How often the server polls each ESPHome device over its native API to refresh online status and running-firmware version."
                   min={10}
                   max={3600}
+                  defaultValue={60}
                   value={data.device_poll_interval}
                   onCommit={v => patch({ device_poll_interval: v })}
+                />
+              </Section>
+              {/* #82 / UX_REVIEW §3.10 — time-of-day format. Applied
+                  app-wide by App.tsx via ``setTimeFormatPref`` the
+                  moment this dropdown commits. ``auto`` defers to the
+                  browser's resolved locale (hour12 from
+                  ``Intl.DateTimeFormat().resolvedOptions()``); ``12h``
+                  / ``24h`` override it. */}
+              <Section title="Display">
+                <EnumRow
+                  label="Time format"
+                  help="How times render in the Queue, History, and log timestamps."
+                  value={data.time_format}
+                  options={[
+                    { value: 'auto', label: 'Auto (follow browser locale)' },
+                    { value: '24h', label: '24-hour (13:45:09)' },
+                    { value: '12h', label: '12-hour (1:45:09 PM)' },
+                  ]}
+                  onCommit={v => patch({ time_format: v as 'auto' | '12h' | '24h' })}
                 />
               </Section>
               {/* CF.2: archived-config viewer. Server endpoints
@@ -358,7 +385,7 @@ function Row({
   id,
 }: {
   label: string;
-  help?: string;
+  help?: React.ReactNode;
   control: React.ReactNode;
   id?: string;
 }) {
@@ -409,6 +436,14 @@ interface NumericRowProps {
   max: number;
   step: number;
   integer: boolean;
+  /**
+   * #80 / UX_REVIEW §3.7: the default the server ships, surfaced as
+   * part of the hint so Pat knows what "normal" looks like before
+   * editing. Single source of truth is ``ha-addon/server/settings.py``
+   * (search for ``@dataclass class AppSettings``). Optional so the
+   * prop can be omitted on rare / bespoke fields.
+   */
+  defaultValue?: number;
   onCommit: (v: number) => Promise<boolean>;
 }
 
@@ -420,6 +455,7 @@ function NumericRow({
   max,
   step,
   integer,
+  defaultValue,
   onCommit,
 }: NumericRowProps) {
   const [draft, setDraft] = useState<string>(String(value));
@@ -446,10 +482,27 @@ function NumericRow({
     if (!ok) setDraft(String(value));
   }
 
+  // #80: append bounds hint so the user sees defaults + limits next
+  // to the help copy. Not a full new prop — the existing ``help`` is
+  // descriptive ("what does this control?"), this is the numeric shape
+  // ("what does it accept?"). Same format across every numeric row.
+  const fmt = integer ? (n: number) => String(n) : (n: number) => String(n);
+  const boundsParts = [
+    defaultValue !== undefined ? `default ${fmt(defaultValue)}` : null,
+    `min ${fmt(min)}`,
+    `max ${fmt(max)}`,
+  ].filter((p): p is string => p !== null);
+  const composedHelp = (
+    <>
+      {help ? <>{help}<br /></> : null}
+      <span className="opacity-70">({boundsParts.join(', ')})</span>
+    </>
+  );
+
   return (
     <Row
       label={label}
-      help={help}
+      help={composedHelp}
       control={
         <Input
           type="number"
@@ -476,6 +529,44 @@ function IntRow(props: Omit<NumericRowProps, 'step' | 'integer'>) {
 
 function NumRow(props: Omit<NumericRowProps, 'integer'>) {
   return <NumericRow {...props} integer={false} />;
+}
+
+// #82: small enum picker row — native <select> styled via our Select
+// wrapper. Commits on change since there's no "in-progress" state for a
+// dropdown (unlike the NumRow where the user types).
+function EnumRow({
+  label,
+  help,
+  value,
+  options,
+  onCommit,
+}: {
+  label: string;
+  help?: React.ReactNode;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onCommit: (v: string) => Promise<boolean>;
+}) {
+  return (
+    <Row
+      label={label}
+      help={help}
+      control={
+        <Select
+          className="w-[220px]"
+          value={value}
+          onChange={async e => {
+            const v = e.target.value;
+            if (v !== value) await onCommit(v);
+          }}
+        >
+          {options.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </Select>
+      }
+    />
+  );
 }
 
 function SecretRow({

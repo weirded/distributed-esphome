@@ -3,6 +3,7 @@ import { Calendar, Clock, ExternalLink, GitBranch, Pin } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { AddressSource, Job, Target } from '../../types';
 import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../../utils';
+import { getJobBadge } from '../../utils/jobState';
 import { StatusDot } from '../StatusDot';
 import { SortHeader } from '../ui/sort-header';
 import { ActionsCell } from './ActionsCell';
@@ -402,16 +403,17 @@ export function useDeviceColumns(options: Options) {
           // compiles.
           return <span className="text-[12px] text-[var(--text-muted)]">—</span>;
         }
-        const ok = lc.state === 'success'
-          && (lc.validate_only || lc.download_only || lc.ota_result === 'success');
-        const failed = lc.state === 'failed' || lc.state === 'timed_out'
-          || (lc.state === 'success' && !lc.validate_only && !lc.download_only && lc.ota_result === 'failed');
-        const color = ok
-          ? 'text-[#4ade80]'
-          : failed
-            ? 'text-[#f87171]'
-            : 'text-[var(--text-muted)]';
-        const glyph = ok ? '✓' : failed ? '✗' : '·';
+        // #77 / UX_REVIEW §1.5: reuse ``getJobBadge`` so the Devices
+        // column's chip matches the Queue tab and JH.5 history surfaces
+        // exactly. Previously we hand-rolled a ✓/✗/· glyph that drifted
+        // in shape + colour from the pill badges on the other two
+        // surfaces.
+        const badge = getJobBadge({
+          state: lc.state,
+          ota_result: lc.ota_result ?? undefined,
+          validate_only: lc.validate_only,
+          download_only: lc.download_only,
+        });
         const diff = Math.floor(Date.now() / 1000) - lc.at;
         const rel = diff < 60 ? `${diff}s`
           : diff < 3600 ? `${Math.floor(diff / 60)}m`
@@ -419,8 +421,12 @@ export function useDeviceColumns(options: Options) {
               : `${Math.floor(diff / 86400)}d`;
         const iso = new Date(lc.at * 1000).toLocaleString();
         return (
-          <span className={`text-[12px] tabular-nums ${color}`} title={`${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`}>
-            {rel} ago {glyph}
+          <span
+            className="text-[12px] tabular-nums inline-flex items-center gap-1.5"
+            title={`${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`}
+          >
+            <span className="text-[var(--text-muted)]">{rel} ago</span>
+            <span className={badge.cls}>{badge.label}</span>
           </span>
         );
       },

@@ -43,9 +43,15 @@ test('Restore button on a commit triggers a rollback', async ({ page }) => {
   await expect(drawer.getByText('fedcba9', { exact: true }).first()).toBeVisible();
 
   // Bug 15: Restore opens a proper shadcn Dialog, not window.confirm.
-  // Click the row-level Restore button, then confirm in the dialog.
-  await drawer.getByRole('button', { name: /^Restore$/ }).first().click();
-  const confirmDialog = page.getByRole('dialog').filter({ hasText: /Restore fedcba9/ });
+  // #81: the HEAD-row Restore is disabled when the tree is clean —
+  // click the second commit's Restore (0123456) instead so this test
+  // exercises the real rollback flow. The fixture mock resolves any
+  // rollback to ``cafeba5``.
+  const secondRowRestore = drawer
+    .getByRole('button', { name: /^Restore$/ })
+    .nth(1);
+  await secondRowRestore.click();
+  const confirmDialog = page.getByRole('dialog').filter({ hasText: /Restore 0123456/ });
   await expect(confirmDialog).toBeVisible();
   await confirmDialog.getByRole('button', { name: /^Restore this version$/ }).click();
   await expect(page.getByText(/Restored cafeba5/)).toBeVisible({ timeout: 5000 });

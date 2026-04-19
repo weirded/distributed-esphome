@@ -9,6 +9,32 @@ This review only flags problems. The features themselves are mostly good and mos
 
 ---
 
+## Dispositions (added 2026-04-19 post-review)
+
+Queued as WORKITEMS-1.6.md bugs; this index records the disposition for every item the review raised.
+
+| § | Status | Workitem |
+|---|---|---|
+| 1.1 | FIX | #75 |
+| 1.2 | FIX | #76 |
+| 1.3 | WONTFIX — review's recommended order is wrong; Config-versioning-first is intentional | ~~#88~~ |
+| 1.4 | ALREADY SHIPPED via #51 at dev.26 — works as designed now | #84 |
+| 1.5 | FIX | #77 |
+| 3.1 | WONTFIX — intentional; commit list is peer content to the diff, not navigation | ~~#89~~ |
+| 3.2 | FIX | #78 |
+| 3.3 | FIX (parity check — Restart / Copy API Key already done; audit the rest) | #79 |
+| 3.4 | ALREADY SHIPPED via #65 at dev.35 (`utils/trigger.tsx`) | #85 |
+| 3.5 | WONTFIX — group headers disambiguate; leave as-is | ~~#90~~ |
+| 3.6 | ALREADY SHIPPED — `SettingsDrawer` toasts "Setting saved" on every PATCH | #86 |
+| 3.7 | FIX — surface bounds from `settings.py` validators | #80 |
+| 3.8 | ALREADY SHIPPED — reveal + copy buttons have `aria-label` + `title` (UI-7) | #87 |
+| 3.9 | FIX | #81 |
+| 3.10 | FIX — make user-configurable with server-locale default (`auto` / `12h` / `24h`) | #82 |
+| 3.11 | WONTFIX — keyboard shortcuts aren't a pattern we use anywhere else | ~~#91~~ |
+| 3.12 | FIX — is a bug | #83 |
+
+---
+
 ## 1. Ship-blocking findings
 
 ### 🚫 1.1 Restore-confirmation dialog says the wrong thing about auto-commit

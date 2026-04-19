@@ -268,6 +268,9 @@ export interface AppSettings {
   worker_offline_threshold: number;
   device_poll_interval: number;
   require_ha_auth: boolean;
+  // #82 — time-of-day presentation. 'auto' defers to the browser's
+  // resolved locale; '12h'/'24h' force the format globally.
+  time_format: 'auto' | '12h' | '24h';
 }
 
 export async function getSettings(): Promise<AppSettings> {

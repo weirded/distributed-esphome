@@ -11,7 +11,18 @@
  * submodule (clearer, and allows tree-shaking to drop unused clusters).
  */
 
-export { timeAgo, stripYaml, fmtDuration, fmtEpochRelative, fmtEpochAbsolute, haDeepLink } from './utils/format';
+export {
+  timeAgo,
+  stripYaml,
+  fmtDuration,
+  fmtEpochRelative,
+  fmtEpochAbsolute,
+  fmtTimeOfDay,
+  fmtDateTime,
+  setTimeFormatPref,
+  haDeepLink,
+} from './utils/format';
+export type { TimeFormatPref } from './utils/format';
 export { formatCronHuman } from './utils/cron';
 export { usePersistedState } from './utils/persistState';
 export {

@@ -9,7 +9,9 @@ import {
   getFileContentAt,
   getFileHistory,
   getFileStatus,
+  getSettings,
   rollbackFile,
+  type AppSettings,
   type FileHistoryEntry,
   type FileStatus,
 } from '@/api/client';
@@ -93,6 +95,16 @@ export function HistoryPanel({
     () => getFileStatus(filename!),
     { revalidateOnFocus: false },
   );
+
+  // #75 / UX_REVIEW §1.1: the Restore confirmation branched its "a new
+  // revert commit will be created" vs "no commit will be created"
+  // copy on ``has_uncommitted_changes`` — which happened to be wrong.
+  // Whether a revert commit is written is purely a function of the
+  // ``auto_commit_on_save`` setting (see AV.5 backend). Subscribing to
+  // the live setting here so the dialog body reports it correctly.
+  // Same SWR key the Settings drawer + EditorModal use → one fetch.
+  const { data: appSettings } = useSWR<AppSettings>(open ? 'settings' : null, getSettings);
+  const autoCommit = appSettings?.auto_commit_on_save ?? true;
 
   // Compare selector — From/To hold commit hashes, or the WORKING_TREE sentinel.
   const [fromHash, setFromHash] = useState<string>('');
@@ -278,7 +290,7 @@ export function HistoryPanel({
             <div className="mb-3 flex gap-2 items-center">
               <Input
                 type="text"
-                placeholder={`save: ${filename} (manual)`}
+                placeholder="Manually committed from UI"
                 className="flex-1 font-mono text-xs"
                 value={commitMsg}
                 onChange={e => setCommitMsg(e.target.value)}
@@ -359,39 +371,46 @@ export function HistoryPanel({
                 No saved versions yet — your first edit will show up here.
               </div>
             )}
-            {entries?.map(entry => (
-              <CommitRow
-                key={entry.hash}
-                entry={entry}
-                isFrom={fromHash === entry.hash}
-                isTo={toHash === entry.hash}
-                onClick={(e) => {
-                  if (e.shiftKey) {
-                    setFromHash(entry.hash);
-                  } else {
-                    // Default: show what this commit changed — parent ↔ this.
-                    // Bug 23: the earliest commit has no parent (entries[idx+1]
-                    // is undefined); diffing that against nothing/working tree
-                    // was surprising. Fall back to from=to=entry which renders
-                    // an empty "no differences" panel — the honest answer when
-                    // we can't compute a predecessor.
-                    const idx = entries.indexOf(entry);
-                    const parent = entries[idx + 1]?.hash;
-                    if (parent) {
-                      setFromHash(parent);
-                      setToHash(entry.hash);
-                    } else {
+            {entries?.map((entry, idx) => {
+              // #81 / UX_REVIEW §3.9: HEAD-and-clean → Restore is a
+              // no-op. Entries are newest-first so idx === 0 is HEAD.
+              // Disable the per-row Restore and tell the user why.
+              const isHeadRow = idx === 0;
+              const restoreIsNoop = isHeadRow && !status?.has_uncommitted_changes;
+              return (
+                <CommitRow
+                  key={entry.hash}
+                  entry={entry}
+                  isFrom={fromHash === entry.hash}
+                  isTo={toHash === entry.hash}
+                  onClick={(e) => {
+                    if (e.shiftKey) {
                       setFromHash(entry.hash);
-                      setToHash(entry.hash);
+                    } else {
+                      // Default: show what this commit changed — parent ↔ this.
+                      // Bug 23: the earliest commit has no parent (entries[idx+1]
+                      // is undefined); diffing that against nothing/working tree
+                      // was surprising. Fall back to from=to=entry which renders
+                      // an empty "no differences" panel — the honest answer when
+                      // we can't compute a predecessor.
+                      const parent = entries[idx + 1]?.hash;
+                      if (parent) {
+                        setFromHash(parent);
+                        setToHash(entry.hash);
+                      } else {
+                        setFromHash(entry.hash);
+                        setToHash(entry.hash);
+                      }
                     }
-                  }
-                }}
-                onSetFrom={() => setFromHash(entry.hash)}
-                onSetTo={() => setToHash(entry.hash)}
-                onRestore={() => setRestoreCandidate(entry)}
-                disabled={busy}
-              />
-            ))}
+                  }}
+                  onSetFrom={() => setFromHash(entry.hash)}
+                  onSetTo={() => setToHash(entry.hash)}
+                  onRestore={() => setRestoreCandidate(entry)}
+                  disabled={busy}
+                  restoreNoop={restoreIsNoop}
+                />
+              );
+            })}
           </div>
         </SheetBody>
       </SheetContent>
@@ -407,31 +426,32 @@ export function HistoryPanel({
           </DialogHeader>
           <div className="px-4 py-3 text-sm text-[var(--text)]">
             {status?.has_uncommitted_changes ? (
-              <>
-                <p>
-                  Your <strong>uncommitted changes</strong> to{' '}
-                  <code className="font-mono text-xs">{filename}</code> will be overwritten.
-                </p>
-                <p className="text-[var(--text-muted)] mt-2 text-xs">
-                  The file on disk will be replaced with its content at{' '}
-                  <code className="font-mono">{restoreCandidate?.short_hash}</code>.
-                  {' '}No new commit will be created (auto-commit is off).
-                </p>
-              </>
+              <p>
+                Your <strong>uncommitted changes</strong> to{' '}
+                <code className="font-mono text-xs">{filename}</code> will be overwritten.
+              </p>
             ) : (
-              <>
-                <p>
-                  This will replace the current content of{' '}
-                  <code className="font-mono text-xs">{filename}</code> with its version at{' '}
-                  <code className="font-mono">{restoreCandidate?.short_hash}</code>.
-                </p>
-                <p className="text-[var(--text-muted)] mt-2 text-xs">
-                  A new{' '}
-                  <code className="font-mono">revert: …</code>{' '}commit will be created
-                  so the rollback is itself recorded in history.
-                </p>
-              </>
+              <p>
+                This will replace the current content of{' '}
+                <code className="font-mono text-xs">{filename}</code> with its version at{' '}
+                <code className="font-mono">{restoreCandidate?.short_hash}</code>.
+              </p>
             )}
+            {/* #75: describe the commit side-effect based on the LIVE
+                auto-commit setting, not a hard-coded string. */}
+            <p className="text-[var(--text-muted)] mt-2 text-xs">
+              {autoCommit ? (
+                <>
+                  A new{' '}<code className="font-mono">revert: …</code>{' '}commit will be
+                  created so the rollback is itself recorded in history.
+                </>
+              ) : (
+                <>
+                  No new commit will be created (auto-commit is off); the working tree
+                  will be left dirty until you commit manually.
+                </>
+              )}
+            </p>
           </div>
           <DialogFooter>
             <DialogClose>
@@ -503,6 +523,7 @@ function CommitRow({
   onSetTo,
   onRestore,
   disabled,
+  restoreNoop = false,
 }: {
   entry: FileHistoryEntry;
   isFrom: boolean;
@@ -512,6 +533,7 @@ function CommitRow({
   onSetTo: () => void;
   onRestore: () => void;
   disabled: boolean;
+  restoreNoop?: boolean;
 }) {
   const when = formatRelativeTime(entry.date);
   // Bug 22: absolute local time alongside the relative one. Short form
@@ -574,8 +596,8 @@ function CommitRow({
           variant="ghost"
           className="h-6 px-2 text-xs gap-1"
           onClick={onRestore}
-          disabled={disabled}
-          title="Restore this version"
+          disabled={disabled || restoreNoop}
+          title={restoreNoop ? 'Already at this version' : 'Restore this version'}
         >
           <RotateCcw className="size-3" />
           Restore

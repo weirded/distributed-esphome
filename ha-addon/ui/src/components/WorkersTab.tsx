@@ -474,7 +474,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>
+                  <DropdownMenuItem
+                    onClick={onCleanAllCaches}
+                    disabled={!workers.some(w => w.online)}
+                    title={!workers.some(w => w.online) ? 'No workers are online' : undefined}
+                  >
                     Clean All Caches
                   </DropdownMenuItem>
                 </DropdownMenuGroup>

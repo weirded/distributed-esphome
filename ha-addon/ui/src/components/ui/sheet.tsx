@@ -31,7 +31,14 @@ function SheetOverlay({
   return (
     <DialogPrimitive.Backdrop
       data-slot="sheet-overlay"
-      className={cn("fixed inset-0 z-50 bg-black/50", className)}
+      // #78 / UX_REVIEW §3.2: bumped from /50 to /65 to match
+       // Dialog's overlay. Against our dark theme, /50 was barely
+       // perceptible — the review correctly flagged that the
+       // underlying tab stayed visible and its 1 Hz SWR badges kept
+       // flickering in peripheral vision. /65 matches what Restore
+       // confirmation already uses, so the "drawer is modal" read is
+       // consistent across Sheet and Dialog.
+      className={cn("fixed inset-0 z-50 bg-black/65", className)}
       {...props}
     />
   )

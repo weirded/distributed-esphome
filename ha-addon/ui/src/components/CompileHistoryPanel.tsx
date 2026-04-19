@@ -18,6 +18,7 @@ import {
 import { getJobBadge } from '@/utils/jobState';
 import { renderAnsi } from '@/utils/ansi';
 import { fmtDuration, fmtEpochAbsolute, fmtEpochRelative } from '@/utils/format';
+import { isScheduledCancelBeforeStart } from '@/utils/trigger';
 
 // JH.5: per-device "Compile history" panel.
 //
@@ -52,6 +53,14 @@ const PAGE_SIZE = 50;
 // No local copies here — removed to prevent drift.
 
 function triggeredLabel(row: JobHistoryEntry): string {
+  // #83: scheduled + cancelled-before-start deserves a clearer label
+  // than "Scheduled (once)" — the whole row otherwise looks like
+  // nothing happened.
+  if (isScheduledCancelBeforeStart(row)) {
+    return row.trigger_detail === 'once'
+      ? 'Scheduled (once) — cancelled before start'
+      : 'Scheduled — cancelled before start';
+  }
   if (row.triggered_by === 'ha_action') return 'HA action';
   if (row.triggered_by === 'schedule') {
     return row.trigger_detail === 'once' ? 'Scheduled (once)' : 'Scheduled';
@@ -253,9 +262,13 @@ function HistoryRow({
           <Clock className="inline-block size-3 mr-1 -mt-0.5" aria-hidden="true" />
           {fmtEpochRelative(row.finished_at)}
         </span>
-        <span className="text-[12px] text-[var(--text-muted)] tabular-nums">
-          {fmtDuration(row.duration_seconds)}
-        </span>
+        {/* #83: suppress the duration dash on scheduled-cancel-before-start
+            rows — the triggeredLabel already carries the full story. */}
+        {!isScheduledCancelBeforeStart(row) && (
+          <span className="text-[12px] text-[var(--text-muted)] tabular-nums">
+            {fmtDuration(row.duration_seconds)}
+          </span>
+        )}
         <span className="text-[12px] text-[var(--text-muted)] truncate">
           {triggeredLabel(row)}
           {row.assigned_hostname && (

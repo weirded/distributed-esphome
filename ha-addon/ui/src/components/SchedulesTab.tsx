@@ -288,7 +288,11 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={handleRemoveSelected} disabled={selectedTargets.length === 0}>
+                  <DropdownMenuItem
+                    onClick={handleRemoveSelected}
+                    disabled={selectedTargets.length === 0}
+                    title={selectedTargets.length === 0 ? 'Select one or more scheduled devices first' : undefined}
+                  >
                     Remove Selected{selectedTargets.length > 0 ? ` (${selectedTargets.length})` : ''}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>

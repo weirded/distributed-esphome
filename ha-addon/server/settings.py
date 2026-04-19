@@ -121,6 +121,13 @@ class AppSettings:
     # When true, direct-port access on :8765 (outside Ingress) requires
     # a valid HA Bearer or the add-on's own server token.
     require_ha_auth: bool = True
+    # #82 / UX_REVIEW §3.10 — time-of-day presentation for Queue,
+    # History, and log timestamps. ``'auto'`` defers to the browser's
+    # resolved locale (``Intl.DateTimeFormat().resolvedOptions().hour12``);
+    # ``'12h'`` / ``'24h'`` force the format regardless of locale. The
+    # UI reads this via ``GET /ui/api/settings`` and applies it through
+    # ``utils/format.ts``.
+    time_format: str = "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +172,18 @@ def _validate_float_range(lo: float, hi: float) -> Callable[[Any, str], float]:
             raise SettingsValidationError(field, f"must be between {lo} and {hi}, got {coerced}")
         return coerced
 
+    return _v
+
+
+def _validate_enum(*allowed: str) -> Callable[[Any, str], str]:
+    """#82: string-enum validator — accepts one of a fixed set of labels."""
+    allowed_set = set(allowed)
+    def _v(value: Any, field: str) -> str:
+        if not isinstance(value, str):
+            raise SettingsValidationError(field, f"expected string, got {type(value).__name__}")
+        if value not in allowed_set:
+            raise SettingsValidationError(field, f"must be one of {sorted(allowed_set)}, got {value!r}")
+        return value
     return _v
 
 
@@ -232,6 +251,8 @@ _VALIDATORS: dict[str, Callable[[Any, str], Any]] = {
     # Device poll: 10s floor (below that we hammer devices), 1h ceiling.
     "device_poll_interval": _validate_int_range(10, 3600),
     "require_ha_auth": _validate_bool,
+    # #82: enum validator — 'auto' / '12h' / '24h'. See AppSettings.time_format.
+    "time_format": _validate_enum("auto", "12h", "24h"),
 }
 
 

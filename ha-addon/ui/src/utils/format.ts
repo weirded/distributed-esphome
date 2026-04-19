@@ -40,7 +40,58 @@ export function fmtEpochRelative(epoch: number | null | undefined): string {
 /** Bug #48: consolidated epoch-seconds → absolute locale-string. */
 export function fmtEpochAbsolute(epoch: number | null | undefined): string {
   if (epoch == null) return '';
-  return new Date(epoch * 1000).toLocaleString();
+  return fmtDateTime(new Date(epoch * 1000));
+}
+
+// #82 / UX_REVIEW §3.10 — time-of-day format preference. Module-local
+// so every ``fmt*`` helper picks up the current value without threading
+// the setting through call-sites. ``App.tsx`` subscribes to
+// ``/ui/api/settings`` via SWR and calls ``setTimeFormatPref`` whenever
+// the user flips the drawer dropdown, so the next render of every
+// Queue / History / Log surface uses the new format.
+
+export type TimeFormatPref = 'auto' | '12h' | '24h';
+
+let _timeFormatPref: TimeFormatPref = 'auto';
+
+export function setTimeFormatPref(pref: TimeFormatPref): void {
+  _timeFormatPref = pref;
+}
+
+function _applyHour12(opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormatOptions {
+  if (_timeFormatPref === '12h') return { ...opts, hour12: true };
+  if (_timeFormatPref === '24h') return { ...opts, hour12: false };
+  // 'auto' — omit hour12 so the browser's resolved locale decides.
+  return opts;
+}
+
+/**
+ * Time-of-day formatter that respects the user's ``time_format``
+ * preference. Default options: ``HH:MM:SS`` with 2-digit fields. Callers
+ * can override (e.g. to drop seconds). Use in place of direct
+ * ``Date.toLocaleTimeString`` calls anywhere the user sees a time.
+ */
+export function fmtTimeOfDay(date: Date, opts?: Intl.DateTimeFormatOptions): string {
+  const base: Intl.DateTimeFormatOptions = {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    ...opts,
+  };
+  return date.toLocaleTimeString([], _applyHour12(base));
+}
+
+/**
+ * Full-timestamp formatter that respects the user's preference. Use in
+ * place of ``Date.toLocaleString()`` for row tooltips and absolute
+ * timestamps.
+ */
+export function fmtDateTime(date: Date, opts?: Intl.DateTimeFormatOptions): string {
+  if (opts) {
+    return date.toLocaleString([], _applyHour12(opts));
+  }
+  // No opts = locale-default date/time; still apply hour12 override.
+  return date.toLocaleString([], _applyHour12({}));
 }
 
 /**

@@ -28,7 +28,30 @@ export type TriggerSourceShape = {
   // either; the helper normalises.
   triggered_by?: 'user' | 'ha_action' | 'api' | 'schedule' | null | string;
   trigger_detail?: string | null;
+  // #83 — inputs used by ``isScheduledCancelBeforeStart`` to detect
+  // the "schedule fired → user cancelled before a worker picked it
+  // up" history pattern.
+  state?: string;
+  started_at?: number | null;
+  assigned_hostname?: string | null;
 };
+
+/**
+ * #83 / UX_REVIEW §3.12 — a job was enqueued by the scheduler but
+ * cancelled before any worker claimed it. The row has no worker, no
+ * start time, and no duration — rendering those columns as ``—``
+ * makes the user wonder if anything happened. Callers can use this
+ * predicate to swap the trigger label for a contextual explanation
+ * (e.g. "Scheduled (once) — cancelled before start") and suppress
+ * the dashes.
+ */
+export function isScheduledCancelBeforeStart(row: TriggerSourceShape): boolean {
+  if (row.state !== 'cancelled') return false;
+  if (row.started_at) return false;
+  if (row.assigned_hostname) return false;
+  const source = classifyTrigger(row);
+  return source === 'schedule_once' || source === 'schedule_recurring';
+}
 
 
 export type TriggerSource = 'user' | 'ha_action' | 'api' | 'schedule_once' | 'schedule_recurring';

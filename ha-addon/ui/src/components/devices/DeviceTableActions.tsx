@@ -72,10 +72,18 @@ export function DeviceTableActions({ selectedTargets, workers, targets, onToast,
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuGroup>
-            <DropdownMenuItem onClick={handleScheduleSelected} disabled={!hasSelection}>
+            <DropdownMenuItem
+              onClick={handleScheduleSelected}
+              disabled={!hasSelection}
+              title={!hasSelection ? 'Check one or more devices in the table first' : undefined}
+            >
               Schedule Selected...
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleRemoveScheduleSelected} disabled={!hasSelection}>
+            <DropdownMenuItem
+              onClick={handleRemoveScheduleSelected}
+              disabled={!hasSelection}
+              title={!hasSelection ? 'Check one or more devices in the table first' : undefined}
+            >
               Remove Schedule from Selected
             </DropdownMenuItem>
           </DropdownMenuGroup>

@@ -87,6 +87,30 @@ async def test_update_settings_rejects_overlong_git_author_email(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# #82 / UX_REVIEW §3.10 — time_format enum
+# ---------------------------------------------------------------------------
+
+
+async def test_update_settings_accepts_time_format_values(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    for val in ("auto", "12h", "24h"):
+        updated = await update_settings({"time_format": val})
+        assert updated.time_format == val
+
+
+async def test_update_settings_rejects_unknown_time_format(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    with pytest.raises(SettingsValidationError) as exc:
+        await update_settings({"time_format": "military"})
+    assert exc.value.field == "time_format"
+
+
+async def test_time_format_defaults_to_auto(tmp_path):
+    s = init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    assert s.time_format == "auto"
+
+
+# ---------------------------------------------------------------------------
 # SP.8 — migrated Supervisor-options fields
 # ---------------------------------------------------------------------------
 
@@ -346,6 +370,7 @@ def test_init_creates_settings_file_when_absent(tmp_path: Path):
         "worker_offline_threshold": 30,
         "device_poll_interval": 60,
         "require_ha_auth": True,
+        "time_format": "auto",
     }
     # Everything else matches the dataclass defaults.
     assert s.auto_commit_on_save is True
@@ -611,6 +636,7 @@ def test_settings_as_dict_round_trips():
         "worker_offline_threshold": 30,
         "device_poll_interval": 60,
         "require_ha_auth": True,
+        "time_format": "auto",
     }
 
 

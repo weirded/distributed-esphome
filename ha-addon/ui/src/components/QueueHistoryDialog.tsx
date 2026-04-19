@@ -72,7 +72,7 @@ const SORTABLE: Record<string, SortColumn> = {
 // ``triggeredLabel()`` helper this file carried before drifted from
 // the Queue's renderer (plain text "HA" / "User" / "Scheduled·1x"
 // vs Queue's rich icon+label badges); unifying them kills the drift.
-import { getTriggerBadge } from '@/utils/trigger';
+import { getTriggerBadge, isScheduledCancelBeforeStart } from '@/utils/trigger';
 
 function friendlyFor(targets: Target[], filename: string): string {
   const t = targets.find((x) => x.target === filename);
@@ -253,27 +253,44 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
       ch.accessor((r) => r.duration_seconds ?? 0, {
         id: 'duration_seconds',
         header: ({ column }) => <SortHeader label="Duration" column={column} />,
-        cell: ({ row: { original: r } }) => (
-          <span
-            className="tabular-nums"
-            title={
-              r.started_at == null
-                ? 'Queue-time only (job never reached a worker)'
-                : undefined
-            }
-          >
-            {fmtDuration(r.duration_seconds)}
-          </span>
-        ),
+        cell: ({ row: { original: r } }) => {
+          // #83: scheduled+cancelled-before-start rows didn't exist
+          // for any wall-clock duration worth reporting. Don't
+          // pretend with a ``—`` — the trigger column already
+          // carries the full story.
+          if (isScheduledCancelBeforeStart(r)) {
+            return <span className="text-[var(--text-muted)]">—</span>;
+          }
+          return (
+            <span
+              className="tabular-nums"
+              title={
+                r.started_at == null
+                  ? 'Queue-time only (job never reached a worker)'
+                  : undefined
+              }
+            >
+              {fmtDuration(r.duration_seconds)}
+            </span>
+          );
+        },
       }),
       ch.accessor((r) => r.started_at ?? 0, {
         id: 'started_at',
         header: ({ column }) => <SortHeader label="Started" column={column} />,
-        cell: ({ row: { original: r } }) => (
-          <span className="text-[var(--text-muted)] tabular-nums" title={fmtEpochAbsolute(r.started_at)}>
-            {r.started_at ? fmtEpochRelative(r.started_at) : '—'}
-          </span>
-        ),
+        cell: ({ row: { original: r } }) => {
+          // #83: cancelled-before-start rows never *started* — show
+          // "not started" rather than a bare em-dash that reads as
+          // "unknown".
+          if (isScheduledCancelBeforeStart(r)) {
+            return <span className="text-[var(--text-muted)] italic">not started</span>;
+          }
+          return (
+            <span className="text-[var(--text-muted)] tabular-nums" title={fmtEpochAbsolute(r.started_at)}>
+              {r.started_at ? fmtEpochRelative(r.started_at) : '—'}
+            </span>
+          );
+        },
       }),
       ch.accessor((r) => r.finished_at ?? 0, {
         id: 'finished_at',
@@ -291,9 +308,15 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
         header: ({ column }) => <SortHeader label="Triggered" column={column} />,
         cell: ({ row: { original: r } }) => {
           const b = getTriggerBadge(r);
+          // #83: annotate scheduled-cancelled-before-start so the
+          // row reads as an intentional outcome instead of a ghost.
+          const cancelled = isScheduledCancelBeforeStart(r);
           return (
-            <span className="inline-flex items-center gap-1 text-[12px]" title={b.title}>
+            <span className="inline-flex items-center gap-1 text-[12px]" title={cancelled ? 'Scheduler fired, but the job was cancelled before any worker picked it up.' : b.title}>
               {b.icon} {b.label}
+              {cancelled && (
+                <span className="text-[var(--text-muted)]"> — cancelled before start</span>
+              )}
             </span>
           );
         },
@@ -301,11 +324,18 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
       ch.accessor((r) => r.assigned_hostname ?? '', {
         id: 'assigned_hostname',
         header: ({ column }) => <SortHeader label="Worker" column={column} />,
-        cell: ({ row: { original: r } }) => (
-          <span className="text-[var(--text-muted)] truncate max-w-[140px]" title={r.assigned_hostname ?? undefined}>
-            {r.assigned_hostname || '—'}
-          </span>
-        ),
+        cell: ({ row: { original: r } }) => {
+          // #83: no worker ever held this row — the absence is the
+          // point. Drop the em-dash placeholder.
+          if (isScheduledCancelBeforeStart(r)) {
+            return <span className="text-[var(--text-muted)]" />;
+          }
+          return (
+            <span className="text-[var(--text-muted)] truncate max-w-[140px]" title={r.assigned_hostname ?? undefined}>
+              {r.assigned_hostname || '—'}
+            </span>
+          );
+        },
       }),
     ];
   }, [targets, onOpenHistoryDiff, expandedId]);

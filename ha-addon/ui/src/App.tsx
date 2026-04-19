@@ -16,8 +16,10 @@ import {
   getInitialAddonVersion,
   getQueue,
   getServerInfo,
+  getSettings,
   getTargets,
   getWorkers,
+  type AppSettings,
   isUnauthorizedError,
   removeWorker,
   renameTarget,
@@ -61,7 +63,7 @@ import {
 } from './components/ui/dialog';
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, Job, Target, Worker } from './types';
-import { stripYaml } from './utils';
+import { setTimeFormatPref, stripYaml } from './utils';
 import esphomeLogoUrl from './assets/esphome-logo.svg';
 import './theme.css';
 
@@ -196,6 +198,18 @@ export default function App() {
     getEsphomeVersions,
     { refreshInterval: 15 * 60_000, onError: logSwrError('versions') },
   );
+  // #82 / UX_REVIEW §3.10 — subscribe to /ui/api/settings at the app
+  // root so the time-format preference propagates to every surface
+  // (Queue, History, Log timestamps) via the module-local pref in
+  // utils/format.ts. SWR's default dedupe means this is a single fetch
+  // shared with the Settings drawer + EditorModal's own subscribers.
+  const { data: appSettings } = useSWR<AppSettings>('settings', getSettings, {
+    refreshInterval: 30_000,
+    onError: logSwrError('settings'),
+  });
+  useEffect(() => {
+    if (appSettings?.time_format) setTimeFormatPref(appSettings.time_format);
+  }, [appSettings?.time_format]);
   // Poll at 1 Hz for live-feeling updates. Workers + queue are pure in-memory
   // reads. Targets/devices does a readdir + per-target stat() for mtime cache
   // checks (metadata resolution is cached and only re-fires when a file
@@ -945,7 +959,7 @@ export default function App() {
             <Input
               type="text"
               className="font-mono text-xs"
-              placeholder={`save: ${commitDialogTarget} (manual)`}
+              placeholder="Manually committed from UI"
               value={commitDialogMessage}
               onChange={e => setCommitDialogMessage(e.target.value)}
               autoFocus
