@@ -70,6 +70,12 @@ async def _make_ui_app(tmp_path: Path) -> _UiApp:
         settings_path=tmp_path / "settings.json",
         options_path=tmp_path / "options.json",
     )
+    # #98: tests in this module exercise the active versioning path
+    # (file history, rollback, commit endpoints). The dataclass
+    # default is now ``'unset'``, which makes ``_versioning_active``
+    # return False and turns every git op into a no-op. Flip to
+    # ``'on'`` so the existing tests keep their behaviour.
+    await _settings_mod.update_settings({"versioning_enabled": "on"})
     await _settings_mod.update_settings({"server_token": "ui-test-token"})
     queue = JobQueue(queue_file=tmp_path / "queue.json")
     registry = WorkerRegistry()
