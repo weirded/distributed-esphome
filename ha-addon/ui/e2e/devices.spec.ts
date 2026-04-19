@@ -61,7 +61,7 @@ test('clicking edit opens editor modal', async ({ page }) => {
     if (await editItem.isVisible({ timeout: 2000 }).catch(() => false)) {
       await editItem.click();
       // Editor modal should appear with Monaco
-      await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator(String.raw`[data-slot="dialog-content"] [role="code"].monaco-editor`).first()).toBeVisible({ timeout: 5000 });
     }
   }
 });
@@ -118,7 +118,7 @@ test('editor header buttons have identical height', async ({ page }) => {
 
   // Open editor on first device
   await page.locator('#tab-devices tbody tr').first().getByRole('button', { name: 'Edit' }).click();
-  await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(String.raw`[data-slot="dialog-content"] [role="code"].monaco-editor`).first()).toBeVisible({ timeout: 5000 });
 
   const heights = await page.evaluate(() => {
     const header = document.querySelector('.editor-header');

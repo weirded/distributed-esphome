@@ -71,6 +71,8 @@ You don't need one to start — the add-on ships with a built-in local worker th
 
 The worker container is `ghcr.io/weirded/esphome-dist-client:latest`. All it needs on the host is Docker and network reach to (a) the add-on's HTTP API and (b) the ESP devices it'll flash. No inbound ports.
 
+Remote workers don't auto-update — keep them current by watching for the **Image stale** badge in the Workers tab and running `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` on the host. See [`ha-addon/DOCS.md → Keeping workers up to date`](ha-addon/DOCS.md) for the full rundown.
+
 ### As a standalone Docker container
 
 Only if you're running the server outside Home Assistant. Most people don't need this.

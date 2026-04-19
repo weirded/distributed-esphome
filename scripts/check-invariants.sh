@@ -320,6 +320,33 @@ for wf in .github/workflows/*.yml; do
 done
 
 # -----------------------------------------------------------------------------
+# (PY-10) tests/test_integration_*.py files that don't have a ``_logic``
+# suffix must import ``pytest_homeassistant_custom_component`` — the HA
+# custom-integration pytest plugin. Rationale (IT.1 from 1.6 punchlist):
+# the plain ``test_integration_*`` name reads as "real integration test
+# against a running HA" but the existing files are mock-based helper
+# tests using SimpleNamespace + MagicMock. The naming drift led reviewers
+# to trust coverage that wasn't there — CR.12 class bugs (async_setup_entry
+# misuse, unique_id collisions, config-flow regressions) passed mocked
+# tests but broke real HA.
+#
+# Rule: filename ending in ``_logic.py`` is exempt (it's an honest helper
+# test); everything else matching ``test_integration_*.py`` must show an
+# import of pytest_homeassistant_custom_component somewhere in the file.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+for f in tests/test_integration_*.py; do
+    [[ -f "$f" ]] || continue
+    # Exempt _logic.py files — those are intentionally mock-based.
+    if [[ "$f" == *"_logic.py" ]]; then
+        continue
+    fi
+    if ! grep -q 'pytest_homeassistant_custom_component' "$f"; then
+        fail "#PY-10" "$f: test_integration_*.py without '_logic' suffix must import pytest_homeassistant_custom_component (or rename to *_logic.py if it's a helper test)."
+    fi
+done
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 

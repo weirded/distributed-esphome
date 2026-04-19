@@ -64,6 +64,39 @@ Typical uses:
 
 Workers install whatever ESPHome version each job asks for, on demand, into a local per-version venv and keep a small LRU cache so subsequent jobs using that version start instantly. `MAX_ESPHOME_VERSIONS` on the worker (default 3) controls the cache size.
 
+### Keeping workers up to date
+
+Workers don't auto-update. The built-in local worker upgrades whenever the add-on does, but **remote workers you started with `docker run` stay pinned to the image version you installed them with** until you refresh the container yourself.
+
+**Why it matters.** Worker images carry the protocol client, the ESPHome install lifecycle, and any CVE patches shipped since your install. The server enforces a minimum image version (`MIN_IMAGE_VERSION` in `ha-addon/server/constants.py`) — once a worker falls below that, it keeps heartbeating but refuses new protocol fields and the Workers tab tags it with an orange **Image stale** badge.
+
+**How to tell.** Open the **Workers** tab. Stale workers carry an **Image stale** badge next to the hostname; hover to see the exact refresh command. The per-row version cell also shows the client's baked-in image version.
+
+**Refresh command (Linux / Mac / Windows with Docker CLI):**
+
+```bash
+docker pull ghcr.io/weirded/esphome-dist-client:latest
+docker restart <your-worker-container-name>
+```
+
+The `<your-worker-container-name>` is whatever you passed via `--name` when you first ran the container — `docker ps --format '{{.Names}}'` lists them. The restart reuses the old container's volumes and env vars, so the worker reconnects with the same token and hostname.
+
+**Docker Compose variant:**
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+(Run it in the directory that has your `docker-compose.yaml`. Compose detects that the image changed and rebuilds the container in-place.)
+
+**Full re-install** (needed when upgrading across a `MIN_IMAGE_VERSION` bump, or when changing host platform, max-parallel-jobs, or token): remove the old container and re-run the snippet from **+ Connect Worker**. The built-in Connect Worker modal always emits a snippet that matches the currently-deployed server.
+
+**Automating refreshes.** We deliberately don't ship an auto-update mechanism — every option adds a dependency (Watchtower, What's Up Docker, Compose + cron, Kubernetes controllers…) we'd then have to support. Pick whatever scheduler you already use on the host and have it run the refresh command on a cadence you're comfortable with. We don't endorse a specific tool.
+
+**Verifying signatures.** Every Fleet server + client image is signed with cosign and carries an SBOM attestation. See the `Verifying what you're running` section below for the verify command before you pull on security-sensitive hosts.
+
+
 ## Verifying what you're running
 
 Every server and client image on GHCR is signed with [cosign](https://docs.sigstore.dev/) using GitHub's keyless OIDC flow (no long-lived keys anywhere). You can verify that the image you pulled is the one this repo built:

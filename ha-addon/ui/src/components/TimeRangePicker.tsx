@@ -122,8 +122,15 @@ export function TimeRangePicker({ value, onChange, activePresetLabel }: Props) {
 
       {open && (
         <div
-          className="absolute z-[300] right-0 mt-1 flex rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-xl text-[12px]"
-          style={{ width: 'min(640px, 90vw)' }}
+          // Bug #55: anchor the popover to the trigger's LEFT edge so it
+          // expands rightward. The previous `right-0` anchored it to the
+          // trigger's right edge + extended leftward 640 px, which was
+          // clipped by the viewport/dialog gutter and chopped the entire
+          // presets column + most of the calendar. In practice the
+          // trigger lives near the left of the Queue-History filter row,
+          // so left-anchoring always fits.
+          className="absolute z-[300] left-0 mt-1 flex flex-wrap rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-xl text-[12px]"
+          style={{ width: 'min(640px, 92vw)' }}
         >
           {/* Presets column */}
           <div className="flex-none w-[180px] border-r border-[var(--border)] py-2">

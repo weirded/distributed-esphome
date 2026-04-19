@@ -43,7 +43,7 @@ test('new device flow creates and opens editor', async ({ page }) => {
   await expect(createDialog).toHaveCount(0, { timeout: 5000 });
 
   // The editor modal opens on the new target. Monaco takes a beat to mount.
-  await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(String.raw`[data-slot="dialog-content"] [role="code"].monaco-editor`).first()).toBeVisible({ timeout: 5000 });
 });
 
 test('new device modal validates the slug format', async ({ page }) => {
@@ -125,5 +125,5 @@ test('duplicate flow creates and opens editor', async ({ page }) => {
   await expect(dupDialog).toHaveCount(0, { timeout: 5000 });
 
   // Editor opens on the new target
-  await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(String.raw`[data-slot="dialog-content"] [role="code"].monaco-editor`).first()).toBeVisible({ timeout: 5000 });
 });

@@ -40,19 +40,44 @@ jobs:
           python -m venv .ha-testenv
           # Integration tests reach into homeassistant.components.zeroconf
           # via config_flow, so zeroconf + aiohttp need to be present
-          # alongside homeassistant itself.
+          # alongside homeassistant itself. IT.2: also installs
+          # pytest-homeassistant-custom-component so the non-`_logic`
+          # integration tests can use the real ``hass`` fixture.
           ./.ha-testenv/bin/pip install \
             'homeassistant>=2025.1,<2025.2' \
             pytest pytest-asyncio \
+            pytest-homeassistant-custom-component \
             aiohttp zeroconf voluptuous
 
       - name: Run server + client tests
-        # Excludes integration tests — those need HA, which conflicts
-        # with esphome in the same env.
-        run: pytest tests/ -n auto -v --cov=ha-addon/server --cov=ha-addon/client --cov-report=term-missing --cov-report=html --ignore=tests/test_integration_config_flow.py --ignore=tests/test_integration_device_info.py --ignore=tests/test_integration_coordinator_events.py --ignore=tests/test_integration_services.py --ignore=tests/test_integration_coordinator_auth.py
+        # Excludes HA integration tests — those need HA, which conflicts
+        # with esphome in the same env. IT.1: the ``_logic.py`` helper
+        # tests DON'T need HA at runtime, so they run in the main env
+        # alongside everything else. Only the true HA-fixture tests
+        # (unsuffixed ``test_integration_*.py``) land in the isolated env.
+        run: |
+          pytest tests/ -n auto -v \
+            --cov=ha-addon/server --cov=ha-addon/client \
+            --cov-report=term-missing --cov-report=html \
+            $(for f in tests/test_integration_*.py; do
+                case "$f" in
+                  *_logic.py) ;;  # run in main env
+                  *) echo "--ignore=$f" ;;
+                esac
+              done)
 
       - name: Run HA integration tests (isolated venv)
-        run: ./.ha-testenv/bin/pytest tests/test_integration_config_flow.py tests/test_integration_device_info.py tests/test_integration_coordinator_events.py tests/test_integration_services.py tests/test_integration_coordinator_auth.py -v
+        # IT.2: any ``test_integration_*.py`` that's NOT ``_logic.py``
+        # must import pytest_homeassistant_custom_component (enforced
+        # by the PY-10 invariant in scripts/check-invariants.sh) and
+        # runs against the real ``hass`` fixture from that plugin.
+        run: |
+          real_ha_tests=$(ls tests/test_integration_*.py 2>/dev/null | grep -v '_logic.py' | tr '\n' ' ')
+          if [ -n "$real_ha_tests" ]; then
+            ./.ha-testenv/bin/pytest $real_ha_tests -v
+          else
+            echo "No non-_logic integration tests yet — skipping."
+          fi
 
       - name: Upload coverage report
         if: always()
