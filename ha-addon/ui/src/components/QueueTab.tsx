@@ -264,10 +264,11 @@ export function QueueTab({
     }),
     // #17: ESPHome version column. Shows the version stamped on each job,
     // which may differ from the global default when the user picked a
-    // non-default in the Upgrade modal.
+    // non-default in the Upgrade modal. Bug #29: header is "ESPHome" so
+    // Devices / Schedules / Queue all use the same disambiguating label.
     columnHelper.accessor(row => row.esphome_version || '', {
       id: 'esphome_version',
-      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
       cell: ({ row: { original: job } }) => {
         const target = targets.find(t => t.target === job.target);
         const isPinned = target?.pinned_version && target.pinned_version === job.esphome_version;
@@ -275,8 +276,8 @@ export function QueueTab({
           <span className="text-[12px]">
             {job.esphome_version || <span className="text-[var(--text-muted)]">—</span>}
             {isPinned && (
-              <span title={`Pinned to ${target.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
-                <Pin className="size-3" aria-label="Pinned version" />
+              <span title={`Pinned ESPHome version: ${target.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+                <Pin className="size-3" aria-label="Pinned ESPHome version" />
               </span>
             )}
           </span>

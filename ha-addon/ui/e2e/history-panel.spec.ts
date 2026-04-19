@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
 // AV.6: History panel opens from the Devices row hamburger and from
 // the Editor modal toolbar.
 
-test('hamburger "View history…" opens the History panel', async ({ page }) => {
+test('hamburger "Config history…" opens the History panel', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
@@ -16,7 +16,7 @@ test('hamburger "View history…" opens the History panel', async ({ page }) => 
   const firstRow = page.getByRole('row').filter({ hasText: 'Living Room Sensor' });
   await firstRow.getByRole('button', { name: /more actions/i }).click();
 
-  await page.getByRole('menuitem', { name: /view history/i }).click();
+  await page.getByRole('menuitem', { name: /config history/i }).click();
 
   // Drawer opened — title shows the filename.
   const drawer = page.locator('[data-slot="sheet-content"]');
@@ -36,7 +36,7 @@ test('Restore button on a commit triggers a rollback', async ({ page }) => {
 
   const firstRow = page.getByRole('row').filter({ hasText: 'Living Room Sensor' });
   await firstRow.getByRole('button', { name: /more actions/i }).click();
-  await page.getByRole('menuitem', { name: /view history/i }).click();
+  await page.getByRole('menuitem', { name: /config history/i }).click();
 
   const drawer = page.locator('[data-slot="sheet-content"]');
   await expect(drawer).toBeVisible();
@@ -68,7 +68,7 @@ test('uncommitted banner shows the Commit prompt when the status endpoint says s
 
   const firstRow = page.getByRole('row').filter({ hasText: 'Living Room Sensor' });
   await firstRow.getByRole('button', { name: /more actions/i }).click();
-  await page.getByRole('menuitem', { name: /view history/i }).click();
+  await page.getByRole('menuitem', { name: /config history/i }).click();
 
   const drawer = page.locator('[data-slot="sheet-content"]');
   await expect(drawer.getByText(/uncommitted changes/i)).toBeVisible();

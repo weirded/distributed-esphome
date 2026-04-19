@@ -496,6 +496,45 @@ def get_head(config_dir: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _find_creation_commit(config_dir: Path, relpath: str) -> str | None:
+    """Return the SHA where *relpath* was first added, following renames.
+
+    Returns ``None`` when the file has no committed add, when the dir
+    isn't a git repo, or when git errors out. Used by :func:`file_history`
+    to strip phantom ancestors that ``git log --follow`` emits when it
+    mis-attributes a brand-new file's content to an unrelated deleted
+    file in the repo's pre-Fleet history (bug #28).
+
+    ``--follow --diff-filter=A --reverse`` yields adds only, oldest
+    first; the first line is the file's true birth. For legitimate
+    renames, this is the *original* filename's creation commit (the
+    correct "start of history" to include in the drawer).
+    """
+    if not _is_git_repo(Path(config_dir)):
+        return None
+    try:
+        result = _run(
+            [
+                "git", "log",
+                "--follow",
+                "--diff-filter=A",
+                "--reverse",
+                "--format=%H",
+                "--",
+                relpath,
+            ],
+            cwd=Path(config_dir),
+            check=False,
+        )
+    except Exception:
+        logger.exception("git log --diff-filter=A failed for %s in %s", relpath, config_dir)
+        return None
+    if result.returncode != 0:
+        return None
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    return lines[0] if lines else None
+
+
 def file_history(
     config_dir: Path,
     relpath: str,
@@ -508,6 +547,13 @@ def file_history(
     lines_removed}``. ``--follow`` tracks renames, so asking for
     ``bedroom.yaml``'s history still works after it was renamed from
     ``upstairs-bedroom.yaml``.
+
+    Bug #28: ``git log --follow`` has a well-known false-positive mode
+    where it attributes a newly-created file's ancestry to any deleted
+    file with ≥50% content similarity in the pre-import commit history.
+    We guard against that by finding the file's real creation commit
+    via :func:`_find_creation_commit` and truncating the entry list at
+    that commit — anything older is a phantom.
 
     Empty list on any of: not a git repo, file never committed, git
     errors. Never raises — callers render "no history yet" when empty.
@@ -556,7 +602,21 @@ def file_history(
         logger.debug("git log for %s returned %d: %s", relpath, result.returncode, result.stderr.strip())
         return []
 
-    return _parse_log_with_numstat(result.stdout, marker, sep)
+    entries = _parse_log_with_numstat(result.stdout, marker, sep)
+
+    # Bug #28: drop phantom ancestors. If we can identify the real creation
+    # commit, truncate the newest-first list at that hash. We only truncate
+    # when the creation hash actually appears in the entries we fetched — if
+    # it's past the current page (offset+limit), the entries we *did* get
+    # are still legitimate mid-history commits and must be returned as-is.
+    creation_hash = _find_creation_commit(Path(config_dir), relpath)
+    if creation_hash:
+        for i, e in enumerate(entries):
+            if e.get("hash") == creation_hash:
+                entries = entries[:i + 1]
+                break
+
+    return entries
 
 
 def _parse_log_with_numstat(raw: str, marker: str, field_sep: str) -> list[dict[str, object]]:

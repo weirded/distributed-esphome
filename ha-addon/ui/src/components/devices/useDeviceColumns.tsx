@@ -386,13 +386,16 @@ export function useDeviceColumns(options: Options) {
     }),
     columnHelper.accessor(row => row.running_version || '', {
       id: 'running',
-      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      // Bug #29: "Version" was ambiguous now that the config git history
+      // also exposes a version concept. Labeled "ESPHome" so the
+      // Devices / Schedules / Queue columns all agree on the domain.
+      header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
       cell: ({ row: { original: t } }) => (
         <span className="text-[12px]">
           {t.running_version || '—'}
           {t.pinned_version && (
-            <span title={`Pinned to ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
-              <Pin className="size-3" aria-label="Pinned version" />
+            <span title={`Pinned ESPHome version: ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+              <Pin className="size-3" aria-label="Pinned ESPHome version" />
             </span>
           )}
           {t.config_modified && <div className="config-modified">config changed</div>}

@@ -207,15 +207,17 @@ export function SchedulesTab({ targets, workers, onSchedule, onRefresh, onToast 
     }),
     columnHelper.accessor(row => row.pinned_version || row.server_version || '', {
       id: 'version',
-      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      // Bug #29: disambiguate — this is the ESPHome compiler version the
+      // schedule will build against (pinned per-device, else server default).
+      header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
       cell: ({ row: { original: t } }) => {
         const version = t.pinned_version || t.server_version || '—';
         return (
           <span className="text-[12px]">
             {version}
             {t.pinned_version && (
-              <span title={`Pinned to ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
-                <Pin className="size-3" aria-label="Pinned version" />
+              <span title={`Pinned ESPHome version: ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+                <Pin className="size-3" aria-label="Pinned ESPHome version" />
               </span>
             )}
           </span>

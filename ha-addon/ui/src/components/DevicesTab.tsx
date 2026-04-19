@@ -43,7 +43,7 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'ha', label: 'HA', defaultVisible: true },
   { id: 'ip', label: 'IP', defaultVisible: true },
   { id: 'net', label: 'Net', defaultVisible: true },
-  { id: 'running', label: 'Version', defaultVisible: true },
+  { id: 'running', label: 'ESPHome', defaultVisible: true },
   { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
   { id: 'ap', label: 'AP', defaultVisible: false },
   { id: 'schedule', label: 'Schedule', defaultVisible: true },

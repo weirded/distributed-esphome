@@ -133,22 +133,28 @@ function DeviceContextMenuImpl({
         <DropdownMenuGroup>
           <DropdownMenuLabel>Config</DropdownMenuLabel>
           {/* #93: "Schedule Upgrade…" removed — accessible via the Upgrade
-              button by switching to "Scheduled" mode. */}
+              button by switching to "Scheduled" mode.
+              Bug #29: "Pin version" was ambiguous under a "Config" group
+              (pins the ESPHome compiler version, not the config). Spell
+              it out — the config version concept lives in "View history…"
+              just below. */}
           {t.pinned_version ? (
             <DropdownMenuItem onClick={() => onUnpin(t.target)}>
-              Unpin version ({t.pinned_version})
+              Unpin ESPHome version ({t.pinned_version})
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem onClick={() => onPin(t.target)}>
-              Pin to current version
+              Pin ESPHome version to current
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => onRename(t.target)}>Rename</DropdownMenuItem>
           {/* CD.6: duplicate this device into a new file */}
           <DropdownMenuItem onClick={() => onDuplicate(t)}>Duplicate…</DropdownMenuItem>
-          {/* AV.6: per-file version history + diff + rollback. */}
+          {/* AV.6: per-file config history + diff + rollback. Bug #29:
+              "Config history…" disambiguates from ESPHome-version history
+              (which lives in the version dropdown in the header). */}
           <DropdownMenuItem onClick={() => onOpenHistory(t.target)}>
-            View history…
+            Config history…
           </DropdownMenuItem>
           {/* Bug #16: only shown when the target has uncommitted changes. */}
           {t.has_uncommitted_changes && (

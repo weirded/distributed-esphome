@@ -21,26 +21,26 @@ test('pinned device shows pin icon in the version cell', async ({ page }) => {
   // bedroom-light is pinned to 2026.2.0 in fixtures — version cell wraps
   // the pin icon in a <span title="Pinned to 2026.2.0">.
   const row = rowFor(page, 'Bedroom Light');
-  await expect(row.locator('[title="Pinned to 2026.2.0"]')).toBeVisible();
+  await expect(row.locator('[title="Pinned ESPHome version: 2026.2.0"]')).toBeVisible();
 });
 
 test('unpinned device shows no pin icon', async ({ page }) => {
-  // living-room has no pinned_version in fixtures — no "Pinned to" badge.
+  // living-room has no pinned_version in fixtures — no pinned-version badge.
   const row = rowFor(page, 'Living Room Sensor');
-  await expect(row.locator('[title^="Pinned to"]')).toHaveCount(0);
+  await expect(row.locator('[title^="Pinned ESPHome version"]')).toHaveCount(0);
 });
 
 test('hamburger on pinned device shows Unpin item with version', async ({ page }) => {
   const row = rowFor(page, 'Bedroom Light');
   await row.getByRole('button', { name: /more actions/i }).click();
   // Menu item text includes the pinned version in parentheses.
-  await expect(page.getByRole('menuitem', { name: /Unpin version \(2026\.2\.0\)/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Unpin ESPHome version \(2026\.2\.0\)/ })).toBeVisible();
 });
 
 test('hamburger on unpinned device shows Pin item', async ({ page }) => {
   const row = rowFor(page, 'Living Room Sensor');
   await row.getByRole('button', { name: /more actions/i }).click();
-  await expect(page.getByRole('menuitem', { name: /Pin to current version/i })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Pin ESPHome version to current/i })).toBeVisible();
 });
 
 test('clicking Unpin fires DELETE on the pin endpoint', async ({ page }) => {
@@ -55,7 +55,7 @@ test('clicking Unpin fires DELETE on the pin endpoint', async ({ page }) => {
 
   const row = rowFor(page, 'Bedroom Light');
   await row.getByRole('button', { name: /more actions/i }).click();
-  await page.getByRole('menuitem', { name: /Unpin version/ }).click();
+  await page.getByRole('menuitem', { name: /Unpin ESPHome version/ }).click();
 
   await expect.poll(() => deletedFor).toBe('bedroom-light.yaml');
 });
@@ -71,7 +71,7 @@ test('clicking Pin fires POST on the pin endpoint', async ({ page }) => {
 
   const row = rowFor(page, 'Living Room Sensor');
   await row.getByRole('button', { name: /more actions/i }).click();
-  await page.getByRole('menuitem', { name: /Pin to current version/i }).click();
+  await page.getByRole('menuitem', { name: /Pin ESPHome version to current/i }).click();
 
   await expect.poll(() => pinnedFor).toBe('living-room.yaml');
 });

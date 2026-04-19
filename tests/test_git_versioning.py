@@ -568,6 +568,90 @@ def test_file_history_empty_on_non_repo(tmp_path: Path):
     assert gv.file_history(d, "living-room.yaml") == []
 
 
+async def test_find_creation_commit_locates_add(tmp_path: Path):
+    """Bug #28: :func:`_find_creation_commit` returns the commit that
+    added *relpath*, ignoring later modifications. Used to strip phantom
+    ancestors that ``git log --follow`` sometimes emits for new files.
+    """
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+
+    old = gv.DEBOUNCE_SECONDS
+    gv.DEBOUNCE_SECONDS = 0.05
+    try:
+        (d / "bedroom.yaml").write_text("esphome:\n  name: bedroom\n")
+        await gv.commit_file(d, "bedroom.yaml", "create")
+        await gv.drain_pending_commits()
+        creation = gv._find_creation_commit(d, "bedroom.yaml")
+        assert creation is not None
+        assert len(creation) == 40
+
+        # Later edits don't move the creation pointer.
+        (d / "bedroom.yaml").write_text("esphome:\n  name: bedroom\n# edited\n")
+        await gv.commit_file(d, "bedroom.yaml", "save")
+        await gv.drain_pending_commits()
+        assert gv._find_creation_commit(d, "bedroom.yaml") == creation
+    finally:
+        gv.DEBOUNCE_SECONDS = old
+
+
+def test_find_creation_commit_returns_none_for_uncommitted(tmp_path: Path):
+    """Uncommitted and non-repo paths: None (not an error)."""
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    assert gv._find_creation_commit(d, "never-committed.yaml") is None
+
+    no_repo = tmp_path / "no-repo"
+    no_repo.mkdir()
+    assert gv._find_creation_commit(no_repo, "living-room.yaml") is None
+
+
+async def test_file_history_does_not_precede_creation_commit(tmp_path: Path):
+    """Bug #28: ``file_history`` must not return commits older than the
+    file's actual creation commit, even in a pre-existing repo with
+    unrelated prior history.
+
+    The direct user-visible contract: for a file Fleet just created,
+    the oldest entry in the history list is the creation commit — no
+    phantom ``28e0c8b``-style entries from the pre-import repo state.
+    """
+    import subprocess
+
+    d = _make_config_dir(tmp_path)
+    # Pre-Fleet history: several commits on unrelated files that would
+    # be visible if file_history leaked through them.
+    subprocess.run(["git", "init", "-b", "main"], cwd=str(d), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Pat"], cwd=str(d), check=True)
+    subprocess.run(["git", "config", "user.email", "pat@example.com"], cwd=str(d), check=True)
+    for i in range(3):
+        (d / f"pre-fleet-{i}.yaml").write_text(f"pre-fleet file {i}\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(d), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"pre-Fleet commit {i}"],
+            cwd=str(d), check=True, capture_output=True,
+        )
+
+    gv.init_repo(d)  # no-op on existing repo
+
+    old = gv.DEBOUNCE_SECONDS
+    gv.DEBOUNCE_SECONDS = 0.05
+    try:
+        (d / "fresh.yaml").write_text("esphome:\n  name: fresh\n")
+        await gv.commit_file(d, "fresh.yaml", "create")
+        await gv.drain_pending_commits()
+    finally:
+        gv.DEBOUNCE_SECONDS = old
+
+    entries = gv.file_history(d, "fresh.yaml")
+    assert len(entries) == 1, (
+        f"expected exactly the creation commit, got {len(entries)}"
+    )
+    # The only entry's hash must equal the creation commit returned by
+    # the helper — i.e., nothing older leaked in.
+    creation = gv._find_creation_commit(d, "fresh.yaml")
+    assert entries[0]["hash"] == creation
+
+
 async def test_file_history_follows_renames(tmp_path: Path):
     d = _make_config_dir(tmp_path)
     gv.init_repo(d)
