@@ -110,6 +110,26 @@ export interface Target {
    * hamburger item. False when the dir isn't a git repo. */
   has_uncommitted_changes?: boolean;
   /**
+   * Bug #32: git HEAD hash of /config/esphome/ at the moment the
+   * most-recent successful OTA-flash job was enqueued for this
+   * target. Null when there's no flash on record, no git repo, or
+   * AV.7 didn't stamp the job.
+   */
+  last_flashed_config_hash?: string | null;
+  /**
+   * Bug #32: True when this target's YAML has changed between
+   * last_flashed_config_hash and the repo's current HEAD —
+   * i.e. "the device is running stale YAML". False when the last
+   * flash hash equals HEAD, or when the target isn't among the
+   * files that changed in between. Null when the signal is
+   * unknown (no last-flashed hash, no git repo, etc).
+   *
+   * Distinct from `config_modified` — the latter is mtime-based
+   * and false-positives on `git checkout`. Prefer this flag when
+   * it's non-null; fall back to `config_modified` when it is.
+   */
+  config_drifted_since_flash?: boolean | null;
+  /**
    * Chip MAC address, lower-case colon-separated (e.g.
    * ``"aa:bb:cc:dd:ee:ff"``). Sourced from mDNS TXT or native API
    * polling. #27 — the HA custom integration attaches this as a

@@ -1143,7 +1143,8 @@ async def test_editor_save_triggers_auto_commit(tmp_path, _settings_init):
             text=True,
             check=True,
         ).stdout.splitlines()
-        assert "save: bedroom.yaml" in log
+        # Bug #34: auto-save subject is the human-readable form.
+        assert "Automatically saved after editing in UI" in log
     finally:
         gv._reset_for_tests()
         await ta.close()
@@ -1178,8 +1179,8 @@ async def test_file_history_endpoint_returns_entries(tmp_path, _settings_init):
         entries = await resp.json()
         assert isinstance(entries, list)
         assert len(entries) >= 1
-        # Newest entry should be our save.
-        assert entries[0]["message"].startswith("save: bedroom.yaml")
+        # Newest entry should be our save. Bug #34: human-readable subject.
+        assert entries[0]["message"] == "Automatically saved after editing in UI"
         assert "hash" in entries[0]
         assert "short_hash" in entries[0]
         assert isinstance(entries[0]["date"], int)
@@ -1304,7 +1305,8 @@ async def test_file_commit_endpoint_creates_commit(tmp_path, _settings_init):
         data = await resp.json()
         assert data["committed"] is True
         assert data["hash"]
-        assert data["message"] == "save: bedroom.yaml (manual)"
+        # Bug #34: manual-commit default subject is human-readable.
+        assert data["message"] == "Manually committed from UI"
 
         # Re-committing without changes is a no-op.
         resp = await ta.post("/ui/api/files/bedroom.yaml/commit", json={})

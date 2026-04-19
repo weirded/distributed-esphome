@@ -210,13 +210,14 @@ async def test_commit_file_produces_a_commit(tmp_path: Path):
 
     messages = _log_messages(d)
     assert len(messages) == baseline + 1
-    assert messages[0] == "save: living-room.yaml"
+    # Bug #34: "save" action's default subject is the human-readable form.
+    assert messages[0] == "Automatically saved after editing in UI"
 
 
 async def test_commit_file_uses_custom_message_when_provided(tmp_path: Path):
     """Bug #24: a user-entered commit message from the editor Save dialog
-    replaces the auto-generated ``f"{action}: {relpath}"`` subject, and
-    falls back to the default when the message is blank/whitespace."""
+    replaces the auto-generated default subject, and falls back to the
+    default when the message is blank/whitespace."""
     d = _make_config_dir(tmp_path)
     gv.init_repo(d)
     baseline = _log_count(d)
@@ -237,7 +238,8 @@ async def test_commit_file_uses_custom_message_when_provided(tmp_path: Path):
 
     messages = _log_messages(d)
     assert len(messages) == baseline + 2
-    assert messages[0] == "save: living-room.yaml"
+    # Bug #34: the default "save" subject is the human-readable form.
+    assert messages[0] == "Automatically saved after editing in UI"
     assert messages[1] == "tune PWM duty cycle"
 
 
@@ -438,8 +440,9 @@ async def test_commit_file_debounces_coalesces_rapid_calls(tmp_path: Path):
     messages = _log_messages(d)
     assert len(messages) == baseline + 1
     # Last caller's action wins — matches how a human thinks about
-    # "one edit session".
-    assert messages[0] == "schedule: living-room.yaml"
+    # "one edit session". Bug #34: subject is the "schedule" action's
+    # human-readable label, not the old "schedule: filename" form.
+    assert messages[0] == "Updated scheduled upgrade"
 
 
 async def test_commit_file_unrelated_paths_each_get_their_own_commit(tmp_path: Path):
@@ -525,9 +528,9 @@ async def test_file_history_returns_entries_newest_first(tmp_path: Path):
 
     # Initial commit + two edits.
     assert len(entries) >= 2
-    # Newest first.
-    assert entries[0]["message"] == "pin: living-room.yaml"
-    assert entries[1]["message"] == "save: living-room.yaml"
+    # Newest first. Bug #34: human-readable default subjects.
+    assert entries[0]["message"] == "Pinned ESPHome version"
+    assert entries[1]["message"] == "Automatically saved after editing in UI"
     # Shape checks.
     for e in entries:
         assert isinstance(e["hash"], str) and len(e["hash"]) == 40
@@ -681,8 +684,12 @@ async def test_file_history_follows_renames(tmp_path: Path):
     # Asking for den.yaml's history should include the pre-rename commits.
     entries = gv.file_history(d, "den.yaml")
     messages = [e["message"] for e in entries]
-    assert any("save: living-room.yaml" in m for m in messages)
-    assert any("save: den.yaml" in m for m in messages)
+    # Bug #34: auto-save subjects are now human-readable. There are
+    # TWO save commits in this history — both must be present, and the
+    # raw rename commit (which we wrote directly via subprocess above)
+    # is still there as a distinct entry.
+    assert sum(1 for m in messages if m == "Automatically saved after editing in UI") >= 2
+    assert any("rename: living-room.yaml" in str(m) for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -753,9 +760,9 @@ async def test_rollback_restores_file_and_creates_revert_commit(tmp_path: Path):
     assert result["content"] == "v2\n"
     # File on disk matches.
     assert (d / "living-room.yaml").read_text() == "v2\n"
-    # New commit message is a revert marker.
+    # Bug #34: revert subject is human-readable with the short hash in parens.
     latest = gv.file_history(d, "living-room.yaml")
-    assert latest[0]["message"] == f"revert: living-room.yaml to {target_hash[:7]}"
+    assert latest[0]["message"] == f"Restored earlier version ({target_hash[:7]})"
 
 
 async def test_rollback_leaves_tree_dirty_when_auto_commit_off(tmp_path: Path):
@@ -807,7 +814,8 @@ def test_commit_file_now_creates_a_commit(tmp_path: Path):
 
     assert result["committed"] is True
     assert result["hash"]
-    assert result["message"] == "save: living-room.yaml (manual)"
+    # Bug #34: manual-commit default is human-readable.
+    assert result["message"] == "Manually committed from UI"
 
 
 def test_commit_file_now_respects_custom_message(tmp_path: Path):

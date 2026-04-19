@@ -40,12 +40,20 @@ interface Props {
   onOpenHistory?: (target: string) => void;
   monacoTheme?: string;
   esphomeVersion?: string | null;
+  /**
+   * Bug #31: bumped by the parent whenever the on-disk content may have
+   * changed under us (history Restore, manual commit from the History
+   * panel). The fetch effect watches this so the editor buffer reloads
+   * to reflect the restored version instead of staying stuck on the
+   * original content loaded when the modal opened.
+   */
+  reloadNonce?: number;
 }
 
 // Track dirty-line decorations (module-level so the callback closure can access it)
 let _dirtyDecorationIds: string[] = [];
 
-export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, onOpenHistory, monacoTheme = 'vs-dark', esphomeVersion }: Props) {
+export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, onOpenHistory, monacoTheme = 'vs-dark', esphomeVersion, reloadNonce = 0 }: Props) {
   const isOpen = target !== null;
   const [content, setContent] = useState('');
   const [, setLoading] = useState(false);
@@ -89,8 +97,11 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => { onToastRef.current = onToast; }, [onToast]);
 
-  // Load content when target changes — intentionally [target] only so that
-  // background polls refreshing the parent do NOT overwrite unsaved edits.
+  // Load content when target changes — intentionally [target, reloadNonce]
+  // only so that background polls refreshing the parent do NOT overwrite
+  // unsaved edits. Bug #31: reloadNonce is bumped by the parent after a
+  // History Restore or manual commit so the buffer reloads to match the
+  // new on-disk content.
   useEffect(() => {
     if (!target) return;
     setLoading(true);
@@ -110,7 +121,7 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
     // are available without waiting for the first keypress.
     loadComponentList().catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target]);
+  }, [target, reloadNonce]);
 
   async function updateDirtyDecorations(editor: Parameters<OnMount>[0]) {
     const model = editor.getModel();

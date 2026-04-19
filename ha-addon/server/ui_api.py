@@ -561,8 +561,45 @@ async def get_targets(request: web.Request) -> web.Response:
     # `git status --porcelain` for the whole repo, then O(1) lookup
     # per target in the loop below. Empty set when the dir isn't a
     # git repo — the flag defaults to False in that case.
-    from git_versioning import dirty_paths  # noqa: PLC0415
+    from git_versioning import changed_paths_between, dirty_paths, get_head  # noqa: PLC0415
     dirty_set = dirty_paths(Path(cfg.config_dir))
+
+    # Bug #32: per-target "did the YAML change since we last flashed it?"
+    # flag, used by the UI to recolor the Upgrade button. Built in three
+    # steps so we stay O(targets + unique_hashes) git invocations:
+    #   1. Walk the queue's finished jobs, newest finish first, to pick
+    #      each target's most recent successful OTA config_hash.
+    #   2. For every unique (last_flashed_hash != HEAD) combo, run one
+    #      `git diff --name-only <hash> HEAD` and cache the result set.
+    #   3. A target is "drifted" if its YAML appears in that hash's
+    #      changed-files set. Same hash as HEAD → no drift. No flash
+    #      on record, or no git repo → null (UI falls back to the older
+    #      mtime-based ``config_modified`` signal).
+    head_hash = get_head(Path(cfg.config_dir))
+    queue = request.app.get("queue")
+    last_flashed_by_target: dict[str, str] = {}
+    if queue is not None:
+        # Sort oldest first so newer jobs overwrite older entries in the dict.
+        try:
+            jobs_for_flash = sorted(
+                queue.get_all(),
+                key=lambda j: (j.finished_at.timestamp() if j.finished_at else 0.0),
+            )
+        except Exception:
+            jobs_for_flash = []
+        for job in jobs_for_flash:
+            if (
+                getattr(job, "config_hash", None)
+                and getattr(job, "ota_result", None) == "success"
+                and not getattr(job, "validate_only", False)
+                and not getattr(job, "download_only", False)
+            ):
+                last_flashed_by_target[job.target] = job.config_hash
+    drift_cache: dict[str, set[str]] = {}
+    if head_hash:
+        for h in set(last_flashed_by_target.values()):
+            if h and h != head_hash:
+                drift_cache[h] = changed_paths_between(Path(cfg.config_dir), h, head_hash)
 
     # Build device lookup by compile_target filename
     devices_by_target: dict[str, Device] = {}
@@ -668,6 +705,18 @@ async def get_targets(request: web.Request) -> web.Response:
             # True when the target's YAML has uncommitted changes
             # relative to its latest git commit.
             "has_uncommitted_changes": target in dirty_set,
+            # Bug #32: per-target drift since last OTA. The hash is the
+            # git HEAD at enqueue time of the most recent successful
+            # flash; drift is True when that file has changed between
+            # that hash and current HEAD. Null when either side is
+            # unknown (no git repo, no past flash, or the target is
+            # uncommitted) — UI falls back to `config_modified`.
+            "last_flashed_config_hash": last_flashed_by_target.get(target),
+            "config_drifted_since_flash": (
+                None if not head_hash or target not in last_flashed_by_target
+                else False if last_flashed_by_target[target] == head_hash
+                else target in drift_cache.get(last_flashed_by_target[target], set())
+            ),
         }
         result.append(entry)
 

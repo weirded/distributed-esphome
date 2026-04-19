@@ -61,15 +61,27 @@ function ActionsCellImpl({
   onCommitChanges,
   onMenuOpenChange,
 }: Props) {
-  const upgradeVariant = t.needs_update ? 'success' : 'secondary';
+  // Bug #32: highlight the Upgrade button when the YAML has changed
+  // since the last successful flash. Preferred signal is the git-hash
+  // based `config_drifted_since_flash` (precise — survives mtime-churn
+  // from `git checkout` etc); falls back to the older mtime-based
+  // `config_modified` when drift info isn't available (no past flash
+  // recorded, repo isn't a git repo, etc). `needs_update` remains the
+  // ESPHome-compiler-version signal and also wins the green variant.
+  const configDrifted = t.config_drifted_since_flash === true
+    || (t.config_drifted_since_flash == null && t.config_modified === true);
+  const upgradeVariant: 'success' | 'secondary' =
+    t.needs_update || configDrifted ? 'success' : 'secondary';
   const upgradeTitle = inFlight
     ? 'A build is already running. Click to queue the next compile (will use the latest YAML at the time it starts).'
-    : undefined;
+    : configDrifted && !t.needs_update
+      ? 'Config has changed since this device was last flashed — Upgrade to apply.'
+      : undefined;
 
   return (
     <div style={rowStyle}>
       <Button
-        variant={upgradeVariant as 'success' | 'secondary'}
+        variant={upgradeVariant}
         size="sm"
         title={upgradeTitle}
         onClick={() => onUpgradeOne(t.target)}
@@ -106,7 +118,10 @@ function propsEqual(prev: Props, next: Props): boolean {
     a.has_restart_button === b.has_restart_button &&
     a.has_api_key === b.has_api_key &&
     a.pinned_version === b.pinned_version &&
-    a.has_uncommitted_changes === b.has_uncommitted_changes
+    a.has_uncommitted_changes === b.has_uncommitted_changes &&
+    // Bug #32: new config-drift signals that drive Upgrade button color.
+    a.config_drifted_since_flash === b.config_drifted_since_flash &&
+    a.config_modified === b.config_modified
   );
 }
 

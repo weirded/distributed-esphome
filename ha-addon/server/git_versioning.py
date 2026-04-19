@@ -383,6 +383,42 @@ async def _delayed_commit(
         logger.exception("Auto-commit of %s failed", relpath)
 
 
+# Bug #34: human-readable default subjects keyed by action. The old
+# ``f"{action}: {relpath}"`` form repeated the filename (already visible
+# via git's per-commit file listing) and read as jargon to non-technical
+# users. Unmapped actions fall back to the action label capitalised — a
+# safe default for future additions that haven't been curated here yet.
+_DEFAULT_SUBJECTS: dict[str, str] = {
+    "save": "Automatically saved after editing in UI",
+    "create": "Created new device in UI",
+    "delete": "Deleted device in UI",
+    "restore": "Restored archived device",
+    "rename": "Renamed device",
+    "rename (old)": "Renamed device (old path)",
+    "pin": "Pinned ESPHome version",
+    "unpin": "Unpinned ESPHome version",
+    "meta": "Updated device metadata",
+    "schedule": "Updated scheduled upgrade",
+    "unschedule": "Removed scheduled upgrade",
+    "schedule toggle": "Toggled scheduled upgrade",
+    "schedule once": "Set one-time scheduled upgrade",
+}
+
+
+def _default_subject(action: str, relpath: str) -> str:
+    """Return the default commit subject for *action* / *relpath*.
+
+    Bug #34: prefers the curated human-readable label from
+    :data:`_DEFAULT_SUBJECTS`. Falls back to ``"<Action>: <relpath>"``
+    for unmapped actions so future additions that forget to curate
+    here still produce a legible message rather than blank output.
+    """
+    mapped = _DEFAULT_SUBJECTS.get(action)
+    if mapped:
+        return mapped
+    return f"{action.capitalize()}: {relpath}"
+
+
 def _do_commit(
     config_dir: Path,
     relpath: str,
@@ -409,7 +445,7 @@ def _do_commit(
         # git_author_name/email in the Settings drawer takes effect on
         # the very next auto-commit, no restart.
         override_args = _identity_override_args(config_dir)
-        subject = message.strip() if message and message.strip() else f"{action}: {relpath}"
+        subject = message.strip() if message and message.strip() else _default_subject(action, relpath)
         result = _run(
             [
                 "git",
@@ -494,6 +530,39 @@ def get_head(config_dir: Path) -> str | None:
 # ---------------------------------------------------------------------------
 # AV.3 — History
 # ---------------------------------------------------------------------------
+
+
+def changed_paths_between(config_dir: Path, from_hash: str, to_hash: str) -> set[str]:
+    """Return the set of repo-relative paths that differ between two commits.
+
+    Bug #32: used by ``/ui/api/targets`` to recolor the Upgrade button
+    when a device's last-flashed config hash is behind HEAD AND the
+    target's YAML is among the files that changed since. Single
+    ``git diff --name-only <from> <to>`` per unique from-hash; results
+    are cached by the caller across targets.
+
+    Validates hashes the same way :func:`rollback_file` does to keep
+    shell metachars out of the pathspec. Returns an empty set on any
+    validation failure, non-repo, or git error — never raises.
+    """
+    config_dir = Path(config_dir)
+    if not _is_git_repo(config_dir):
+        return set()
+    for h in (from_hash, to_hash):
+        if not (4 <= len(h) <= 40 and all(c in "0123456789abcdef" for c in h.lower())):
+            return set()
+    try:
+        result = _run(
+            ["git", "diff", "--name-only", from_hash, to_hash],
+            cwd=config_dir,
+            check=False,
+        )
+    except Exception:
+        logger.exception("git diff --name-only %s %s failed in %s", from_hash, to_hash, config_dir)
+        return set()
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 def _find_creation_commit(config_dir: Path, relpath: str) -> str | None:
@@ -742,8 +811,10 @@ def rollback_file(config_dir: Path, relpath: str, hash: str) -> dict[str, object
     if not get_settings().auto_commit_on_save:
         return {"content": content, "committed": False, "hash": None, "short_hash": None}
 
+    # Bug #34: human-readable revert subject. Short hash kept in the
+    # message so ``git log --oneline`` still pins the restore target.
     short = hash[:7]
-    msg = f"revert: {relpath} to {short}"
+    msg = f"Restored earlier version ({short})"
     try:
         add = _run(["git", "add", "--all", "--", relpath], cwd=config_dir, check=False)
         if add.returncode != 0:
@@ -806,7 +877,10 @@ def commit_file_now(
     if not _is_git_repo(config_dir):
         return {"committed": False, "hash": None, "short_hash": None, "message": None}
 
-    effective_msg = message.strip() if message and message.strip() else f"save: {relpath} (manual)"
+    # Bug #34: human-readable manual-commit subject. The "(manual)" tail
+    # distinguishes user-invoked commits from the auto-save path —
+    # useful when scanning ``git log`` for what Fleet vs the user did.
+    effective_msg = message.strip() if message and message.strip() else "Manually committed from UI"
     try:
         add = _run(["git", "add", "--all", "--", relpath], cwd=config_dir, check=False)
         if add.returncode != 0:

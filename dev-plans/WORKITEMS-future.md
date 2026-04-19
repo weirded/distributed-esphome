@@ -69,3 +69,7 @@ Enabled via add-on option `pio_cache_enabled: true` (default off). Workers detec
 ## Import
 
 - [ ] **2.1c Create device: import from URL** — fetch config from GitHub/project URL
+
+## LLM-Augmented UX
+
+Introduce an optional LLM backend to generate content that currently falls back to hand-curated templates. First use case (from 1.6 bug #34): replace the static `"Automatically saved after editing in UI"` auto-commit subject with an LLM-generated one-line summary of the actual diff ("Tuned PWM duty cycle", "Added wifi fallback AP", etc). Opt-in — no LLM calls unless the user configures a provider + key. Candidate providers: Anthropic, OpenAI, local Ollama. Scope a dedicated release (naming TBD) when we're ready to commit to the operational cost / privacy tradeoffs.

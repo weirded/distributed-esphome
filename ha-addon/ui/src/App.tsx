@@ -152,6 +152,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // AV.6: per-file history panel. `null` = closed; otherwise the filename.
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
+  // Bug #31: nonce bumped whenever the History panel reports an on-disk
+  // change for the currently-edited file (rollback, manual commit, etc).
+  // EditorModal depends on this in its fetch effect so the buffer
+  // reloads to reflect the restored version.
+  const [editorReloadNonce, setEditorReloadNonce] = useState(0);
   // AV.7: optional "from" hash preset passed to HistoryPanel so the
   // "Diff since compile" flow lands on (from=job.config_hash, to=Current).
   const [historyFromHash, setHistoryFromHash] = useState<string | null>(null);
@@ -861,6 +866,8 @@ export default function App() {
           onOpenHistory={(target) => setHistoryTarget(target)}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
           esphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? undefined}
+          // Bug #31: bump to trigger a re-fetch after History Restore.
+          reloadNonce={editorReloadNonce}
         />
       )}
 
@@ -891,11 +898,20 @@ export default function App() {
         filename={historyTarget}
         initialFromHash={historyFromHash}
         onOpenChange={(open) => { if (!open) { setHistoryTarget(null); setHistoryFromHash(null); } }}
+        // Bug #31: bump the nonce on rollback / manual commit so any
+        // open EditorModal re-fetches the file content. Conditioned on
+        // the editor being open for the same target — no point bumping
+        // when the editor is closed (the next open will fetch fresh).
+        onFileChanged={() => {
+          if (editorTarget && historyTarget === editorTarget) {
+            setEditorReloadNonce(n => n + 1);
+          }
+        }}
       />
 
       {/* Bug #16: manual-commit Dialog for the Devices-row "Commit
           changes…" hamburger action. Optional message defaults to the
-          server-side "save: <file> (manual)" marker when left blank. */}
+          server-side "Manually committed from UI" marker when left blank. */}
       <Dialog
         open={commitDialogTarget !== null}
         onOpenChange={(open) => { if (!open) setCommitDialogTarget(null); }}
@@ -907,7 +923,7 @@ export default function App() {
           <div className="px-4 py-3 flex flex-col gap-2 text-sm text-[var(--text)]">
             <p className="text-xs text-[var(--text-muted)]">
               Optional commit message. Leave blank to use the default{' '}
-              <code className="font-mono text-xs">save: {commitDialogTarget} (manual)</code>.
+              <code className="font-mono text-xs">Manually committed from UI</code>.
             </p>
             <Input
               type="text"
