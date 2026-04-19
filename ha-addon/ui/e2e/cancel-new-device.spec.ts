@@ -25,7 +25,9 @@ test('cancelling a brand-new device fires DELETE on the pending file', async ({ 
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
-  await page.getByRole('button', { name: /new device/i }).click();
+  // #70: consolidated into "Add device ▾" dropdown.
+  await page.getByRole('button', { name: /^add device/i }).click();
+  await page.getByRole('menuitem', { name: /new device/i }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await dialog.getByPlaceholder(/kitchen-sensor/i).fill('temp-stub');

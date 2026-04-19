@@ -11,8 +11,9 @@ test('new device button opens the NewDeviceModal', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
-  // Click the "+ New Device" button in the Devices tab toolbar
-  await page.getByRole('button', { name: /new device/i }).click();
+  // #70: "+ New Device" + Archive buttons collapsed into "Add device ▾".
+  await page.getByRole('button', { name: /^add device/i }).click();
+  await page.getByRole('menuitem', { name: /new device/i }).click();
 
   // Dialog appears with the expected title
   const dialog = page.getByRole('dialog');
@@ -28,7 +29,8 @@ test('new device flow creates and opens editor', async ({ page }) => {
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
   // Open the modal
-  await page.getByRole('button', { name: /new device/i }).click();
+  await page.getByRole('button', { name: /^add device/i }).click();
+  await page.getByRole('menuitem', { name: /new device/i }).click();
   const createDialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: /new device/i }) });
   await expect(createDialog).toBeVisible();
 
@@ -50,7 +52,8 @@ test('new device modal validates the slug format', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
-  await page.getByRole('button', { name: /new device/i }).click();
+  await page.getByRole('button', { name: /^add device/i }).click();
+  await page.getByRole('menuitem', { name: /new device/i }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
 
@@ -74,7 +77,8 @@ test('new device modal rejects collision with existing target', async ({ page })
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
-  await page.getByRole('button', { name: /new device/i }).click();
+  await page.getByRole('button', { name: /^add device/i }).click();
+  await page.getByRole('menuitem', { name: /new device/i }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
 

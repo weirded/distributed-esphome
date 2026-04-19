@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { Settings2 } from 'lucide-react';
 import {
   useReactTable,
@@ -9,7 +10,12 @@ import {
   type VisibilityState,
   type RowSelectionState,
 } from '@tanstack/react-table';
-import { pinTargetVersion, unpinTargetVersion } from '../api/client';
+import {
+  getArchivedConfigs,
+  pinTargetVersion,
+  unpinTargetVersion,
+  type ArchivedConfig,
+} from '../api/client';
 import type { AddressSource, Device, Job, Target, Worker } from '../types';
 import { stripYaml, haDeepLink, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
@@ -177,6 +183,22 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   // user can pick to duplicate; selection calls onDuplicate() which
   // routes back to the NewDeviceModal in duplicate mode.
   const [duplicatePickerOpen, setDuplicatePickerOpen] = useState(false);
+  // #73: watch archive count so we can (a) gray out the "Restore from
+  // archive" menu item when the archive is empty and (b) auto-close
+  // the archive dialog once the user restores or permanently-deletes
+  // its last item. Both this hook and ArchivedDevicesList subscribe to
+  // the same SWR key, so SWR dedupes the request and a mutate() from
+  // the list re-renders both. revalidateOnFocus stays off to match
+  // the list's config.
+  const { data: archivedConfigs } = useSWR<ArchivedConfig[]>(
+    'archived-configs',
+    getArchivedConfigs,
+    { revalidateOnFocus: false },
+  );
+  const archiveEmpty = !archivedConfigs || archivedConfigs.length === 0;
+  useEffect(() => {
+    if (archiveOpen && archiveEmpty) setArchiveOpen(false);
+  }, [archiveOpen, archiveEmpty]);
 
   // VP.4 / QS.20: pin/unpin version from the hamburger menu. Memoized so
   // useDeviceColumns' dep array can actually cache — the hook re-runs only
@@ -384,7 +406,11 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
                     Duplicate existing device…
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setArchiveOpen(true)}>
+                  <DropdownMenuItem
+                    onClick={() => setArchiveOpen(true)}
+                    disabled={archiveEmpty}
+                    title={archiveEmpty ? "Archive is empty — delete a device to populate it" : undefined}
+                  >
                     Restore from archive…
                   </DropdownMenuItem>
                 </DropdownMenuGroup>

@@ -17,6 +17,19 @@
  */
 
 .rdp-tight .rdp-root {
+  /* #72 — constrain rdp-root to its content so the absolutely-positioned
+     ``.rdp-nav`` (anchored ``right: 0`` of ``.rdp-root``) doesn't escape
+     the popover. Without this rdp-root grows to fill the flex column
+     (~460 px) while the actual calendar grid is ~225 px wide; the nav's
+     right edge then trails the column edge and on narrow popovers the
+     next-month chevron overflows the rounded border. ``fit-content``
+     shrinks the root to the grid's natural width; ``max-width: 100%``
+     guards against weird viewports where the presets column + calendar
+     can't both fit. Combined with the ``justify-center`` wrapper, the
+     calendar ends up centered in its column with the nav tight against
+     its own grid on the right. */
+  width: fit-content;
+  max-width: 100%;
   /* Tighter day cells so the 6-row grid fits without padding the
      popover vertically. rdp 9 distinguishes ``day-*`` (the TD) from
      ``day_button-*`` (the interactive inner button with its own padding);

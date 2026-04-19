@@ -57,7 +57,7 @@ export function ArchivedDevicesList() {
     setBusy(filename);
     try {
       await deleteArchivedConfig(filename);
-      toast.success(`Permanently deleted ${filename}`);
+      toast.success(`Deleted ${filename} from archive`);
       await mutate();
     } catch (err) {
       toast.error((err as Error).message);
@@ -89,9 +89,10 @@ export function ArchivedDevicesList() {
   return (
     <>
       <p className="text-xs text-[var(--text-muted)]">
-        Devices you delete are kept here so you can restore them later. Restore puts the YAML
-        back under <code className="rounded bg-[var(--surface2)] px-1 py-0.5">/config/esphome/</code>;
-        permanent-delete removes the file from disk entirely and cannot be undone.
+        Devices you delete land here so you can restore them later. Restore moves the YAML
+        back under <code className="rounded bg-[var(--surface2)] px-1 py-0.5">/config/esphome/</code>.
+        Delete removes the file from the working tree (the prior contents stay in the config's
+        git history).
       </p>
       <ul className="flex flex-col gap-2 text-xs">
         {data.map((a) => {
@@ -124,7 +125,7 @@ export function ArchivedDevicesList() {
                 size="sm"
                 onClick={() => setDeleteCandidate(a)}
                 disabled={busy !== null}
-                title="Permanently delete — cannot be undone"
+                title="Remove from the archive (prior contents remain in git history)"
               >
                 Delete
               </Button>
@@ -140,12 +141,12 @@ export function ArchivedDevicesList() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Permanently delete {deleteCandidate?.filename}?</DialogTitle>
+            <DialogTitle>Delete {deleteCandidate?.filename} from the archive?</DialogTitle>
           </DialogHeader>
           <div className="px-4 py-3 text-sm text-[var(--text)]">
             <p>
-              This removes the archived file from disk. You won't be able to restore it
-              after this action.
+              This removes the file from the archive directory. The device's prior contents stay
+              in the config's git history — a git operator can recover them if needed.
             </p>
           </div>
           <DialogFooter>
@@ -163,7 +164,7 @@ export function ArchivedDevicesList() {
               onClick={() => deleteCandidate && handleConfirmDelete(deleteCandidate.filename)}
               disabled={busy !== null}
             >
-              Delete permanently
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
