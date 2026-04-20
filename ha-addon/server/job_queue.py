@@ -334,15 +334,26 @@ class JobQueue:
         # "active" set is expanded to include download-only history
         # rows — their binaries survive queue coalescing/clears until
         # the firmware_budget_enforcer evicts them.
+        # PR #64 review: paginate the history query instead of capping
+        # at 500 — a fleet with >500 download-only successes would
+        # silently lose protection for the older ones on every boot.
         try:
             from firmware_storage import reconcile_orphans  # noqa: PLC0415
             protected: set[str] = set()
             if self._history is not None:
                 try:
-                    rows = self._history.query(state="success", limit=500, offset=0)
-                    for r in rows:
-                        if r.get("download_only") and r.get("has_firmware"):
-                            protected.add(str(r["id"]))
+                    offset = 0
+                    page = 1000
+                    while True:
+                        rows = self._history.query(state="success", limit=page, offset=offset)
+                        if not rows:
+                            break
+                        for r in rows:
+                            if r.get("download_only") and r.get("has_firmware"):
+                                protected.add(str(r["id"]))
+                        if len(rows) < page:
+                            break
+                        offset += page
                 except Exception:
                     logger.debug(
                         "Couldn't pull protected download-only IDs from history",
@@ -729,7 +740,17 @@ class JobQueue:
                     # JH.2: record the permanent failure. Non-permanent
                     # retries (the else branch) go back to PENDING and
                     # aren't terminal yet — don't record those.
-                    self._record_history(job)
+                    # PR #64 review: history write MUST happen after
+                    # the queue-side persist, not before. An SIGKILL
+                    # between history-write and persist leaves history
+                    # with a FAILED row but queue.json still WORKING;
+                    # load()'s WORKING → PENDING reset then re-enqueues
+                    # the job, producing a second terminal row (maybe
+                    # SUCCESS) for the same id. Other terminal sites
+                    # (submit_result, cancel) already persist-then-record;
+                    # this one was inverted. Defer the record to after
+                    # the `if affected: self._persist()` below so the
+                    # ordering invariant holds.
                 else:
                     # CR.4: dropped the `job.state = JobState.TIMED_OUT`
                     # write that used to sit here — the very next line
@@ -745,6 +766,13 @@ class JobQueue:
 
             if affected:
                 self._persist()
+                # Record history for permanently-failed rows *after*
+                # the persist has landed (see PR #64 comment inside
+                # the loop above). Non-terminal (PENDING-requeued)
+                # rows are filtered out by state.
+                for j in affected:
+                    if j.state == JobState.FAILED:
+                        self._record_history(j)
             return affected
 
     async def retry(

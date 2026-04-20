@@ -319,10 +319,15 @@ async def firmware_budget_enforcer(app: web.Application) -> None:
     ``firmware_cache_max_gb`` Settings budget.
 
     First tick 90 s after startup (lets reconcile_orphans run first
-    and the queue settle), then every 30 min. Live-queue binaries
-    with ``has_firmware`` are protected from eviction; everything
-    else is fair game, oldest-mtime first. No-op when the budget
-    Setting resolves to ``<= 0`` (unlimited).
+    and the queue settle), then every 30 min. Protected set unions
+    the live-queue IDs with the download-only successes still in
+    history — #38's contract is that download-only binaries survive
+    queue coalescing + user Clear, so by the first budget tick the
+    live queue no longer contains them. PR #64 review: pre-fix we
+    only protected ``queue.get_all()``, which silently evicted
+    downloads older than 30 minutes.
+
+    No-op when the budget Setting resolves to ``<= 0`` (unlimited).
     """
     queue = app.get("queue")
     if queue is None:
@@ -338,10 +343,38 @@ async def firmware_budget_enforcer(app: web.Application) -> None:
             max_bytes = int(gb * 1024 * 1024 * 1024)
             if max_bytes <= 0:
                 continue
-            protected = {
+            protected: set[str] = {
                 job.id for job in queue.get_all()
                 if getattr(job, "has_firmware", False)
             }
+            # Union with download-only history rows whose binary is
+            # still on disk (JobQueue.load does the same at startup).
+            history = app.get("job_history")
+            if history is not None:
+                try:
+                    # Pull all non-cancelled terminal rows with
+                    # firmware still on disk. We don't cap at a
+                    # hard-coded limit here — a fleet with hundreds
+                    # of download-only binaries is exactly the case
+                    # the budget is for. Paginate if that ever becomes
+                    # a memory issue.
+                    offset = 0
+                    page = 1000
+                    while True:
+                        rows = history.query(state="success", limit=page, offset=offset)
+                        if not rows:
+                            break
+                        for r in rows:
+                            if r.get("download_only") and r.get("has_firmware"):
+                                protected.add(str(r["id"]))
+                        if len(rows) < page:
+                            break
+                        offset += page
+                except Exception:
+                    logger.debug(
+                        "Couldn't pull protected download-only IDs from history",
+                        exc_info=True,
+                    )
             deleted = enforce_budget(max_bytes=max_bytes, protected_job_ids=protected)
             if deleted:
                 logger.info(

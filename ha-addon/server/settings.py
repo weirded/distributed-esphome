@@ -382,6 +382,17 @@ def clear_supervisor_options_if_needed() -> None:
         logger.debug("Supervisor options-clear failed; will retry next boot", exc_info=True)
 
 
+# PR #64 review: make the Supervisor-probe failure path audible.
+# Pre-fix, a Supervisor that returned 500 or hung quietly downgraded
+# to ``/data/options.json`` with no log line, and if a token appeared
+# to "rotate" on upgrade the silent fallback was the first thing
+# operators had to suspect. We now emit one WARNING on the first
+# failure (with reason) and downgrade subsequent calls in the same
+# process to DEBUG so boot doesn't spam the log when Supervisor is
+# genuinely unreachable.
+_supervisor_probe_warned: bool = False
+
+
 def _read_supervisor_options() -> dict[str, Any]:
     """Fetch this add-on's user-stored options from Supervisor.
 
@@ -399,8 +410,12 @@ def _read_supervisor_options() -> dict[str, Any]:
     import urllib.error  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
+    global _supervisor_probe_warned
+
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
+        # Not in an HA add-on context — tests, bare python, etc.
+        # No warning; this is the expected no-op path.
         return {}
     try:
         req = urllib.request.Request(
@@ -412,8 +427,16 @@ def _read_supervisor_options() -> dict[str, Any]:
         opts = payload.get("data", {}).get("options", {})
         if isinstance(opts, dict):
             return opts
-    except Exception:
-        logger.debug("Supervisor options probe failed; ignoring", exc_info=True)
+    except Exception as exc:
+        if not _supervisor_probe_warned:
+            logger.warning(
+                "Supervisor options probe failed (%s: %s); falling back to /data/options.json. "
+                "If a token or timeout appears to have reset on upgrade, this is why.",
+                type(exc).__name__, exc,
+            )
+            _supervisor_probe_warned = True
+        else:
+            logger.debug("Supervisor options probe failed again; ignoring", exc_info=True)
     return {}
 
 
@@ -707,11 +730,12 @@ def settings_as_dict() -> dict[str, Any]:
 
 def _reset_for_tests() -> None:
     """Test-only: reset module state. Not part of the public API."""
-    global _settings, _lock, _settings_path, _options_path
+    global _settings, _lock, _settings_path, _options_path, _supervisor_probe_warned
     _settings = None
     _lock = None
     _settings_path = SETTINGS_FILE
     _options_path = OPTIONS_FILE
+    _supervisor_probe_warned = False
 
 
 def _set_for_tests(**overrides: Any) -> None:

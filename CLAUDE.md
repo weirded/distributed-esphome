@@ -225,6 +225,13 @@ Everything lives in `dev-plans/`:
 
 **Next release file:** Create `dev-plans/WORKITEMS-X.Y+1.md` immediately after tagging `vX.Y.Z` (part of the post-release checklist). The current file moves to `dev-plans/archive/` at the same time, and this file's "Project Tracking" section is updated to point at the new current release.
 
+**In-code TODOs must reference a workitem.** Every `TODO` / `FIXME` / `HACK` / `XXX` comment in source (`ha-addon/`, `scripts/`, `tests/`, `.github/`) is shaped as `TODO(<ID>): <body>` where `<ID>` is an identifier greppable in `dev-plans/` — a bug number (`#NNN`), a workstream code (`IT.2`, `SS.1`, `QS.1`, `PH.1`, …), or equivalent. A TODO with no pointer silently rots: the next reader has no way to tell whether it's still relevant, already fixed, deliberately parked, or never going to happen. Concrete rules:
+- If the underlying work is worth doing someday → file it in the current `WORKITEMS-X.Y.md`, a successor file, or `WORKITEMS-future.md`, and use that ID in the TODO.
+- If the work isn't worth filing → the TODO isn't worth keeping. Either fix the code or delete the comment.
+- PR numbers, reviewer names, and commit SHAs are NOT valid pointers — PRs close, context evaporates. Always point at a dev-plans entry.
+
+`dev-plans/RELEASE_CHECKLIST.md` has a grep step that fails the release if any in-source TODO points at an ID not found under `dev-plans/` — so stale pointers get caught before tag.
+
 ## Branching Strategy
 
 Two long-lived branches: `develop` and `main`.

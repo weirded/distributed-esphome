@@ -44,12 +44,4 @@ Today `ha-addon/custom_integration/esphome_fleet/manifest.json` declares `"quali
 
 ## Open Bugs & Tweaks
 
-### Carried forward from 1.6
-
-- [ ] **#111** *(carried from 1.6 — formerly #104 before 1.6 reused that slot)* — when config versioning is disabled, we should gray out the config history item in the hamburger menu. As well as any other places that lead us to the history drawer, like the history button in the editor and the various hashes that we show in the queue and job history table.
-
-- [ ] **#112** *(carried from 1.6 — formerly #105 before 1.6 reused that slot)* — when config versioning is disabled, if we don't have the history enabled, we probably need to not show the hashes and hide those columns.
-
-### New in 1.6.1
-
-(populated as new bugs are found during the 1.6.1 cycle)
+- [ ] 1 in the job history for compile and download jobs, we need the link to download the previously compiled firmware. 

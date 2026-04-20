@@ -43,7 +43,26 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
   1. `grep -nE '^- \[ \]' dev-plans/WORKITEMS-X.Y.md` — every unchecked box must be either (a) checked, (b) struck-through with `~~**ID**~~ WONTFIX —` + reason, or (c) **moved verbatim** to `dev-plans/WORKITEMS-X.Y+1.md` (or a later release file) under a `## Carried forward from X.Y` heading. Don't just delete — losing context across releases is what this checklist exists to prevent.
   2. `grep -niE 'defer|TODO|follow.?up|nice to have|tracked for later|future iteration' dev-plans/WORKITEMS-X.Y.md` — for each hit, decide: shipped + obsolete (delete the note), or still pending (move to the successor file). The phrase "deferred to <Y>" only counts as resolved if `WORKITEMS-Y.md` actually lists it.
   3. After both grep passes are clean, `git mv dev-plans/WORKITEMS-X.Y.md dev-plans/archive/`.
-- [ ] **Grep TODO/FIXME/HACK** in source — `grep -rnE 'TODO|FIXME|HACK' ha-addon/ scripts/ tests/` (excluding `node_modules`, `dist`, lockfiles). Resolve, document as known issues, or move to a successor WORKITEMS file. Same forwarding rule as the dev-plans grep above — don't lose context.
+- [ ] **Grep TODO/FIXME/HACK in source** — `grep -rnE '\b(TODO|FIXME|HACK|XXX)\b' ha-addon/ scripts/ tests/ .github/` (excluding `node_modules`, `dist`, lockfiles, and `ha-addon/server/static/assets/` generated bundles). Resolve, document as known issues, or move to a successor WORKITEMS file. Same forwarding rule as the dev-plans grep above — don't lose context.
+- [ ] **Verify every in-source TODO points to a valid workitem** — per `CLAUDE.md` → Project Tracking, each `TODO(<ID>): …` must reference an identifier that resolves under `dev-plans/`. Run:
+  ```bash
+  # Extract first-party TODO pointers and check each one appears under dev-plans/.
+  # Excludes node_modules (vendored code's own TODOs), __pycache__ (binary .pyc),
+  # dist/build/.venv (generated), and server/static/assets (Vite bundles).
+  grep -rnhoE '\b(TODO|FIXME|HACK|XXX)\([^)]+\)' \
+      --exclude-dir=node_modules --exclude-dir=__pycache__ \
+      --exclude-dir=dist --exclude-dir=build --exclude-dir=.venv \
+      --exclude-dir=assets \
+      ha-addon/ scripts/ tests/ .github/ |
+    sed -E 's/.*\(([^)]+)\).*/\1/' |
+    sort -u |
+    while IFS= read -r id; do
+      if ! grep -rq -- "$id" dev-plans/; then
+        echo "STALE: $id — not referenced anywhere under dev-plans/"
+      fi
+    done
+  ```
+  Zero output = clean. Any `STALE:` line means the pointer doesn't resolve: either file the underlying work in a `WORKITEMS-*.md`, update the TODO to reference an existing entry, or delete the TODO (and fix the code, if keeping it means fixing it). PR numbers, reviewer names, and commit SHAs are NOT valid pointers. Pointer IDs should be terse (`IT.2`, `PH.1`, `#NNN`) — avoid free-form trailing qualifiers inside the parens (`TODO(IT.2 follow-up)`) so the grep matches cleanly.
 
 ### You do
 

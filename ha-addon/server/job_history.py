@@ -431,6 +431,13 @@ class JobHistoryDAO:
         # `.bin` is still on disk (vs evicted by the budget task).
         # `has_firmware` stays 1 either way; `firmware_variants` carries
         # the live-available variants (empty list = evicted).
+        #
+        # TODO(PH.1): ``list_variants`` is an ``os.listdir`` per row,
+        # so at ``limit=50`` + QueueHistoryDialog's infinite scroll we
+        # N+1 stat the firmware dir O(rows × N) per session. Tolerable
+        # at home-lab scale; revisit when someone accumulates hundreds
+        # of retained firmwares. Tracked in WORKITEMS-future.md → Perf
+        # hardening → PH.1 (fix shapes documented there).
         try:
             from firmware_storage import list_variants  # noqa: PLC0415
         except Exception:

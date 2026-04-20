@@ -891,3 +891,62 @@ def test_file_status_on_non_repo_is_clean(tmp_path: Path):
     d = _make_config_dir(tmp_path)
     status = gv.file_status(d, "living-room.yaml")
     assert status == {"has_uncommitted_changes": False, "head_hash": None, "head_short_hash": None}
+
+
+# ---------------------------------------------------------------------------
+# PR #64 review: defence-in-depth path-escape guard in git_versioning
+# ---------------------------------------------------------------------------
+
+
+def test_safe_relpath_rejects_traversal(tmp_path: Path):
+    """Direct unit test for the path-escape guard."""
+    base = tmp_path / "cfg"
+    base.mkdir()
+    # Inside the tree — fine.
+    assert gv._safe_relpath(base, "living-room.yaml") == (base / "living-room.yaml").resolve()
+    assert gv._safe_relpath(base, ".archive/living-room.yaml") == (base / ".archive/living-room.yaml").resolve()
+    # Classic traversal — rejected.
+    with pytest.raises(gv._PathEscapeError):
+        gv._safe_relpath(base, "../etc/passwd")
+    with pytest.raises(gv._PathEscapeError):
+        gv._safe_relpath(base, "../../root/.ssh/authorized_keys")
+    # Absolute path — also rejected (relative_to fails).
+    with pytest.raises(gv._PathEscapeError):
+        gv._safe_relpath(base, "/etc/passwd")
+
+
+def test_file_content_at_rejects_traversal(tmp_path: Path):
+    """Public helper degrades to None on escape (doesn't crash, doesn't read)."""
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    assert gv.file_content_at(d, "../etc/passwd", hash=None) is None
+    assert gv.file_content_at(d, "/etc/passwd", hash=None) is None
+
+
+def test_rollback_file_rejects_traversal(tmp_path: Path):
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    # Need a valid-looking hash to get past the format check — the
+    # path guard runs *before* the hash check so any 4-40 hex is fine.
+    out = gv.rollback_file(d, "../evil.yaml", hash="deadbeef")
+    assert out["committed"] is False
+    assert out["hash"] is None
+
+
+def test_file_history_rejects_traversal(tmp_path: Path):
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    assert gv.file_history(d, "../../etc/passwd") == []
+
+
+def test_file_diff_rejects_traversal(tmp_path: Path):
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    assert gv.file_diff(d, "../../etc/passwd") == ""
+
+
+def test_file_status_rejects_traversal(tmp_path: Path):
+    d = _make_config_dir(tmp_path)
+    gv.init_repo(d)
+    status = gv.file_status(d, "../../etc/passwd")
+    assert status == {"has_uncommitted_changes": False, "head_hash": None, "head_short_hash": None}
