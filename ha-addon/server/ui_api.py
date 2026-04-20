@@ -652,6 +652,22 @@ async def get_targets(request: web.Request) -> web.Response:
             ha_name_to_device_id=ha_name_to_device_id,
         )
 
+        # Bug #7 (1.6.1): MAC→IP fallback via /proc/net/arp when the
+        # device poller's IP is empty/stale but we know the MAC from
+        # an earlier native-API poll. ``arp.lookup`` is cheap (cached
+        # for 30s) and returns None on dev hosts without the file.
+        ip_with_fallback: str | None = dev.ip_address if dev else None
+        source_with_fallback = dev.address_source if dev else None
+        if dev and not ip_with_fallback and device_mac:
+            try:
+                from arp import lookup as _arp_lookup  # noqa: PLC0415
+                fallback_ip = _arp_lookup(device_mac)
+                if fallback_ip:
+                    ip_with_fallback = fallback_ip
+                    source_with_fallback = "arp"
+            except Exception:
+                logger.debug("ARP fallback lookup failed for %s", target, exc_info=True)
+
         # 4.2c: Use HA connected state as additional online signal.
         # If the device poller hasn't confirmed online yet but HA says connected,
         # treat the device as online.
@@ -682,8 +698,12 @@ async def get_targets(request: web.Request) -> web.Response:
                 if dev and dev.running_version
                 else None
             ),
-            "ip_address": dev.ip_address if dev else None,
-            "address_source": dev.address_source if dev else None,
+            # Bug #7 (1.6.1): fall back to the host's ARP table when
+            # the device poller has a MAC but no fresh mDNS-derived IP.
+            # Keeps the IP column populated through transient mDNS
+            # outages instead of flapping to "—" until the next probe.
+            "ip_address": ip_with_fallback,
+            "address_source": source_with_fallback,
             "last_seen": dev.last_seen.isoformat() if dev and dev.last_seen else None,
             "server_version": server_version,
             "has_api_key": has_api_key,

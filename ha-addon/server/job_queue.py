@@ -108,6 +108,15 @@ class Job:
     # compile" view pairs it with the current working tree to capture
     # both committed AND uncommitted changes since the compile.
     config_hash: Optional[str] = None
+    # Bug #8 (1.6.1): human-readable reason this worker was chosen for
+    # the job, captured the moment :meth:`claim_next` hands the job off.
+    # One of "pinned_to_worker" / "only_online_worker" /
+    # "fewer_jobs_than_others" / "higher_perf_score" / "first_available".
+    # Surfaced in the Queue + Compile-history tables so an operator can
+    # answer "why did this worker pick up this compile" without diffing
+    # the scheduler log. ``None`` on jobs from pre-1.6.1 that predated
+    # the field.
+    selection_reason: Optional[str] = None
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -140,6 +149,7 @@ class Job:
             "ha_action": self.ha_action,
             "api_triggered": self.api_triggered,
             "config_hash": self.config_hash,
+            "selection_reason": self.selection_reason,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -178,6 +188,7 @@ class Job:
             ha_action=d.get("ha_action", False),
             api_triggered=d.get("api_triggered", False),
             config_hash=d.get("config_hash"),
+            selection_reason=d.get("selection_reason"),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -511,12 +522,23 @@ class JobQueue:
         worker_id: int = 1,
         hostname: Optional[str] = None,
         faster_idle_worker_exists: bool = False,
+        selection_reason_hint: Optional[str] = None,
     ) -> Optional[Job]:
         """
         Atomically claim the next pending job for *client_id*.
 
         If *faster_idle_worker_exists* is True, returns None so the
         faster worker can claim on its next poll cycle.
+
+        Bug #8 (1.6.1): *selection_reason_hint* is the upstream
+        scheduler's explanation for picking *client_id* — the API
+        endpoint computes it from the registry snapshot (fewest jobs,
+        higher perf score, only idle worker, etc.). ``claim_next``
+        overrides the hint to ``"pinned_to_worker"`` when the job has
+        a matching ``pinned_client_id`` — a pinned job's winning
+        worker was determined at enqueue time, not at claim time. The
+        final reason is persisted on the Job so the Queue + history
+        tables can surface it.
 
         Returns the claimed Job or None if the queue is empty.
         """
@@ -550,12 +572,24 @@ class JobQueue:
                 job.assigned_hostname = hostname
                 job.assigned_at = now
                 job.worker_id = worker_id
+                # Bug #8: pinning trumps any upstream hint — the user
+                # pinned this worker at enqueue time, the scheduler's
+                # competitive logic never ran.
+                if job.pinned_client_id == client_id:
+                    job.selection_reason = "pinned_to_worker"
+                elif selection_reason_hint:
+                    job.selection_reason = selection_reason_hint
+                else:
+                    job.selection_reason = "first_available"
                 self._persist()
                 # #94: include target + hostname so the log line is useful at a
                 # glance without correlating IDs back to the registry/queue.
+                # Bug #8: log the selection reason too so operators can debug
+                # scheduling without digging through the code.
                 logger.info(
-                    "Job %s (%s) claimed by %s [%s] worker %d",
+                    "Job %s (%s) claimed by %s [%s] worker %d — reason=%s",
                     job.id, job.target, hostname or "?", client_id, worker_id,
+                    job.selection_reason,
                 )
                 return job
             return None

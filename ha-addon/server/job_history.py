@@ -175,6 +175,9 @@ def _job_to_row(job: "Job") -> dict[str, object]:
         # stat) to distinguish "never had firmware" from "had it, now
         # evicted".
         "has_firmware": 1 if getattr(job, "has_firmware", False) else 0,
+        # Bug #8 (1.6.1): worker-selection reason persisted on the
+        # history row. ``None`` for jobs that predated the column.
+        "selection_reason": getattr(job, "selection_reason", None),
     }
 
 
@@ -210,7 +213,11 @@ class JobHistoryDAO:
             config_hash TEXT,
             retry_count INTEGER DEFAULT 0,
             log_excerpt TEXT,
-            has_firmware INTEGER NOT NULL DEFAULT 0
+            has_firmware INTEGER NOT NULL DEFAULT 0,
+            -- Bug #8 (1.6.1): why this worker was selected for the
+            -- job. Nullable — old rows inserted before the column
+            -- existed carry NULL, which the UI renders as "—".
+            selection_reason TEXT
         );
         -- Bug #38: late-added column. ADD COLUMN is idempotent-safe via
         -- OR IGNORE's error on existing column, so we run it unconditionally
@@ -268,6 +275,15 @@ class JobHistoryDAO:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column" not in str(exc).lower():
                             raise
+                    # Bug #8 (1.6.1): selection_reason migration. Same
+                    # idempotent-safe pattern as has_firmware above.
+                    try:
+                        conn.execute(
+                            "ALTER TABLE jobs ADD COLUMN selection_reason TEXT"
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            raise
                     conn.commit()
                 self._initialized = True
                 logger.debug("Job-history DB ready at %s", self._db_path)
@@ -318,14 +334,14 @@ class JobHistoryDAO:
                     esphome_version, assigned_client_id, assigned_hostname,
                     submitted_at, started_at, finished_at, duration_seconds,
                     ota_result, config_hash, retry_count, log_excerpt,
-                    has_firmware
+                    has_firmware, selection_reason
                 ) VALUES (
                     :id, :target, :state, :triggered_by, :trigger_detail,
                     :download_only, :validate_only, :pinned_client_id,
                     :esphome_version, :assigned_client_id, :assigned_hostname,
                     :submitted_at, :started_at, :finished_at, :duration_seconds,
                     :ota_result, :config_hash, :retry_count, :log_excerpt,
-                    :has_firmware
+                    :has_firmware, :selection_reason
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     state = excluded.state,
@@ -340,7 +356,8 @@ class JobHistoryDAO:
                     config_hash = excluded.config_hash,
                     retry_count = excluded.retry_count,
                     log_excerpt = excluded.log_excerpt,
-                    has_firmware = excluded.has_firmware
+                    has_firmware = excluded.has_firmware,
+                    selection_reason = excluded.selection_reason
                 """,
                 row,
             )

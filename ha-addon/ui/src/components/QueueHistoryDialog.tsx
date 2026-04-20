@@ -78,6 +78,7 @@ const SORTABLE: Record<string, SortColumn> = {
 import { getTriggerBadge, isScheduledCancelBeforeStart } from '@/utils/trigger';
 import { useVersioningEnabled } from '@/hooks/useVersioning';
 import { FirmwareDownloadMenu } from './FirmwareDownloadMenu';
+import { formatSelectionReason } from '@/utils/selectionReason';
 
 function friendlyFor(targets: Target[], filename: string): string {
   const t = targets.find((x) => x.target === filename);
@@ -350,6 +351,26 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
           return (
             <span className="text-[var(--text-muted)] truncate max-w-[140px]" title={r.assigned_hostname ?? undefined}>
               {r.assigned_hostname || '—'}
+            </span>
+          );
+        },
+      }),
+      // Bug #8 (1.6.1): selection-reason column — explains why a row's
+      // Worker was the one that picked up the compile. Sits next to
+      // the Worker column on purpose; a reader scans left→right and
+      // gets "worker X, because Y" in one glance.
+      ch.accessor((r) => r.selection_reason ?? '', {
+        id: 'selection_reason',
+        header: ({ column }) => <SortHeader label="Why" column={column} />,
+        cell: ({ row: { original: r } }) => {
+          const display = formatSelectionReason(r.selection_reason);
+          if (!display) return <span className="text-[var(--text-muted)]">—</span>;
+          return (
+            <span
+              className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
+              title={display.title}
+            >
+              {display.label}
             </span>
           );
         },

@@ -16,6 +16,7 @@ import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
 import { fmtDateTime, fmtDuration, fmtTimeOfDay, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
 import { useVersioningEnabled } from '../hooks/useVersioning';
+import { formatSelectionReason } from '../utils/selectionReason';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -279,6 +280,27 @@ export function QueueTab({
                 <Pin className="size-3" aria-label="Pinned ESPHome version" />
               </span>
             )}
+          </span>
+        );
+      },
+      sortingFn: 'alphanumeric',
+    }),
+    // Bug #8 (1.6.1): surface the worker-selection reason so a user
+    // can answer "why did THIS worker get the job" without reading
+    // the server log. Short label with hover-explanation; dash for
+    // jobs that predate the column.
+    columnHelper.accessor(row => row.selection_reason || '', {
+      id: 'selection_reason',
+      header: ({ column }) => <SortHeader label="Why" column={column} />,
+      cell: ({ row: { original: job } }) => {
+        const display = formatSelectionReason(job.selection_reason);
+        if (!display) return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
+        return (
+          <span
+            className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
+            title={display.title}
+          >
+            {display.label}
           </span>
         );
       },

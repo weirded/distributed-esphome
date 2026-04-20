@@ -782,6 +782,9 @@ export interface JobHistoryEntry {
    *  by the budget enforcer. Drives the Download button's visibility on
    *  history rows. Server always emits a list (possibly empty). */
   firmware_variants: string[];
+  /** Bug #8 (1.6.1): worker-selection reason persisted at claim time.
+   *  ``null`` on rows that predate the column. */
+  selection_reason: string | null;
 }
 
 export interface JobHistoryStats {

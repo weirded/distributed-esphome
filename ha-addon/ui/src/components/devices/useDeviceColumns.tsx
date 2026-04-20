@@ -83,6 +83,7 @@ function formatAddressSource(source: AddressSource | null | undefined): string |
     case 'wifi_static_ip': return 'wifi static_ip';
     case 'ethernet_static_ip': return 'ethernet static_ip';
     case 'mdns_default': return null;
+    case 'arp': return 'via ARP';
     default: return null;
   }
 }

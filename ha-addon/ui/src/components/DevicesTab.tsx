@@ -73,20 +73,52 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
 
 const STORAGE_KEY = 'device-columns';
 
+/**
+ * Bug #7 (1.6.1): columns added after a user's first save would get
+ * stuck OFF because the old loader inferred visibility from presence in
+ * a flat "visible ids" list — an absent id always meant off, even for a
+ * brand-new column whose default is on. Record the full "known"
+ * snapshot alongside the visible set so loadColumnVisibility can tell
+ * "explicitly hidden by the user" apart from "didn't exist yet when
+ * they saved". Legacy flat-array saves still load (treated as known =
+ * that same list); new columns fall through to their ``defaultVisible``.
+ */
+interface StoredColumnVisibility {
+  known: string[];
+  visible: string[];
+}
+
 function loadColumnVisibility(): VisibilityState {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const visible = new Set<string>(JSON.parse(stored) as string[]);
-      return Object.fromEntries(OPTIONAL_COLUMNS.map(c => [c.id, visible.has(c.id)]));
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      let known: Set<string>;
+      let visible: Set<string>;
+      if (Array.isArray(parsed)) {
+        // Legacy flat-list format: what was saved is what they knew.
+        known = new Set<string>(parsed as string[]);
+        visible = known;
+      } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as StoredColumnVisibility).known)) {
+        known = new Set<string>((parsed as StoredColumnVisibility).known);
+        visible = new Set<string>((parsed as StoredColumnVisibility).visible ?? []);
+      } else {
+        throw new Error('unrecognised stored shape');
+      }
+      return Object.fromEntries(OPTIONAL_COLUMNS.map(c =>
+        [c.id, known.has(c.id) ? visible.has(c.id) : c.defaultVisible],
+      ));
     }
   } catch { /* ignore */ }
   return Object.fromEntries(OPTIONAL_COLUMNS.map(c => [c.id, c.defaultVisible]));
 }
 
 function saveColumnVisibility(state: VisibilityState) {
-  const visible = OPTIONAL_COLUMNS.filter(c => state[c.id] !== false).map(c => c.id);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(visible));
+  const stored: StoredColumnVisibility = {
+    known: OPTIONAL_COLUMNS.map(c => c.id),
+    visible: OPTIONAL_COLUMNS.filter(c => state[c.id] !== false).map(c => c.id),
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
 }
 
 interface Props {
@@ -154,6 +186,7 @@ function formatAddressSource(source: AddressSource | null | undefined): string |
     case 'wifi_static_ip': return 'wifi static_ip';
     case 'ethernet_static_ip': return 'ethernet static_ip';
     case 'mdns_default': return null;
+    case 'arp': return 'via ARP';
     default: return null;
   }
 }
