@@ -1,6 +1,6 @@
 # ESPHome Fleet
 
-Manage a fleet of ESPHome devices from one place, inside Home Assistant — bulk compiles, scheduled OTA upgrades, per-device version pinning, an inline YAML editor, a job queue you can actually see, and optional distributed compilation so a slow HA host doesn't become a bottleneck.
+A modern Home Assistant UI for ESPHome — works just as well for three devices as for a hundred. Git-backed config history with one-click rollback, a real device table, a live compile queue with searchable history, an inline YAML editor with autocomplete, per-device ESPHome version pinning, scheduled OTA upgrades, and optional distributed compilation when a slow HA host becomes the bottleneck.
 
 ## Getting Started
 

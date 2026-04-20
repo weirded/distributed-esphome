@@ -3,26 +3,28 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/weirded)
 
-**Manage a fleet of ESPHome devices from one place, inside Home Assistant.** Compile, flash, schedule, and track dozens or hundreds of devices without babysitting the stock ESPHome dashboard.
+**A modern Home Assistant UI for ESPHome — works just as well for three devices as it does for a hundred.** Compile, flash, edit, and track every ESPHome device with config history you can roll back, a live job queue, and a UI that actually shows you what's happening.
 
 ![ESPHome Fleet — Devices tab](docs/screenshot.png)
 
-## Is this for you?
+## Why use this instead of the ESPHome builder?
 
-If you have **more than ten or fifteen ESPHome devices** and you've started feeling friction — compiles that take forever on a Raspberry Pi, a dashboard that scrolls off the screen, "which of these is on the latest version again?", no way to schedule an overnight upgrade of the whole house — ESPHome Fleet is aimed at you.
+The built-in ESPHome Device Builder does the job — but every feature below is something the stock dashboard doesn't give you. Most of them pay off from device one, not device ten:
 
-It's built as a **Home Assistant add-on**. If you're already running Home Assistant and you use ESPHome today, installing it takes one click (details below) and your existing YAML in `/config/esphome/` is picked up automatically. Nothing to copy, migrate, or reconfigure.
+- **Undo-able config edits.** Every save is a git commit behind the scenes, so you get per-file history, a side-by-side diff viewer, and a one-click **Restore** on any previous version — right next to the Edit button. No more *"did I leave a stray indent in the dashboard?"*-turned-midnight-debug.
+- **A real device table.** Online status, firmware version, IP, WiFi/Ethernet, matched Home Assistant entity, last-compiled time, project name — sortable, filterable, deep-linked to the device's HA page. The stock dashboard is a vertical list with state hidden behind hover; this is a spreadsheet.
+- **A compile queue you can actually see.** Watch jobs run, tail live build logs, download the compiled `.bin`, filter by state, retry a failure. Every compile — even the ones that succeeded months ago — stays in a searchable history drawer with the last 8 KB of log inline. Handy when you're trying to remember when that regression started.
+- **Firmware archive, automatically.** Every successful compile keeps its binary on the server — not just the ones you marked "download only". Flash it by hand later, bisect a regression, rescue a device with a broken OTA path. The Download button is on every row, including the history drawer.
+- **Pin an ESPHome version to one device.** Beta-test a new ESPHome release on your garage sensor without upgrading the rest of the house. Hold a picky device back on a known-good version indefinitely. The stock dashboard compiles with whatever ESPHome it was installed with.
+- **Scheduled upgrades.** Upgrade the office lights every Sunday at 3am. One-time *"upgrade this device tomorrow at 8pm when nobody's home"*. The schedule lives in the device YAML so it travels with your config and respects the pin.
+- **Monaco YAML editor with autocomplete and validate-before-compile.** Same engine as VS Code, fed by ESPHome's own schema. Validate a config in a second; catch the typo before the five-minute compile.
 
-## What it gives you
+### On top of all that — actual *fleet* features, when you need them
 
-- **A single view of every ESPHome device.** Online status, current firmware version, which Home Assistant entity it's wired up to, IP address, WiFi vs Ethernet, pinned ESPHome version — all sortable, filterable, deep-linkable to the device's HA page.
-- **Per-file config history with one-click rollback.** Every edit to `/config/esphome/` becomes a local git commit automatically, so you get a full history + side-by-side diff viewer + "restore this version" behind a hamburger menu on every device row. First-login modal asks whether to opt in; existing git repos are left untouched. Commit messages are human-readable so `git log` reads like an activity feed.
-- **Compile history that sticks around.** A persistent database of every compile — survives queue clears and coalescing — with filters, stats, and the last 8 KB of each log excerpt inline. Reach it from a Queue-tab **History** button (fleet-wide) or the device row hamburger (per-device).
-- **Bulk operations** — upgrade every outdated device tonight, pin half of them to a known-good ESPHome version, rebuild the whole fleet after an ESPHome release.
-- **Offload compilation to a fast machine.** If your HA runs on a Pi or mini-PC and compiles feel slow, spin up one or more **build workers** (small Docker containers) on whatever's fastest in the house — a gaming PC that's idle overnight, a NAS, a mini PC — and point them at the add-on. Workers install themselves via a one-line snippet generated by the UI; they poll the add-on over HTTP for jobs, so the machine running the worker needs no open inbound ports. The built-in local worker also works; remote workers are a choice, not a requirement.
-- **Mix ESPHome versions across your fleet.** Pick a default ESPHome version in the header (it's used for every new compile) and optionally pin individual devices to an older or newer build. Beta-test a release on one garage sensor without upgrading the house, or hold a picky device back on a known-good version indefinitely. Workers install whatever version each job asks for, on demand, and cache a handful locally.
-- **Scheduled upgrades.** Upgrade the office lights every Sunday at 3am. One-time "upgrade this device tomorrow at 8pm when nobody's home". Schedules live in the device YAML, so they respect that device's pinned ESPHome version.
-- **An inline YAML editor with autocomplete.** Monaco (the VS Code editor) in the browser, powered by ESPHome's own schema. Validate a config without running a compile.
+Once you cross a dozen or so devices, the single-machine ESPHome dashboard starts to chafe. The features below are the ones that kick in then:
+
+- **Bulk operations.** Upgrade every outdated device tonight. Rebuild the whole fleet against a new ESPHome release. Pin half your devices to a known-good version.
+- **Offload compilation to a fast machine.** If your HA runs on a Pi or mini-PC and compiles feel slow, spin up one or more **build workers** — small Docker containers on whatever's fastest in the house (gaming PC idle overnight, a NAS, a small server). They install themselves via a one-line snippet generated by the UI and pull jobs from the add-on over HTTP, so the machine needs no open inbound ports. The built-in local worker also works; remote workers are a choice, not a requirement.
 - **Native Home Assistant integration.** Every managed device shows up in HA's device registry with an Update entity, sensors for firmware version / queue depth / worker status, and a compile Action you can call from automations.
 - **Safe by default.** The browser UI sits behind Home Assistant's own authentication (Ingress); the direct-port API on `:8765` requires a bearer token. Every compile job, schedule change, and config edit is attributed to the HA user who made it.
 
