@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.6.1-dev.5"
+version: "1.6.1-dev.6"
 slug: "esphome_dist_server"
 description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
@@ -10,7 +10,11 @@ arch: [aarch64, amd64]
 startup: application
 boot: auto
 init: true
-stage: experimental
+# Bug #5 (1.6.1): `stage: experimental` removed. The add-on has
+# shipped stable releases through 1.6 with full test coverage,
+# cosign + SBOM supply-chain hardening, an AppArmor profile, and
+# a real threat model (dev-plans/SECURITY_AUDIT.md). No `stage:`
+# key defaults to stable in Supervisor.
 homeassistant: "2024.1.0"
 codeowners:
   - "@weirded"

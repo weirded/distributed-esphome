@@ -703,7 +703,7 @@ async def get_targets(request: web.Request) -> web.Response:
             "network_ipv6": meta.get("network_ipv6", False),
             "network_ap_fallback": meta.get("network_ap_fallback", False),
             "network_matter": meta.get("network_matter", False),
-            # Per-device metadata from the # distributed-esphome: comment block.
+            # Per-device metadata from the # esphome-fleet: comment block.
             "pinned_version": meta.get("pinned_version"),
             "schedule": meta.get("schedule"),
             "schedule_enabled": meta.get("schedule_enabled", False),
@@ -1509,7 +1509,7 @@ async def pin_target_version(request: web.Request) -> web.Response:
     """Pin a device to a specific ESPHome version.
 
     Body: ``{"version": "2026.3.3"}``
-    The pin is stored in the ``# distributed-esphome:`` comment block.
+    The pin is stored in the ``# esphome-fleet:`` comment block.
     """
     filename = request.match_info["filename"]
     cfg = _cfg(request)

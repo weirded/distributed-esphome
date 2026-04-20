@@ -460,18 +460,46 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Per-device metadata stored as a YAML comment block at the top of each file.
 # Format:
-#   # distributed-esphome:
+#   # esphome-fleet:
 #   #   pin_version: 2026.3.3
 #   #   schedule: 0 2 * * 0
 #   #   schedule_enabled: true
 # The block is invisible to ESPHome's parser and travels with the file.
+#
+# 1.6.1 bug #4: marker renamed from ``# distributed-esphome:`` to
+# ``# esphome-fleet:`` so the comment matches the user-facing product
+# name. Reader accepts BOTH markers (old files keep working without a
+# migration step); writer always emits the new marker, so files
+# migrate lazily the next time any metadata-changing operation
+# touches them.
 # ---------------------------------------------------------------------------
 
-_META_MARKER = "# distributed-esphome:"
+_META_MARKER = "# esphome-fleet:"
+_LEGACY_META_MARKER = "# distributed-esphome:"
+_META_MARKERS: tuple[str, ...] = (_META_MARKER, _LEGACY_META_MARKER)
+
+# 1.6.1 bug #4: one-line user-facing header we prepend above the marker so
+# the comment block isn't mysterious. The reader treats any of these as the
+# "skip me" prelude so rewrites don't accumulate duplicates. Add new lines
+# to this set if the phrasing evolves; never remove old ones (they'll exist
+# in real user files).
+_EXPLANATORY_HEADER_DEFAULT = "# Read by the ESPHome Fleet add-on. Do not remove."
+_EXPLANATORY_HEADERS: frozenset[str] = frozenset(
+    {
+        _EXPLANATORY_HEADER_DEFAULT,
+        # Prior phrasings would go here if the text ever changes.
+    }
+)
+
+
+def _is_meta_marker(stripped: str) -> bool:
+    """True if *stripped* is one of our meta-marker variants."""
+    return stripped in (m.strip() for m in _META_MARKERS)
 
 
 def read_device_meta(config_dir: str, target: str) -> dict:
-    """Read the ``# distributed-esphome:`` comment block from the top of a YAML file.
+    """Read the ``# esphome-fleet:`` (or legacy ``# distributed-esphome:``)
+    comment block from the top of a YAML file.
 
     The block must appear at the very top of the file (before any non-comment,
     non-blank line) to avoid matching user comments deeper in the file.
@@ -492,7 +520,7 @@ def read_device_meta(config_dir: str, target: str) -> dict:
         stripped = line.strip()
         if not stripped:
             continue  # skip blank lines at the top
-        if stripped == _META_MARKER.strip():
+        if _is_meta_marker(stripped):
             marker_idx = i
             break
         if not stripped.startswith("#"):
@@ -527,11 +555,17 @@ def read_device_meta(config_dir: str, target: str) -> dict:
 
 
 def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
-    """Write, replace, or remove the ``# distributed-esphome:`` comment block.
+    """Write, replace, or remove the ``# esphome-fleet:`` comment block.
 
     - Non-empty ``meta``: serializes to YAML, prefixes with ``# ``, inserts
       at the top of the file (before the first non-comment non-blank line).
     - Empty ``meta`` (``{}``): removes any existing block entirely.
+
+    1.6.1 bug #4: recognises the legacy ``# distributed-esphome:`` marker
+    when stripping so old files migrate cleanly. Also prepends an
+    explanatory comment above the block telling users what it is and
+    not to remove it — absent that, the section reads as mysterious
+    metadata and gets deleted in editor cleanups.
 
     Preserves all other content in the file. Invalidates ``_config_cache``.
     """
@@ -541,14 +575,37 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
     content = path.read_text(encoding="utf-8")
     lines = content.splitlines(keepends=True)
 
-    # 1. Remove any existing block (marker + continuations).
+    # 1. Remove any existing block (legacy or current marker +
+    #    continuations). Also strips the leading "managed by ESPHome
+    #    Fleet" explanatory comment if we previously wrote one, so a
+    #    rewrite doesn't stack up multiple copies.
     new_lines: list[str] = []
     in_block = False
+    skipping_header_comment = False
     for line in lines:
         stripped = line.strip()
-        if not in_block and stripped == _META_MARKER.strip():
-            in_block = True
-            continue  # skip the marker line
+        if not in_block:
+            # Explanatory-header comment we write above the block; skip it so
+            # it doesn't double up on rewrites. Only skip when it immediately
+            # precedes the marker (we verify by continuing to consume lines
+            # until we see the marker or a non-matching line).
+            if stripped in _EXPLANATORY_HEADERS:
+                skipping_header_comment = True
+                continue
+            if _is_meta_marker(stripped):
+                in_block = True
+                skipping_header_comment = False
+                continue  # skip the marker line
+            if skipping_header_comment:
+                # We started skipping an explanatory header but the next line
+                # wasn't the marker — put the header back by flushing both
+                # the line we tentatively skipped and this one.
+                # (Rare: user inserted content between our header and marker.)
+                skipping_header_comment = False
+                # Note: we already consumed the header line; best-effort
+                # reconstruction would be complex. The downside of dropping
+                # a stray explanatory line is minimal (the next write rebuilds
+                # it), so we accept the rare data loss.
         if in_block:
             # Continuation: "# " + 2+ spaces indent
             raw = line.rstrip("\n").rstrip("\r")
@@ -564,8 +621,14 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
     if meta:
         # Serialize the dict as YAML (no document markers, default flow off)
         yaml_text = yaml.dump(meta, default_flow_style=False, sort_keys=False)
-        # Prefix each line with "#   " (2-space indent under the marker)
-        comment_lines = [_META_MARKER + "\n"]
+        # Prefix each line with "#   " (2-space indent under the marker).
+        # The explanatory line above tells users what this is — without it
+        # the block reads as opaque metadata and gets scrubbed in editor
+        # tidy passes. Marker + explanation + content + blank separator.
+        comment_lines = [
+            _EXPLANATORY_HEADER_DEFAULT + "\n",
+            _META_MARKER + "\n",
+        ]
         for yaml_line in yaml_text.splitlines():
             comment_lines.append(f"#   {yaml_line}\n")
         comment_lines.append("\n")  # blank line separator
@@ -716,7 +779,7 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         "network_ipv6": False,       # top-level network.enable_ipv6 is true
         "network_ap_fallback": False,  # wifi.ap block configured
         "network_matter": False,     # matter: block present OR openthread: present
-        # Per-device metadata from the # distributed-esphome: comment block.
+        # Per-device metadata from the # esphome-fleet: comment block.
         "pinned_version": None,      # pin_version from comment block
         "schedule": None,            # cron expression (5-field)
         "schedule_enabled": False,   # whether the schedule is active

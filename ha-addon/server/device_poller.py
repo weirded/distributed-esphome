@@ -27,6 +27,27 @@ except ImportError:
     logger.warning("aioesphomeapi not available; device version polling disabled")
     AIOESPHOMEAPI_AVAILABLE = False
 
+
+# Bug #3 (1.6.1): aioesphomeapi logs "disconnect request failed" at
+# ERROR whenever a device tears down its connection mid-request. This
+# fires on every OTA reboot — expected behaviour, not an incident —
+# and pollutes the add-on log with a multi-line APIConnectionError
+# traceback each time a device transitions through its new firmware.
+# Install a targeted filter that downgrades exactly that record to
+# DEBUG; genuine errors from the same logger stay at ERROR so real
+# connection problems still surface.
+class _AioesphomeapiDisconnectFilter(logging.Filter):
+    """Downgrade the expected-on-OTA 'disconnect request failed' record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR and "disconnect request failed" in record.getMessage().lower():
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
+logging.getLogger("aioesphomeapi.connection").addFilter(_AioesphomeapiDisconnectFilter())
+
 try:
     import icmplib  # noqa: F401
     _PING_AVAILABLE = True
