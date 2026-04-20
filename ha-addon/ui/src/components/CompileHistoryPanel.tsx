@@ -19,6 +19,7 @@ import { getJobBadge } from '@/utils/jobState';
 import { renderAnsi } from '@/utils/ansi';
 import { fmtDuration, fmtEpochAbsolute, fmtEpochRelative } from '@/utils/format';
 import { isScheduledCancelBeforeStart } from '@/utils/trigger';
+import { useVersioningEnabled } from '@/hooks/useVersioning';
 
 // JH.5: per-device "Compile history" panel.
 //
@@ -72,6 +73,10 @@ export function CompileHistoryPanel({ target, onOpenChange, onOpenHistoryDiff }:
   const open = target !== null;
   // Page offset for "Load more" — resets when the target changes.
   const [offset, setOffset] = useState(0);
+  // Bug #112: suppress the short-hash chip on each row when versioning is
+  // off. The diff callback is also zeroed so the parent's deep-link flow
+  // becomes a no-op even if a future edit re-adds a caller.
+  const versioningEnabled = useVersioningEnabled();
 
   const historyKey = open ? ['jobHistory', target, offset] : null;
   const { data: rows, error, isLoading } = useSWR<JobHistoryEntry[]>(
@@ -156,7 +161,8 @@ export function CompileHistoryPanel({ target, onOpenChange, onOpenHistoryDiff }:
                   onToggle={() =>
                     setExpandedId((prev) => (prev === row.id ? null : row.id))
                   }
-                  onOpenHistoryDiff={onOpenHistoryDiff}
+                  onOpenHistoryDiff={versioningEnabled ? onOpenHistoryDiff : undefined}
+                  showHash={versioningEnabled}
                 />
               ))}
             </div>
@@ -213,11 +219,14 @@ function HistoryRow({
   expanded,
   onToggle,
   onOpenHistoryDiff,
+  showHash,
 }: {
   row: JobHistoryEntry;
   expanded: boolean;
   onToggle: () => void;
   onOpenHistoryDiff?: (target: string, fromHash: string) => void;
+  /** Bug #112: drop the `· <hash>` suffix entirely when versioning is off. */
+  showHash: boolean;
 }) {
   const badge = getJobBadge({
     state: row.state,
@@ -280,7 +289,7 @@ function HistoryRow({
         </span>
         <span className="ml-auto text-[11px] text-[var(--text-muted)] font-mono">
           {row.esphome_version || '—'}
-          {row.config_hash && (
+          {showHash && row.config_hash && (
             <>
               {' '}·{' '}
               {/* Bug #41: commit hash is clickable — opens the History panel

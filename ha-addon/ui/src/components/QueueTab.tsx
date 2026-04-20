@@ -15,6 +15,7 @@ import type { Job, Target, Worker } from '../types';
 import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
 import { fmtDateTime, fmtDuration, fmtTimeOfDay, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
+import { useVersioningEnabled } from '../hooks/useVersioning';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -110,6 +111,11 @@ export function QueueTab({
   // is open at a time. Same pattern we used for the Devices-tab
   // hamburger in #2 (1.4.1-dev.3) — see Design Judgment in CLAUDE.md.
   const [downloadMenuOpenJobId, setDownloadMenuOpenJobId] = useState<string | null>(null);
+  // Bug #112: hide the "Commit" column entirely when versioning is off.
+  // The column renders short git hashes that are clickable links into the
+  // History drawer — both are meaningless when there's no history to link
+  // to, so drop the whole column rather than show a full column of dashes.
+  const versioningEnabled = useVersioningEnabled();
 
   // Build target → display name map so queue shows friendly names
   const targetNameMap = useMemo(() => {
@@ -294,7 +300,8 @@ export function QueueTab({
     // muted mono font; hover shows the full SHA. Dash for jobs
     // that predate AV.7 or were enqueued while /config/esphome/
     // wasn't a git repo.
-    columnHelper.accessor(row => row.config_hash || '', {
+    // Bug #112: omitted entirely when versioning is off.
+    ...(versioningEnabled ? [columnHelper.accessor(row => row.config_hash || '', {
       id: 'config_hash',
       header: ({ column }) => <SortHeader label="Commit" column={column} />,
       cell: ({ row: { original: job } }) => {
@@ -315,7 +322,7 @@ export function QueueTab({
         );
       },
       sortingFn: 'alphanumeric',
-    }),
+    })] : []),
     // #21/#92 + UX.5: triggered-by column — recurring schedule, one-time, or
     // manual. Recurring/once rows look up the parent target's cron / one-time
     // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
@@ -507,7 +514,7 @@ export function QueueTab({
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, onOpenHistoryDiff, targetNameMap, downloadMenuOpenJobId]);
+  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, onOpenHistoryDiff, targetNameMap, downloadMenuOpenJobId, versioningEnabled]);
 
   const table = useReactTable({
     data: filteredQueue,

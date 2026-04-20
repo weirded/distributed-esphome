@@ -3,6 +3,7 @@ import '@xterm/xterm/css/xterm.css';
 import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildWsUrl, getJobLog } from '../api/client';
+import { useVersioningEnabled } from '../hooks/useVersioning';
 import { copyTerminalText, downloadTerminalText } from '../utils/terminal';
 import type { Job, Worker } from '../types';
 import { fmtDuration, getJobBadge } from '../utils';
@@ -33,6 +34,9 @@ interface Props {
 
 export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOpenHistoryDiff, stacked }: Props) {
   const isOpen = jobId !== null;
+  // Bug #111: hide the "Diff since compile" button when versioning is off.
+  // With no git history, the button opens an empty diff drawer.
+  const versioningEnabled = useVersioningEnabled();
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerMounted, setContainerMounted] = useState(false);
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
@@ -256,7 +260,7 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
               Edit
             </Button>
           )}
-          {onOpenHistoryDiff && job && !job.validate_only && job.config_hash && (
+          {onOpenHistoryDiff && versioningEnabled && job && !job.validate_only && job.config_hash && (
             <Button
               variant="secondary"
               size="sm"

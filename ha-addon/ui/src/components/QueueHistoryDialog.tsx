@@ -76,6 +76,7 @@ const SORTABLE: Record<string, SortColumn> = {
 // the Queue's renderer (plain text "HA" / "User" / "Scheduled·1x"
 // vs Queue's rich icon+label badges); unifying them kills the drift.
 import { getTriggerBadge, isScheduledCancelBeforeStart } from '@/utils/trigger';
+import { useVersioningEnabled } from '@/hooks/useVersioning';
 
 function friendlyFor(targets: Target[], filename: string): string {
   const t = targets.find((x) => x.target === filename);
@@ -93,6 +94,8 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
     return { since: Math.floor(Date.now() / 1000) - 30 * 86_400, until: null };
   });
   const [presetLabel, setPresetLabel] = useState<string | null>('Last 30 days');
+  // Bug #112: drop the Commit column entirely when versioning is off.
+  const versioningEnabled = useVersioningEnabled();
 
   const [stateFilter, setStateFilter] = useState<StateFilter>('');
   const [q, setQ] = useState('');
@@ -233,7 +236,9 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
         header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
         cell: ({ row: { original: r } }) => r.esphome_version || '—',
       }),
-      ch.display({
+      // Bug #112: Commit column only included when versioning is on —
+      // otherwise every row would be a dash.
+      ...(versioningEnabled ? [ch.display({
         id: 'commit',
         header: 'Commit',
         cell: ({ row: { original: r } }) => {
@@ -252,7 +257,7 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
             </button>
           );
         },
-      }),
+      })] : []),
       ch.accessor((r) => r.duration_seconds ?? 0, {
         id: 'duration_seconds',
         header: ({ column }) => <SortHeader label="Duration" column={column} />,
@@ -345,7 +350,7 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
         },
       }),
     ];
-  }, [targets, onOpenHistoryDiff, expandedId]);
+  }, [targets, onOpenHistoryDiff, expandedId, versioningEnabled]);
 
   const table = useReactTable({
     data: flatRows,

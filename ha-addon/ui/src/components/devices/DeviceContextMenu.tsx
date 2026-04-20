@@ -11,6 +11,7 @@ import {
 } from '../ui/dropdown-menu';
 import { getApiKey, restartDevice } from '../../api/client';
 import { stripYaml } from '../../utils';
+import { useVersioningEnabled } from '../../hooks/useVersioning';
 import type { Target } from '../../types';
 
 /**
@@ -71,6 +72,14 @@ function DeviceContextMenuImpl({
   open,
   onOpenChange,
 }: Props) {
+  // Bugs #111/#112: gate the "Config history…" + "Commit changes…" items
+  // on whether versioning is actually on. Items stay visible but go
+  // disabled so the menu shape doesn't jump around when a user flips
+  // versioning off/on in Settings — matches the "disable, don't fail"
+  // convention the rest of the hamburger already uses (Restart, Copy
+  // API Key).
+  const versioningEnabled = useVersioningEnabled();
+
   async function handleCopyApiKey() {
     try {
       const key = await getApiKey(t.target);
@@ -161,12 +170,20 @@ function DeviceContextMenuImpl({
           <DropdownMenuItem onClick={() => onDuplicate(t)}>Duplicate…</DropdownMenuItem>
           {/* AV.6: per-file config history + diff + rollback. Bug #29:
               "Config history…" disambiguates from ESPHome-version history
-              (which lives in the version dropdown in the header). */}
-          <DropdownMenuItem onClick={() => onOpenHistory(t.target)}>
+              (which lives in the version dropdown in the header).
+              Bug #111: disabled when versioning is off — no history exists
+              to show, and clicking would open an empty drawer. */}
+          <DropdownMenuItem
+            onClick={() => onOpenHistory(t.target)}
+            disabled={!versioningEnabled}
+            title={versioningEnabled ? undefined : 'Config versioning is off — enable it in Settings to record a history.'}
+          >
             Config history…
           </DropdownMenuItem>
-          {/* Bug #16: only shown when the target has uncommitted changes. */}
-          {t.has_uncommitted_changes && (
+          {/* Bug #16: only shown when the target has uncommitted changes.
+              Bug #111: and only when versioning is on — the "commit"
+              vocabulary is meaningless otherwise. */}
+          {versioningEnabled && t.has_uncommitted_changes && (
             <DropdownMenuItem onClick={() => onCommitChanges(t.target)}>
               Commit changes…
             </DropdownMenuItem>

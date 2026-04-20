@@ -81,6 +81,11 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
   // here immediately.
   const { data: settings } = useSWR<AppSettings>('settings', getSettings);
   const autoCommit = settings?.auto_commit_on_save ?? true;
+  // Bug #111: hide the History toolbar button when versioning is off —
+  // there's nothing to show. The `&& onOpenHistory && ...` conjunction
+  // below stays, so a parent that doesn't supply the callback also hides
+  // the button.
+  const versioningEnabled = settings?.versioning_enabled === 'on';
 
   // Keep the completion provider's module-level version variable in sync so
   // it always sees the current value despite being registered once outside
@@ -345,7 +350,7 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
               Save &amp; Upgrade
             </Button>
           )}
-          {onOpenHistory && target && !target.startsWith('.pending.') && (
+          {onOpenHistory && versioningEnabled && target && !target.startsWith('.pending.') && (
             <Button
               variant="secondary"
               size="sm"

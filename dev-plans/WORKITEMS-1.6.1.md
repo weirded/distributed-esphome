@@ -53,9 +53,9 @@ Today `ha-addon/custom_integration/esphome_fleet/manifest.json` declares `"quali
 
 ### Carried forward from 1.6
 
-- [ ] **#111** *(carried from 1.6)* — when config versioning is disabled, we should gray out the config history item in the hamburger menu. As well as any other places that lead us to the history drawer, like the history button in the editor and the various hashes that we show in the queue and job history table.
+- [x] **#111** *(1.6.1-dev.7)* *(carried from 1.6)* — new `useVersioningEnabled()` hook wraps the SWR settings read and is consumed by every UI surface that leads to the History drawer. Config-history hamburger item is disabled + tooltip-explained when versioning is off. Editor toolbar's History button is hidden. "Commit changes…" hamburger item is hidden. LogModal's "Diff since compile" button is hidden.
 
-- [ ] **#112** *(carried from 1.6)* — when config versioning is disabled, if we don't have the history enabled, we probably need to not show the hashes and hide those columns.
+- [x] **#112** *(1.6.1-dev.7)* *(carried from 1.6)* — short-hash Commit column dropped entirely from the per-device `CompileHistoryPanel`, the fleet-wide `QueueHistoryDialog`, and the Queue tab's live table when versioning is off. Kept the SWR settings read consolidated through the new hook so a user who flips versioning on in Settings sees columns re-appear on the next poll without a reload.
 
 ### New in 1.6.1
 
@@ -69,7 +69,8 @@ Today `ha-addon/custom_integration/esphome_fleet/manifest.json` declares `"quali
 
 - [x] **#5** *(1.6.1-dev.5)* — `stage: experimental` removed from `ha-addon/config.yaml`. The add-on has shipped stable releases through 1.6 with full test coverage, cosign + SBOM supply-chain hardening, the AppArmor profile from SS.1, and a real threat model in `dev-plans/SECURITY_AUDIT.md`. No `stage:` key defaults to stable in Supervisor, so the experimental badge goes away on the next install / upgrade. In-line comment explains why the flag is gone so a future reader doesn't re-add it.
 
-- [ ] 6 Network diagnostics has a bug. Either install the ping binary or use a ICMP library for python.
+- [ ] 6 Network diagnostics has a bug. Either install the ping binary or use a ICMP library for python. 
 
 Ping: [Errno 2] No such file or directory: 'ping'
 
+- [ ] 7 let's add an IP address table, a column to the devices table, please. We should be able to get that from ARP or Home Assistant. It seems the ESPHome Home Assistant integration reports the MAC address. 
