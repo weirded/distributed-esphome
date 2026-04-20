@@ -1,0 +1,44 @@
+name: Hassfest
+
+# QS.9 / release-hygiene: run Home Assistant's hassfest validator
+# against the bundled custom integration so every PR proves the
+# manifest, services, translation keys, and quality-scale claim
+# still pass upstream's rules.
+#
+# Official action reference:
+# https://developers.home-assistant.io/blog/2020/04/16/hassfest/
+#
+# Layout quirk: our integration lives at
+#   ha-addon/custom_integration/esphome_fleet/
+# because the add-on's Dockerfile copies it into /config/custom_components/
+# at runtime. hassfest expects to find integrations under
+# ``custom_components/<domain>/``. Before invoking the action we drop
+# a symlink at the canonical path — the action only reads, never
+# writes, so the symlink is safe.
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  schedule:
+    # Daily sanity check — upstream rules shift as HA versions roll forward.
+    - cron: "13 5 * * *"
+  # Manual trigger from the Actions tab for reproducing red runs.
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate via hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Expose integration at custom_components/esphome_fleet
+        run: |
+          mkdir -p custom_components
+          ln -s ../ha-addon/custom_integration/esphome_fleet custom_components/esphome_fleet
+          ls -la custom_components/
+
+      - name: Run hassfest
+        uses: home-assistant/actions/hassfest@master

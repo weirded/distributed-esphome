@@ -1268,6 +1268,31 @@ def create_app() -> web.Application:
     # for any fields that have migrated. See ha-addon/server/settings.py.
     from settings import clear_supervisor_options_if_needed, init_settings  # noqa: PLC0415
     init_settings(fresh_repo_init=fresh_repo)
+    # Bug #22 (1.6.1): the init_repo call above runs BEFORE
+    # init_settings loads the persisted settings, so get_settings()
+    # returns the default ``versioning_enabled="unset"`` and init_repo
+    # silently skips. If the user had previously opted in
+    # (settings.json carries ``versioning_enabled: "on"``) but the
+    # .git/ directory is missing (container rebuild, fresh /config
+    # mount on a restored backup, accidental delete), no rescue
+    # happened until the user edited a file AND flipped the setting
+    # to trigger the PATCH-handler's init_repo hook from #19. Re-try
+    # the init now that the real setting is visible so a boot-time
+    # recovery is automatic.
+    try:
+        from settings import get_settings  # noqa: PLC0415
+        if get_settings().versioning_enabled == "on":
+            from git_versioning import _is_git_repo, init_repo  # noqa: PLC0415
+            if not _is_git_repo(Path(cfg.config_dir)):
+                logger.info(
+                    "Bug #22: versioning_enabled=on but %s has no .git/ — "
+                    "running init_repo", cfg.config_dir,
+                )
+                init_repo(Path(cfg.config_dir))
+    except Exception:
+        logger.exception(
+            "Bug #22: post-settings init_repo guard raised",
+        )
     # Bug #9: after the settings have been safely imported, tell
     # Supervisor to drop its stale options cache so it stops spamming
     # "Option X does not exist in the schema" warnings on every read.

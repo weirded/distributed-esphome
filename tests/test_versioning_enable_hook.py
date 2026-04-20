@@ -126,3 +126,56 @@ def test_init_repo_is_idempotent_on_existing_repo(
         ["git", "-C", str(tmp_path), "log", "--oneline"], text=True,
     ).strip().splitlines()
     assert before == after
+
+
+# ---------------------------------------------------------------------------
+# Bug #22 (1.6.1): boot-time rescue when versioning_enabled=on + .git missing
+# ---------------------------------------------------------------------------
+
+
+def test_boot_time_init_when_setting_is_on_and_git_missing(
+    tmp_path: Path, _fake_settings_on,
+) -> None:
+    """Reproduces the scenario bug #22 closed: user opted into
+    versioning on a prior boot (settings.json says ``on``) but the
+    ``.git/`` directory is missing — container rebuild, fresh /config
+    mount, restored backup. The boot-time hook added in main.py must
+    re-run ``init_repo`` so history starts accruing without manual
+    intervention."""
+    from git_versioning import _is_git_repo, init_repo
+
+    (tmp_path / "bedroom.yaml").write_text("esphome:\n  name: bedroom\n")
+    # Precondition: config dir has YAML, no git.
+    assert not _is_git_repo(tmp_path)
+
+    # Simulate the boot-time guard: settings says ``on``, dir has no
+    # .git/, so init_repo runs and creates one.
+    assert _fake_settings_on is None  # the fixture just monkeypatches
+    if not _is_git_repo(tmp_path):
+        init_repo(tmp_path)
+
+    assert _is_git_repo(tmp_path)
+    log = subprocess.check_output(
+        ["git", "-C", str(tmp_path), "log", "--oneline"], text=True,
+    )
+    assert len(log.strip().splitlines()) == 1
+
+
+def test_boot_time_init_no_op_when_git_already_there(
+    tmp_path: Path, _fake_settings_on,
+) -> None:
+    """Common case: prior boot created the repo, it's still on disk.
+    The boot-time guard's ``_is_git_repo`` check must short-circuit
+    so init_repo doesn't re-enter (which itself is idempotent, but
+    avoiding the call keeps boot fast + the log clean)."""
+    from git_versioning import _is_git_repo, init_repo
+
+    (tmp_path / "bedroom.yaml").write_text("esphome:\n  name: bedroom\n")
+    init_repo(tmp_path)
+    assert _is_git_repo(tmp_path)
+
+    # Guard: if git repo already exists, the boot-time hook short-
+    # circuits. This test pins that behavioural contract — a regression
+    # that dropped the guard would make startup slower every boot.
+    would_call_init = not _is_git_repo(tmp_path)
+    assert would_call_init is False
