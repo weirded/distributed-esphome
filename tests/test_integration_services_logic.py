@@ -95,10 +95,14 @@ async def test_compile_service_raises_when_worker_field_is_not_worker() -> None:
     )
     fake_registry = SimpleNamespace(async_get=lambda did: target_dev)
     with patch("esphome_fleet.services.dr.async_get", return_value=fake_registry):
-        with pytest.raises(HomeAssistantError, match="not a Fleet build worker"):
+        # QS.7 (1.6.1): exceptions carry a translation_key now —
+        # assert on that instead of the message text so the test
+        # doesn't need a hass fixture for string lookup.
+        with pytest.raises(HomeAssistantError) as excinfo:
             await _handle_compile(
                 _FakeCall(hass, {"targets": ["a.yaml"], "worker": "dev-x"})
             )
+    assert excinfo.value.translation_key == "invalid_worker_device"
 
 
 async def test_compile_service_accepts_string_all_targets() -> None:
@@ -179,10 +183,11 @@ async def test_compile_rejects_unknown_fleet_device_identifier() -> None:
     )
 
     with patch("esphome_fleet.services.dr.async_get", return_value=fake_registry):
-        with pytest.raises(HomeAssistantError, match="managed ESPHome Fleet targets"):
+        with pytest.raises(HomeAssistantError) as excinfo:
             await _handle_compile(
                 _FakeCall(hass, {"device_id": ["dev-456"]})
             )
+    assert excinfo.value.translation_key == "no_managed_target_in_selection"
 
 
 async def test_compile_raises_when_no_targets_and_no_devices() -> None:
@@ -190,8 +195,9 @@ async def test_compile_raises_when_no_targets_and_no_devices() -> None:
     from homeassistant.exceptions import HomeAssistantError
 
     hass, _ = _hass_with_coordinator()
-    with pytest.raises(HomeAssistantError, match="Select at least one device"):
+    with pytest.raises(HomeAssistantError) as excinfo:
         await _handle_compile(_FakeCall(hass, {}))
+    assert excinfo.value.translation_key == "no_target_selected"
 
 
 async def test_validate_resolves_device_id() -> None:

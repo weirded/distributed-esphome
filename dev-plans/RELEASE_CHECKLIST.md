@@ -43,6 +43,33 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
     **Canonical shape (bug #17, 1.6.1):** the hero screenshot must show the **Devices tab with the History drawer open on a representative file**, diff view selected. The point is to demonstrate that config history + rollback is real — it's the tentpole feature that differentiates Fleet from the stock ESPHome dashboard, and leading with a plain device list misses that in the five seconds a reader spends above the fold. Concrete recipe: open any device on hass-4 that has two+ commits, trigger *Config history…* from the hamburger, pick the second-most-recent commit, switch to the diff view. Crop at ~1280px wide with the Devices table still visible behind the drawer so the reader sees both surfaces at once. Keep the same shape on every refresh so month-over-month screenshots stay comparable.
 
     `scripts/capture-readme-screenshot.js` automates the whole flow (`PW_TOKEN=… node scripts/capture-readme-screenshot.js`; copy the resulting `/tmp/screenshot-history-diff.png` into `docs/screenshot.png`) so a releaser doesn't have to reproduce the click-path by hand.
+- [ ] **Regenerate add-on / integration / brands artwork from the SVG source.** Bug #PR.1/PR.2/PR.5 (1.6.1) landed a canonical regeneration recipe so the shield + wordmark stay in sync across three surfaces (Supervisor add-on card, HA Integrations card, `brands.home-assistant.io`). Run when the SVG source changes, the release wants fresh artwork, or a size convention shifts. Requires `magick` (ImageMagick 7+ via `brew install imagemagick`). Source: `ha-addon/ui/src/assets/esphome-logo.svg`.
+
+    ```bash
+    # Add-on assets (Supervisor store card + in-app sidebar)
+    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 128x128 ha-addon/icon.png
+    cp ha-addon/ui/src/assets/esphome-logo.svg ha-addon/icon.svg
+
+    # Landscape lockup used by both the add-on store banner and the integration device card.
+    LOGO_RECIPE() { magick -size "$1" xc:none \
+      \( -background none ha-addon/ui/src/assets/esphome-logo.svg -resize "$2" \) \
+      -gravity West -geometry "$3" -composite \
+      -pointsize "$4" -fill "#18BCF2" -font "Helvetica-Bold" \
+      -gravity West -annotate "$5" "ESPHome" \
+      -pointsize "$6" -fill "#6B7380" -font "Helvetica" \
+      -gravity West -annotate "$7" "Fleet" "$8"; }
+    LOGO_RECIPE 500x200  160x160 +20+0  52 +200+0  30 +200+45  ha-addon/logo.png
+    LOGO_RECIPE 500x200  160x160 +20+0  52 +200+0  30 +200+45  ha-addon/custom_integration/esphome_fleet/logo.png
+
+    # home-assistant/brands submission (1× + 2× per convention).
+    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 256x256 docs/brands-submission/custom_integrations/esphome_fleet/icon.png
+    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 512x512 docs/brands-submission/custom_integrations/esphome_fleet/icon@2x.png
+    cp ha-addon/custom_integration/esphome_fleet/icon.png ha-addon/custom_integration/esphome_fleet/icon.png  # keep integration card icon at 256×256
+    LOGO_RECIPE 500x200   160x160 +20+0   52 +200+0   30 +200+45  docs/brands-submission/custom_integrations/esphome_fleet/logo.png
+    LOGO_RECIPE 1000x400  320x320 +40+0  104 +400+0   60 +400+90  docs/brands-submission/custom_integrations/esphome_fleet/logo@2x.png
+    ```
+
+    Also renders the integration-local icon at 256×256 so HA's Integrations card has a crisp render even before the `home-assistant/brands` PR is merged. The 256×256 integration icon matches the 1× brands submission by design — when the brands PR lands, HA fetches the identical raster from the CDN instead of the package-local file, so there's no visual cutover.
 - [ ] **Close out `dev-plans/WORKITEMS-X.Y.md`**: mark all completed and carry forward anything that didn't ship. Concrete steps:
   1. `grep -nE '^- \[ \]' dev-plans/WORKITEMS-X.Y.md` — every unchecked box must be either (a) checked, (b) struck-through with `~~**ID**~~ WONTFIX —` + reason, or (c) **moved verbatim** to `dev-plans/WORKITEMS-X.Y+1.md` (or a later release file) under a `## Carried forward from X.Y` heading. Don't just delete — losing context across releases is what this checklist exists to prevent.
   2. `grep -niE 'defer|TODO|follow.?up|nice to have|tracked for later|future iteration' dev-plans/WORKITEMS-X.Y.md` — for each hit, decide: shipped + obsolete (delete the note), or still pending (move to the successor file). The phrase "deferred to <Y>" only counts as resolved if `WORKITEMS-Y.md` actually lists it.

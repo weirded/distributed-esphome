@@ -71,5 +71,34 @@
       "queue_depth": "Queue depth",
       "status": "Status"
     }
+  },
+  "issues": {
+    "config_entry_reauth": {
+      "title": "ESPHome Fleet needs a new token",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "description": "The add-on at {url} is rejecting requests — the shared token may have been rotated. Click **Submit** to open the re-authentication form."
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_config_entry": {
+      "message": "No ESPHome Fleet config entry configured — add the integration first via Settings → Devices & Services."
+    },
+    "no_managed_target_in_selection": {
+      "message": "None of the selected devices are managed ESPHome Fleet targets."
+    },
+    "no_target_selected": {
+      "message": "Select at least one device or provide a 'targets' list."
+    },
+    "no_single_target_selected": {
+      "message": "Select a device or provide a 'target' filename."
+    },
+    "invalid_worker_device": {
+      "message": "The selected worker is not an ESPHome Fleet build worker."
+    }
   }
 }

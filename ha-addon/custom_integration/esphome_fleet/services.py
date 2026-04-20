@@ -88,9 +88,10 @@ def _first_coordinator(hass: HomeAssistant):
     """
     coordinators = list(hass.data.get(DOMAIN, {}).values())
     if not coordinators:
+        # QS.7 (1.6.1): translation-backed error message.
         raise HomeAssistantError(
-            "No ESPHome Fleet config entry configured — "
-            "add the integration first via Settings → Devices & Services"
+            translation_domain=DOMAIN,
+            translation_key="no_config_entry",
         )
     return coordinators[0]
 
@@ -164,11 +165,13 @@ async def _handle_compile(call: ServiceCall) -> None:
         # Shouldn't happen given the selector filter, but give a clean
         # error rather than silently sending an empty list.
         raise HomeAssistantError(
-            "None of the selected devices are managed ESPHome Fleet targets"
+            translation_domain=DOMAIN,
+            translation_key="no_managed_target_in_selection",
         )
     else:
         raise HomeAssistantError(
-            "Select at least one device or provide a 'targets' list"
+            translation_domain=DOMAIN,
+            translation_key="no_target_selected",
         )
 
     payload: dict[str, Any] = {"targets": targets}
@@ -179,7 +182,8 @@ async def _handle_compile(call: ServiceCall) -> None:
         client_id = _resolve_worker_device_id(call.hass, worker_device)
         if client_id is None:
             raise HomeAssistantError(
-                "The selected worker is not a Fleet build worker"
+                translation_domain=DOMAIN,
+                translation_key="invalid_worker_device",
             )
         payload["pinned_client_id"] = client_id
     result = await coord.async_post_json("/ui/api/compile", payload)
@@ -207,14 +211,16 @@ async def _handle_validate(call: ServiceCall) -> None:
         targets = _resolve_device_ids_to_targets(call.hass, device_ids)
         if not targets:
             raise HomeAssistantError(
-                "None of the selected devices are managed ESPHome Fleet targets"
+                translation_domain=DOMAIN,
+                translation_key="no_managed_target_in_selection",
             )
         target = targets[0]
     elif "target" in call.data:
         target = call.data["target"]
     else:
         raise HomeAssistantError(
-            "Select a device or provide a 'target' filename"
+            translation_domain=DOMAIN,
+            translation_key="no_single_target_selected",
         )
 
     result = await coord.async_post_json("/ui/api/validate", {"target": target})
