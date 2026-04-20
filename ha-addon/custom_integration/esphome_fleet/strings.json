@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to ESPHome Fleet",
-        "description": "Enter the base URL of your ESPHome Fleet add-on (for example `http://homeassistant.local:8765`) and the shared token from the add-on's Configuration tab.",
+        "description": "Enter the base URL of your ESPHome Fleet add-on (for example {example_url}) and the shared token from the add-on's Configuration tab.",
         "data": {
           "base_url": "Base URL",
           "token": "Add-on token"

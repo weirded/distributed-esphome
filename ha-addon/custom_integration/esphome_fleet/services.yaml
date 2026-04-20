@@ -17,9 +17,8 @@ compile:
     managed by the Fleet add-on.
   target:
     device:
-      filter:
-        - integration: esphome_fleet
-          manufacturer: "ESPHome"
+      - integration: esphome_fleet
+        manufacturer: "ESPHome"
   fields:
     worker:
       name: Worker (optional)
@@ -66,9 +65,8 @@ validate:
   description: Run ESPHome config validation against a single target YAML.
   target:
     device:
-      filter:
-        - integration: esphome_fleet
-          manufacturer: "ESPHome"
+      - integration: esphome_fleet
+        manufacturer: "ESPHome"
   fields:
     target:
       name: Target (alternative)

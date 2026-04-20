@@ -256,6 +256,13 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=_url_schema(),
+            # Hassfest rule: URLs in step descriptions must flow through
+            # description_placeholders so translators can localise the
+            # example without touching a URL literal. Same reason the
+            # translation key reads "{example_url}".
+            description_placeholders={
+                "example_url": "http://homeassistant.local:8765",
+            },
             errors=errors,
         )
 

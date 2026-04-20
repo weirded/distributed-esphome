@@ -398,7 +398,11 @@ def test_services_yaml_parses() -> None:
     # The device filter is now a list of filter dicts (manufacturer-scoped).
     assert "target" in data[SERVICE_COMPILE]
     assert "device" in data[SERVICE_COMPILE]["target"]
-    compile_filter = data[SERVICE_COMPILE]["target"]["device"]["filter"]
+    # Hassfest services-schema update: target.device is a flat list of
+    # DeviceSelector filter dicts (the old ``device: {filter: [...]}``
+    # wrapper was rejected as "extra keys not allowed"). Read straight
+    # off the list.
+    compile_filter = data[SERVICE_COMPILE]["target"]["device"]
     assert any(f.get("integration") == DOMAIN for f in compile_filter)
     assert any(f.get("manufacturer") == "ESPHome" for f in compile_filter)
     assert "target" in data[SERVICE_VALIDATE]
