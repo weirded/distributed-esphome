@@ -195,8 +195,10 @@ The bar for landing new code on `develop`. Most are automated; the rest are deve
 When adding features or changing user-visible behavior, keep in sync:
 
 - `README.md` — public project overview.
-- `ha-addon/DOCS.md` — user-facing docs shown in the HA add-on panel.
+- `ha-addon/DOCS.md` — docs shown in the HA add-on panel.
 - `ha-addon/CHANGELOG.md` — **written for users, not developers.** ~90% of the entry should cover things users see and experience (new UI features, UX improvements, bug fixes with user-visible symptoms, configuration changes). ~10% at most for internal/behind-the-scenes work (tests, CI, protocol types, code cleanup) — collapse into a brief "Under the hood" section, not detailed workstream breakdowns. Group by what the user experiences, not by internal workstream labels. Never say "no new features" when there are user-visible features — scan the WORKITEMS bug list for UI/UX work. **Only mention changes relative to the last public release** — if a bug was introduced during the dev cycle and fixed before release, it never existed from the user's perspective and doesn't belong in the changelog. Same for regressions, intermediate refactors, or test-only fixes that shipped and un-shipped within the same cycle. The changelog describes what changed *for the user upgrading from the previous stable*, not the full internal git history.
+
+**User-facing docs must not reference internal development docs.** `README.md`, `ha-addon/DOCS.md`, and `ha-addon/CHANGELOG.md` are read by end users who don't have access to (or interest in) the repo's `dev-plans/` directory, work-item IDs (SP.8, AV.7, JH.5, UX_REVIEW §N.M), numbered bug IDs, or internal file paths (`settings.py`, `check-invariants.sh`). Describe behavior in plain terms. If a changelog entry needs to point somewhere for detail, point at the add-on UI ("see Settings → Authentication") or an externally-reachable GitHub file, never at `dev-plans/*` or internal source paths. This also means no "See WORKITEMS-X.Y.md for the full list" at the bottom of a changelog — the entry itself IS the full list as far as users are concerned.
 
 ## Project Tracking
 
@@ -222,6 +224,16 @@ Everything lives in `dev-plans/`:
 **Work item / bug checkbox format:** `- [x] **#NNN** *(X.Y.Z-dev.N)* — description` (the `#NNN` only applies to bugs). Use the exact dev.N, not a generic `dev`. For wontfix/duplicate/stale entries, use `~~**#NNN**~~ WONTFIX —` (strike-through bold ID + label).
 
 **Next release file:** Create `dev-plans/WORKITEMS-X.Y+1.md` immediately after tagging `vX.Y.Z` (part of the post-release checklist). The current file moves to `dev-plans/archive/` at the same time, and this file's "Project Tracking" section is updated to point at the new current release.
+
+## Branching Strategy
+
+Two long-lived branches: `develop` and `main`.
+
+- **`develop` is the integration branch.** All dev work lands here — every turn ends with a commit + push to `develop`. The `-dev.N` versions live on this branch and are what `./push-to-hass-4.sh` deploys. Default branch for day-to-day work.
+- **`main` is the release branch.** Tagged stable versions (`vX.Y.Z`) live here. Never commit directly.
+- **Releases happen via pull request.** When `develop` is ready to cut a stable release, open a PR from `develop` → `main`, merge it, then tag. One PR per release; no long-running release branches for now. See `dev-plans/RELEASE_CHECKLIST.md` for the full flow.
+
+This is deliberately simple for a single-developer project. If parallel lines of work ever need isolation, introduce short-lived feature branches off `develop` — don't complicate the trunk model preemptively.
 
 ## Deployment
 

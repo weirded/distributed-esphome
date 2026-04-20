@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Calendar, Clock, ExternalLink, GitBranch, Pin } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { AddressSource, Job, Target } from '../../types';
-import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../../utils';
+import { stripYaml, timeAgo, haDeepLink, formatCronHuman, fmtEpochRelative, fmtEpochAbsolute } from '../../utils';
 import { getJobBadge } from '../../utils/jobState';
 import { StatusDot } from '../StatusDot';
 import { SortHeader } from '../ui/sort-header';
@@ -414,23 +414,26 @@ export function useDeviceColumns(options: Options) {
           validate_only: lc.validate_only,
           download_only: lc.download_only,
         });
-        const diff = Math.floor(Date.now() / 1000) - lc.at;
-        const rel = diff < 60 ? `${diff}s`
-          : diff < 3600 ? `${Math.floor(diff / 60)}m`
-            : diff < 86400 ? `${Math.floor(diff / 3600)}h`
-              : `${Math.floor(diff / 86400)}d`;
-        const iso = new Date(lc.at * 1000).toLocaleString();
+        // PR #64 review: use shared fmtEpochRelative + fmtEpochAbsolute
+        // so this cell respects the ``time_format`` Settings preference
+        // (auto / 12h / 24h) via the module-local pref in utils/format.
+        // Prior inline ``toLocaleString()`` call ignored that setting.
+        const rel = fmtEpochRelative(lc.at);
+        const iso = fmtEpochAbsolute(lc.at);
         return (
           <span
             className="text-[12px] tabular-nums inline-flex items-center gap-1.5"
             title={`${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`}
           >
-            <span className="text-[var(--text-muted)]">{rel} ago</span>
+            <span className="text-[var(--text-muted)]">{rel}</span>
             <span className={badge.cls}>{badge.label}</span>
           </span>
         );
       },
-      sortingFn: 'alphanumeric',
+      // PR #64 review: epoch seconds are a number — ``alphanumeric``
+      // sorts them lexically (100 < 9). ``basic`` compares with
+      // ``<`` directly on the accessor value, which is what we want.
+      sortingFn: 'basic',
     }),
     columnHelper.accessor(row => row.running_version || '', {
       id: 'running',

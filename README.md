@@ -73,7 +73,7 @@ You don't need one to start — the add-on ships with a built-in local worker th
 
 The worker container is `ghcr.io/weirded/esphome-dist-client:latest`. All it needs on the host is Docker and network reach to (a) the add-on's HTTP API and (b) the ESP devices it'll flash. No inbound ports.
 
-Remote workers don't auto-update — keep them current by watching for the **Image stale** badge in the Workers tab and running `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` on the host. See [`ha-addon/DOCS.md → Keeping workers up to date`](ha-addon/DOCS.md) for the full rundown.
+The worker's Python source updates itself from the server whenever the add-on upgrades (so bug fixes to client code reach remote machines automatically). Its **Docker image** doesn't — when the image needs refreshing (system packages, Python version, pinned dependencies), the Workers tab flags it with an **Image stale** badge and you refresh it on the worker host with `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>`. See `ha-addon/DOCS.md → Keeping workers up to date` for the full rundown.
 
 ### As a standalone Docker container
 
