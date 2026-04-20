@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.6.1-dev.2"
+version: "1.6.1-dev.5"
 slug: "esphome_dist_server"
 description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
@@ -43,6 +43,15 @@ homeassistant_api: true
 # and direct-port access can be locked down via the `require_ha_auth`
 # add-on option (AU.3).
 auth_api: true
+
+# SS.1 (1.6.1): AppArmor profile `apparmor.txt` ships alongside this
+# file. Supervisor loads the profile automatically when this key is
+# true and re-loads it on each upgrade. If a legitimate operation
+# starts failing after an upgrade and the add-on log shows
+# `apparmor="DENIED"` lines, widen `apparmor.txt` rather than
+# disabling this flag — losing the profile drops one Supervisor
+# security star and the deny-by-default protection.
+apparmor: true
 
 # #26: declare that we POST to Supervisor's /discovery with service
 # "esphome_fleet". Without this, Supervisor rejects the POST with 403

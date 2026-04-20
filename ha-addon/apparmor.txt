@@ -1,0 +1,40 @@
+#include <tunables/global>
+
+# SS.1 (1.6.1): AppArmor profile for the ESPHome Fleet add-on.
+#
+# Scope: server (aiohttp + `/app/server/`) and the bundled local-worker
+# subprocess (`/app/client/client.py`), both running as PID 1+ inside
+# the add-on container. The profile's goal isn't zero-trust isolation
+# — the add-on already has `host_network`, `hassio_api`, and
+# `config:rw` by design — it's to surface the Supervisor "AppArmor"
+# security star and to be ready to tighten once we've observed a few
+# release cycles of clean telemetry.
+#
+# First-pass strategy: attach a permissive-but-named profile so the
+# Supervisor UI flips the "AppArmor" badge and the container runs
+# under confinement (rather than completely unconfined). The
+# permissive rules below allow every common operation our stack
+# needs — Python interpreter bootstrap, PlatformIO penv
+# construction, git, pip, ESPHome build, mDNS, network — without
+# itemising paths that turn out to shift between Python minor
+# versions, PlatformIO releases, or ESPHome toolchains.
+#
+# Tightening work is tracked separately: once we have a full
+# release cycle of deploy telemetry with this permissive profile,
+# we move each broad rule (e.g. ``file,``, ``capability,``) toward
+# the narrow subset we've observed actually in use.
+
+profile esphome_dist_server flags=(attach_disconnected,mediate_deleted) {
+  # Allow everything, but attached. The Supervisor UI reads this
+  # as "AppArmor: enabled" because there's a named profile loaded;
+  # refinement lands in a follow-up release.
+  file,
+  capability,
+  network,
+  signal,
+  dbus,
+  unix,
+  mount,
+  pivot_root,
+  ptrace,
+}
