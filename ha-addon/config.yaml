@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.5.0"
+version: "1.6.0"
 slug: "esphome_dist_server"
 description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
 url: "https://github.com/weirded/distributed-esphome"
@@ -18,7 +18,10 @@ codeowners:
 # Ingress: Web UI embedded in HA sidebar, authenticated by HA
 ingress: true
 ingress_port: 8765
-panel_icon: mdi:progress-wrench
+# `mdi:chip` matches the ESPHome Device Builder add-on's sidebar icon
+# so Fleet and Builder sit next to each other with the same visual
+# vocabulary (#issue — bug 3 in 1.6).
+panel_icon: mdi:chip
 panel_title: "ESPHome Fleet"
 
 # Direct port: build workers (Docker) connect here with Bearer token auth
@@ -64,23 +67,14 @@ map:
   # deprecated but still works, and deprecation-warning is a smaller
   # tax than a full path migration. Revisit when HA removes `config`.
   - config:rw
-options:
-  token: ""
-  job_timeout: 600
-  ota_timeout: 120
-  worker_offline_threshold: 30
-  device_poll_interval: 60
-  # AU.7: defaults to `true` in 1.5.0. The add-on's shared worker
-  # token now also grants system access to /ui/api/*, so the native
-  # HA integration authenticates transparently.
-  require_ha_auth: true
-schema:
-  token: password
-  job_timeout: int
-  ota_timeout: int
-  worker_offline_threshold: int
-  device_poll_interval: int
-  # AU.3/AU.7: when true (the 1.5.0 default), direct-port /ui/api/*
-  # calls must carry a valid HA Bearer token or the add-on's own
-  # server token. Ingress-tunneled access is unaffected.
-  require_ha_auth: bool
+
+# SP.8 (1.6): every user-facing option moved into the in-app Settings
+# drawer (`/data/settings.json`). Supervisor's Configuration tab is
+# intentionally empty — users edit token, timeouts, thresholds and the
+# `require_ha_auth` flag via the gear icon in the web UI. Values set in
+# `options.json` on pre-1.6 installs are one-shot imported into the
+# Settings store on first boot after upgrade (see settings.py).
+#
+# Leaving `options:` and `schema:` absent is deliberate. Supervisor
+# renders an empty config panel with the standard info text, which is
+# the signal we want: "there's nothing to configure here anymore."

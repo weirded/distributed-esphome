@@ -54,7 +54,7 @@ Key worker env vars:
 | `JOB_TIMEOUT` | `600` | Compile timeout in seconds |
 | `OTA_TIMEOUT` | `120` | OTA upload timeout in seconds |
 | `MAX_ESPHOME_VERSIONS` | `3` | Max cached ESPHome versions on disk |
-| `MAX_PARALLEL_JOBS` | `2` | Concurrent build jobs per worker (0 = paused) |
+| `MAX_PARALLEL_JOBS` | `2` | Concurrent build jobs per worker (0 = paused). Server-spawned local worker defaults to `1` on fresh install unless the user has configured it via the UI (persisted in `/data/local_worker_slots`) — #99. |
 | `HOSTNAME` | system hostname | Worker name shown in UI |
 | `ESPHOME_SEED_VERSION` | — | Pre-install this ESPHome version at startup |
 | `ESPHOME_BIN` | — | Use this binary instead of the version-manager venvs |
@@ -129,12 +129,15 @@ Checked mechanically by `scripts/check-invariants.sh` (wired into the CI `test` 
 
 **PY-9 — No macOS-only packages in `requirements.lock`.** `pyobjc-core`, `pyobjc-framework-*`, and `appnope` leak in as platform-conditional transitives when `pip-compile` is run on a Mac host (they should carry `sys_platform == "darwin"` markers but `pip-compile --generate-hashes` strips markers). The Linux Docker build then errors with `PyObjC requires macOS to build`. Happened twice (1.3.1-dev.9, 1.4.1-dev.55). Always regenerate lockfiles via `scripts/refresh-deps.sh`, which runs `pip-compile` inside a `python:3.11-slim` container on `linux/amd64`. `scripts/check-invariants.sh` greps the lock for the known macOS-package names and fails CI on any hit.
 
+**PY-10 — `tests/test_integration_*.py` (without a `_logic` suffix) must import `pytest_homeassistant_custom_component`.** The plain `test_integration_*` name reads as "real test against a running HA" — if that's not what the file does, rename it to `test_integration_*_logic.py` (which the invariant exempts) so the filename doesn't mislead. Origin: IT.1 from 1.6 — mock-based helper tests were file-named as integration tests and reviewers kept assuming coverage that wasn't there, letting CR.12-class bugs ship (`async_setup_entry` misuse, `unique_id` collisions, config-flow regressions). `scripts/check-invariants.sh` greps each non-`_logic` integration test file for the `pytest_homeassistant_custom_component` import and fails CI if it's absent.
+
 ## Design Judgment (aspirational — reviewed, not enforced)
 
 These aren't grep-checkable but matter just as much. They're how the codebase stays coherent.
 
 - **Disable, don't fail.** When a feature isn't available for a target/worker/job (no restart button in YAML, no API key, worker offline, etc.), render the button or menu item **disabled with an explanatory tooltip** rather than letting the user click it and watch it fail. The tooltip should tell them what's missing and ideally how to fix it. Detect availability up-front from data we already have (YAML metadata, registry state) — don't probe by trying. **Exception: the Upgrade button is always enabled** regardless of device state, because compiling for a target is meaningful even if the device is offline (the firmware is still produced and OTA-pending). Origin: bug #14 — Restart was always clickable but silently no-op'd for devices whose YAML had no restart button.
 - **Default to shadcn/ui.** All new interactive UI (buttons, dialogs, dropdowns, inputs, selects) uses the shadcn wrappers in `components/ui/`. Don't hand-roll components that already exist there. If shadcn doesn't have it yet, add a thin wrapper (see `components/ui/input.tsx`, `components/ui/select.tsx`).
+- **No native JavaScript modals — ever.** No `window.alert`, no `window.confirm`, no `window.prompt`. They ignore the app's theme, look like Web 1.0 browser chrome, can't be styled, and pop outside the iframe in HA Ingress (ugly). Use a shadcn `Dialog` from `components/ui/dialog.tsx` for confirmations, a `Sheet` for side panels, and the `sonner` toast helpers for transient notifications. Origin: bug #15 — the AV.6 Restore button used `window.confirm()` for its "are you sure" prompt and it looked terrible against the dark app.
 - **Use library components as intended.** Prefer composition over override. Adjust layout to accommodate library behavior rather than stripping features.
 - **Server state in SWR, UI state in React.** SWR is the cache — read from it, don't copy it into `useState`.
 - **Lift DropdownMenu `open` state out of any row cell.** When a `<DropdownMenu>` lives inside a TanStack Table cell (Devices hamburger, Queue Download, etc.), the 1 Hz SWR poll re-instantiates the row's cell components and tears down any state kept *inside* the menu — the dropdown slams shut mid-click. Always control the menu with an `open` + `onOpenChange` prop where the state lives in the parent tab component (`useState<string | null>(null)` keyed by row id, so only one dropdown is open at a time), and add that state to the columns `useMemo` deps so cells re-render when it flips. Origin: bug #2 (devices hamburger, 1.4.1-dev.3) and bug #71 (queue Download dropdown, 1.5.0-dev.75). If the same symptom shows up on a third menu, fix it the same way — do not try to stop SWR from re-rendering.
@@ -144,6 +147,10 @@ These aren't grep-checkable but matter just as much. They're how the codebase st
 - **Batch operations get one toast.** Bulk actions use `Promise.all` and a single summary toast — never one toast per item. Bulk actions live in `App.tsx`, not in child component loops.
 - **Think about the UX before shipping.** Walk through the change mentally: does the layout make sense on real data? Would it look sloppy to a user?
 - **Update `.gitignore` whenever a new tool is introduced.** Most tools generate cache/lock/build/report directories — add them in the same commit that introduces the tool.
+
+## Docker Image
+
+The runtime image must keep `gcc`, `libffi-dev`, `libssl-dev`, and `git` installed — they are **not** build-only. ESPHome compiles C/C++ firmware at runtime via PlatformIO, and the server/worker lazy-install arbitrary ESPHome versions via `pip install esphome==X.Y.Z` at runtime (`scanner.ensure_esphome_installed`, `VersionManager._install`), whose transitive deps occasionally ship sdist-only on `linux/arm64` and need a compiler. The ~280 MB apt layer on `ha-addon/Dockerfile:19` is therefore intentional. `git` accounts for ~70–100 MB of it and is required because some PlatformIO/ESPHome dependencies pull from git URLs. Do **not** attempt to "optimize" this with a multi-stage build that drops build tooling from the final stage — that breaks on-demand ESPHome install on ARM hosts (the majority of HA users). Keep the chained `RUN apt-get update && install && rm -rf /var/lib/apt/lists/*` pattern exactly as-is: splitting it either bloats the layer (cleanup becomes a no-op) or creates a stale-index race.
 
 ## Performance Expectations
 
@@ -197,10 +204,14 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.6.md` — current release (editor + config management).
+- `dev-plans/WORKITEMS-1.6.md` — current release (power-user fleet management: git versioning, job history, archive viewer, device tags, disk management, worker constraints).
+- `dev-plans/WORKITEMS-future.md` — unscheduled items. Things we may do someday but haven't picked a release for yet.
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
 - `dev-plans/RELEASE_CHECKLIST.md` — step-by-step release process.
+- `dev-plans/USER_PERSONA.md` — the target user "Pat." Scope / UX / copywriting tiebreaker when we're not sure something's worth the effort.
+
+**Release cadence is scope-driven, not time-boxed.** Ship a release when it delivers a meaningful chunk of functionality — never pad scope to fit a calendar and never compress it to meet one. Pull items forward from `WORKITEMS-future.md` or push them back into it based on whether they move the needle for Pat, not on how close to "done" they happen to be. The current `WORKITEMS-X.Y.md` is a commitment to a *coherent* release, not a deadline.
 
 **Turn** = one user prompt → one assistant response cycle. At the end of every turn:
 1. Run `bash scripts/bump-dev.sh` — auto-increments `-dev.N`. Never skip.

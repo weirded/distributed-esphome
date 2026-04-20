@@ -45,6 +45,13 @@ interface Props {
   onLogs: (target: string) => void;
   onPin: (target: string) => void;
   onUnpin: (target: string) => void;
+  /** AV.6: open the per-file History panel. */
+  onOpenHistory: (target: string) => void;
+  /** JH.5: open the per-device Compile History panel. */
+  onOpenCompileHistory: (target: string) => void;
+  /** Bug #16: open the manual-commit dialog for this target. Only
+   * offered when the target has uncommitted changes. */
+  onCommitChanges: (target: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -58,6 +65,9 @@ function DeviceContextMenuImpl({
   onLogs,
   onPin,
   onUnpin,
+  onOpenHistory,
+  onOpenCompileHistory,
+  onCommitChanges,
   open,
   onOpenChange,
 }: Props) {
@@ -102,6 +112,12 @@ function DeviceContextMenuImpl({
         <DropdownMenuGroup>
           <DropdownMenuLabel>Device</DropdownMenuLabel>
           <DropdownMenuItem onClick={() => onLogs(t.target)}>Live Logs</DropdownMenuItem>
+          {/* JH.5: per-device past-compiles drawer. Reads from the
+              persistent /ui/api/history table so the view survives
+              queue coalescing + clears. */}
+          <DropdownMenuItem onClick={() => onOpenCompileHistory(t.target)}>
+            Compile history…
+          </DropdownMenuItem>
           {/* #14: grayed out when the YAML doesn't expose a restart button. */}
           <DropdownMenuItem
             onClick={handleRestart}
@@ -126,19 +142,35 @@ function DeviceContextMenuImpl({
         <DropdownMenuGroup>
           <DropdownMenuLabel>Config</DropdownMenuLabel>
           {/* #93: "Schedule Upgrade…" removed — accessible via the Upgrade
-              button by switching to "Scheduled" mode. */}
+              button by switching to "Scheduled" mode.
+              Bug #29: "Pin version" was ambiguous under a "Config" group
+              (pins the ESPHome compiler version, not the config). Spell
+              it out — the config version concept lives in "View history…"
+              just below. */}
           {t.pinned_version ? (
             <DropdownMenuItem onClick={() => onUnpin(t.target)}>
-              Unpin version ({t.pinned_version})
+              Unpin ESPHome version ({t.pinned_version})
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem onClick={() => onPin(t.target)}>
-              Pin to current version
+              Pin ESPHome version to current
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => onRename(t.target)}>Rename</DropdownMenuItem>
           {/* CD.6: duplicate this device into a new file */}
           <DropdownMenuItem onClick={() => onDuplicate(t)}>Duplicate…</DropdownMenuItem>
+          {/* AV.6: per-file config history + diff + rollback. Bug #29:
+              "Config history…" disambiguates from ESPHome-version history
+              (which lives in the version dropdown in the header). */}
+          <DropdownMenuItem onClick={() => onOpenHistory(t.target)}>
+            Config history…
+          </DropdownMenuItem>
+          {/* Bug #16: only shown when the target has uncommitted changes. */}
+          {t.has_uncommitted_changes && (
+            <DropdownMenuItem onClick={() => onCommitChanges(t.target)}>
+              Commit changes…
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             variant="destructive"
             onClick={() => onDelete(t.target)}
@@ -166,7 +198,9 @@ function propsEqual(prev: Props, next: Props): boolean {
     a.target === b.target &&
     a.has_restart_button === b.has_restart_button &&
     a.has_api_key === b.has_api_key &&
-    a.pinned_version === b.pinned_version
+    a.pinned_version === b.pinned_version &&
+    // Bug #16: dirty state controls the "Commit changes…" item's visibility.
+    a.has_uncommitted_changes === b.has_uncommitted_changes
   );
 }
 

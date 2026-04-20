@@ -156,6 +156,144 @@ export async function getServerInfo(): Promise<ServerInfo> {
   return parseResponse<ServerInfo>(await apiFetch('./ui/api/server-info'), 'fetching server info');
 }
 
+// AV.3 / AV.4 / AV.5 / AV.6 / AV.11 — per-file history + diff + rollback + manual commit.
+export interface FileHistoryEntry {
+  hash: string;
+  short_hash: string;
+  date: number;
+  author_name: string;
+  author_email: string;
+  message: string;
+  lines_added: number;
+  lines_removed: number;
+}
+
+export interface FileStatus {
+  has_uncommitted_changes: boolean;
+  head_hash: string | null;
+  head_short_hash: string | null;
+}
+
+export interface CommitResult {
+  committed: boolean;
+  hash: string | null;
+  short_hash: string | null;
+  message: string | null;
+}
+
+export interface RollbackResult {
+  content: string;
+  committed: boolean;
+  hash: string | null;
+  short_hash: string | null;
+}
+
+export async function getFileHistory(filename: string, limit = 50, offset = 0): Promise<FileHistoryEntry[]> {
+  const qs = `?limit=${limit}&offset=${offset}`;
+  return parseResponse<FileHistoryEntry[]>(
+    await apiFetch(`./ui/api/files/${encodeURIComponent(filename)}/history${qs}`),
+    'fetching file history',
+  );
+}
+
+export async function getFileStatus(filename: string): Promise<FileStatus> {
+  return parseResponse<FileStatus>(
+    await apiFetch(`./ui/api/files/${encodeURIComponent(filename)}/status`),
+    'fetching file status',
+  );
+}
+
+export async function getFileContentAt(filename: string, hash?: string | null): Promise<string> {
+  const qs = hash ? `?hash=${encodeURIComponent(hash)}` : '';
+  const body = await parseResponse<{ content: string }>(
+    await apiFetch(`./ui/api/files/${encodeURIComponent(filename)}/content-at${qs}`),
+    'fetching file content at commit',
+  );
+  return body.content;
+}
+
+export async function getFileDiff(
+  filename: string,
+  from?: string | null,
+  to?: string | null,
+): Promise<string> {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const body = await parseResponse<{ diff: string }>(
+    await apiFetch(`./ui/api/files/${encodeURIComponent(filename)}/diff${qs}`),
+    'fetching file diff',
+  );
+  return body.diff;
+}
+
+export async function rollbackFile(filename: string, hash: string): Promise<RollbackResult> {
+  return parseResponse<RollbackResult>(
+    await apiFetch(`./ui/api/files/${encodeURIComponent(filename)}/rollback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hash }),
+    }),
+    'rolling back file',
+  );
+}
+
+export async function commitFile(filename: string, message?: string): Promise<CommitResult> {
+  return parseResponse<CommitResult>(
+    await apiFetch(`./ui/api/files/${encodeURIComponent(filename)}/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message ? { message } : {}),
+    }),
+    'committing file',
+  );
+}
+
+// SP.3 — in-app Settings (separate from Supervisor's options.json).
+// Keep the shape alphabetical-ish and mirrored from AppSettings in
+// ha-addon/server/settings.py. Any rename there is a UI contract change
+// — update this interface in the same commit.
+export interface AppSettings {
+  // #97 + #98: master tristate for the AV.* config-versioning
+  // feature. ``'unset'`` = the user hasn't decided yet (show the
+  // onboarding modal); ``'on'`` = active; ``'off'`` = explicitly off.
+  // Treat anything other than ``'on'`` as disabled when gating UI
+  // affordances.
+  versioning_enabled: 'on' | 'off' | 'unset';
+  auto_commit_on_save: boolean;
+  git_author_name: string;
+  git_author_email: string;
+  job_history_retention_days: number;
+  firmware_cache_max_gb: number;
+  job_log_retention_days: number;
+  // SP.8 — moved from Supervisor options.json in 1.6.
+  server_token: string;
+  job_timeout: number;
+  ota_timeout: number;
+  worker_offline_threshold: number;
+  device_poll_interval: number;
+  require_ha_auth: boolean;
+  // #82 — time-of-day presentation. 'auto' defers to the browser's
+  // resolved locale; '12h'/'24h' force the format globally.
+  time_format: 'auto' | '12h' | '24h';
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return parseResponse<AppSettings>(await apiFetch('./ui/api/settings'), 'fetching settings');
+}
+
+export async function updateSettings(partial: Partial<AppSettings>): Promise<AppSettings> {
+  return parseResponse<AppSettings>(
+    await apiFetch('./ui/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partial),
+    }),
+    'updating settings',
+  );
+}
+
 export async function getEsphomeVersions(): Promise<EsphomeVersions> {
   return parseResponse<EsphomeVersions>(await apiFetch('./ui/api/esphome-versions'), 'fetching ESPHome versions');
 }
@@ -294,16 +432,23 @@ export async function getTargetContent(filename: string): Promise<string> {
  * Save YAML content to a target file. Returns the final target name,
  * which may differ from *filename* when saving a staged new device
  * (#62 — ``.pending.<name>.yaml`` → ``<name>.yaml`` on first save).
+ *
+ * Bug #24: ``commitMessage`` is an optional user-entered subject line
+ * that's passed to the auto-commit. When omitted (or auto-commit is
+ * off) the server's default ``"save: <file>"`` applies.
  */
 export async function saveTargetContent(
   filename: string,
   content: string,
+  commitMessage?: string,
 ): Promise<{ renamedTo: string | null }> {
+  const body: Record<string, unknown> = { content };
+  if (commitMessage && commitMessage.trim()) body.commit_message = commitMessage.trim();
   const data = await parseResponse<SaveTargetResponse>(
     await apiFetch(`./ui/api/targets/${encodeURIComponent(filename)}/content`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     }),
     'saving target content',
   );
@@ -589,6 +734,96 @@ export interface ScheduleHistoryEntry {
   fired_at: string;
   job_id: string;
   outcome: string;
+}
+
+// ---------------------------------------------------------------------------
+// JH.4 — Job history (persistent append-only)
+// ---------------------------------------------------------------------------
+
+/** One row from the persistent /ui/api/history table. Mirrors the SQL
+ *  shape in ha-addon/server/job_history.py — keep in sync. */
+export interface JobHistoryEntry {
+  id: string;
+  target: string;
+  state: 'success' | 'failed' | 'cancelled' | 'timed_out';
+  triggered_by: 'user' | 'schedule' | 'ha_action' | null;
+  trigger_detail: string | null;
+  download_only: 0 | 1;
+  validate_only: 0 | 1;
+  pinned_client_id: string | null;
+  esphome_version: string | null;
+  assigned_client_id: string | null;
+  assigned_hostname: string | null;
+  /** Epoch seconds (UTC). */
+  submitted_at: number | null;
+  started_at: number | null;
+  finished_at: number | null;
+  duration_seconds: number | null;
+  ota_result: string | null;
+  config_hash: string | null;
+  retry_count: number;
+  log_excerpt: string | null;
+  /** Bug #38: 1 when the job produced firmware. Stays 1 even after the
+   *  .bin has been evicted by the firmware budget task — use
+   *  `firmware_variants.length > 0` to know whether the binary is
+   *  still downloadable right now. */
+  has_firmware?: 0 | 1;
+  /** Bug #38: live list of variants still on disk (e.g. ["factory","ota"]).
+   *  Empty when has_firmware is 0, OR when the firmware has been evicted
+   *  by the budget enforcer. Drives the Download button's visibility on
+   *  history rows. */
+  firmware_variants?: string[];
+}
+
+export interface JobHistoryStats {
+  total: number;
+  success: number;
+  failed: number;
+  cancelled: number;
+  timed_out: number;
+  avg_duration_seconds: number | null;
+  p95_duration_seconds: number | null;
+  last_success_at: number | null;
+  last_failure_at: number | null;
+  window_days: number;
+}
+
+export async function getJobHistory(params: {
+  target?: string;
+  state?: JobHistoryEntry['state'];
+  since?: number;
+  /** Bug #49: upper epoch bound for the finished-at window. */
+  until?: number;
+  limit?: number;
+  offset?: number;
+  /** Bug #53: column to sort by. Server whitelist enforces valid values. */
+  sort?: 'finished_at' | 'started_at' | 'submitted_at' | 'duration_seconds'
+    | 'target' | 'state' | 'esphome_version' | 'assigned_hostname' | 'triggered_by';
+  /** Bug #53: ``true`` for descending (default). */
+  desc?: boolean;
+} = {}): Promise<JobHistoryEntry[]> {
+  const qs = new URLSearchParams();
+  if (params.target) qs.set('target', params.target);
+  if (params.state) qs.set('state', params.state);
+  if (params.since !== undefined) qs.set('since', String(params.since));
+  if (params.until !== undefined) qs.set('until', String(params.until));
+  if (params.limit !== undefined) qs.set('limit', String(params.limit));
+  if (params.offset !== undefined) qs.set('offset', String(params.offset));
+  if (params.sort) qs.set('sort', params.sort);
+  if (params.desc !== undefined) qs.set('desc', params.desc ? '1' : '0');
+  const url = qs.toString() ? `./ui/api/history?${qs}` : './ui/api/history';
+  return parseResponse<JobHistoryEntry[]>(await apiFetch(url), 'fetching job history');
+}
+
+export async function getJobHistoryStats(params: {
+  target?: string;
+  window_days?: number;
+} = {}): Promise<JobHistoryStats> {
+  const qs = new URLSearchParams();
+  if (params.target) qs.set('target', params.target);
+  if (params.window_days !== undefined) qs.set('window_days', String(params.window_days));
+  const url = qs.toString() ? `./ui/api/history/stats?${qs}` : './ui/api/history/stats';
+  return parseResponse<JobHistoryStats>(await apiFetch(url), 'fetching job-history stats');
 }
 
 export async function getScheduleHistory(): Promise<Record<string, ScheduleHistoryEntry[]>> {

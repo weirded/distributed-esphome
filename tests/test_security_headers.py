@@ -25,7 +25,10 @@ _EXPECTED_HEADERS = {
 
 
 def _make_app() -> web.Application:
-    cfg = AppConfig(token="t")
+    cfg = AppConfig()
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token="t")
 
     async def ui_route(_request: web.Request) -> web.Response:
         return web.json_response({"ok": True})
@@ -64,9 +67,13 @@ async def test_ui_api_response_carries_all_security_headers():
         assert "frame-ancestors 'self'" in csp
         assert "https://schema.esphome.io" in csp
         assert "wss:" in csp
-        # @monaco-editor/react loads from jsDelivr by default — must be allowed
-        # in script-src and connect-src or the editor breaks (regression #15).
-        assert "https://cdn.jsdelivr.net" in csp
+        # CF.1: jsDelivr CDN is no longer in the CSP. Monaco is bundled
+        # locally via src/monaco-local.ts so @monaco-editor/react doesn't
+        # need the CDN at runtime. Any regression that re-adds it (e.g.
+        # a careless upgrade that falls back to the default loader)
+        # trips this assertion.
+        assert "cdn.jsdelivr.net" not in csp
+        assert "jsdelivr" not in csp
         # Common attribute checks
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
         assert resp.headers["Referrer-Policy"] == "no-referrer"
@@ -105,7 +112,10 @@ async def test_handler_set_header_is_not_clobbered():
     """If a downstream handler explicitly sets one of the security headers
     (e.g. a more restrictive CSP for a specific page), the middleware must
     leave it alone rather than overwriting."""
-    cfg = AppConfig(token="t")
+    cfg = AppConfig()
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token="t")
 
     async def custom_csp_route(_request: web.Request) -> web.Response:
         resp = web.json_response({"ok": True})

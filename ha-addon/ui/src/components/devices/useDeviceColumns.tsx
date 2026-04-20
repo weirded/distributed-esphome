@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
-import { Calendar, Clock, ExternalLink, Pin } from 'lucide-react';
+import { Calendar, Clock, ExternalLink, GitBranch, Pin } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { AddressSource, Job, Target } from '../../types';
 import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../../utils';
+import { getJobBadge } from '../../utils/jobState';
 import { StatusDot } from '../StatusDot';
 import { SortHeader } from '../ui/sort-header';
 import { ActionsCell } from './ActionsCell';
@@ -40,6 +41,12 @@ interface Options {
   onRequestDelete: (target: string) => void;
   onPin: (target: string) => void;
   onUnpin: (target: string) => void;
+  /** AV.6: open the per-file History panel from the row hamburger menu. */
+  onOpenHistory: (target: string) => void;
+  /** JH.5: open the per-device Compile History panel. */
+  onOpenCompileHistory: (target: string) => void;
+  /** Bug #16: open the manual-commit dialog for this target. */
+  onCommitChanges: (target: string) => void;
   /**
    * #2 followup to QS.16: per-row hamburger open state is owned by
    * DevicesTab (not Radix's internal state) so it survives row re-mounts
@@ -98,6 +105,9 @@ export function useDeviceColumns(options: Options) {
     onRequestDelete,
     onPin,
     onUnpin,
+    onOpenHistory,
+    onOpenCompileHistory,
+    onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
   } = options;
@@ -151,6 +161,21 @@ export function useDeviceColumns(options: Options) {
                 <span title={`One-time schedule: ${t.schedule_once}`} className="ml-1 inline-flex align-text-bottom opacity-70">
                   <Calendar className="size-3" aria-label="One-time schedule" />
                 </span>
+              )}
+              {/* Bug #16: uncommitted-changes indicator. Clicking the
+                  pill opens the per-file History panel so the user
+                  can review the diff and commit from there. */}
+              {t.has_uncommitted_changes && (
+                <button
+                  type="button"
+                  className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-yellow-500/40 bg-yellow-500/15 px-1.5 py-0 text-[10px] text-yellow-300 hover:bg-yellow-500/25 cursor-pointer align-text-bottom"
+                  onClick={(e) => { e.stopPropagation(); onOpenHistory(t.target); }}
+                  title="This device's YAML has uncommitted changes. Click to open the history panel and commit them."
+                  aria-label="Uncommitted changes"
+                >
+                  <GitBranch className="size-3" aria-hidden />
+                  Uncommitted
+                </button>
               )}
             </span>
             <div className="device-filename">{stripYaml(t.target)}</div>
@@ -363,15 +388,62 @@ export function useDeviceColumns(options: Options) {
       },
       sortingFn: 'alphanumeric',
     }),
+    // JH.6: optional "Last compiled" column. Sort key is the finished_at
+    // epoch, so DESC puts most recently compiled devices first (what
+    // power users want when scanning for stale hosts).
+    columnHelper.accessor(row => row.last_compile?.at ?? 0, {
+      id: 'last_compiled',
+      header: ({ column }) => <SortHeader label="Last compiled" column={column} />,
+      cell: ({ row: { original: t } }) => {
+        const lc = t.last_compile;
+        if (!lc) {
+          // #68: consistent with other "unknown" cells across the table —
+          // render a muted em-dash rather than asserting "never", which
+          // overclaims given the history table might not have pre-dev.23
+          // compiles.
+          return <span className="text-[12px] text-[var(--text-muted)]">—</span>;
+        }
+        // #77 / UX_REVIEW §1.5: reuse ``getJobBadge`` so the Devices
+        // column's chip matches the Queue tab and JH.5 history surfaces
+        // exactly. Previously we hand-rolled a ✓/✗/· glyph that drifted
+        // in shape + colour from the pill badges on the other two
+        // surfaces.
+        const badge = getJobBadge({
+          state: lc.state,
+          ota_result: lc.ota_result ?? undefined,
+          validate_only: lc.validate_only,
+          download_only: lc.download_only,
+        });
+        const diff = Math.floor(Date.now() / 1000) - lc.at;
+        const rel = diff < 60 ? `${diff}s`
+          : diff < 3600 ? `${Math.floor(diff / 60)}m`
+            : diff < 86400 ? `${Math.floor(diff / 3600)}h`
+              : `${Math.floor(diff / 86400)}d`;
+        const iso = new Date(lc.at * 1000).toLocaleString();
+        return (
+          <span
+            className="text-[12px] tabular-nums inline-flex items-center gap-1.5"
+            title={`${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`}
+          >
+            <span className="text-[var(--text-muted)]">{rel} ago</span>
+            <span className={badge.cls}>{badge.label}</span>
+          </span>
+        );
+      },
+      sortingFn: 'alphanumeric',
+    }),
     columnHelper.accessor(row => row.running_version || '', {
       id: 'running',
-      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      // Bug #29: "Version" was ambiguous now that the config git history
+      // also exposes a version concept. Labeled "ESPHome" so the
+      // Devices / Schedules / Queue columns all agree on the domain.
+      header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
       cell: ({ row: { original: t } }) => (
         <span className="text-[12px]">
           {t.running_version || '—'}
           {t.pinned_version && (
-            <span title={`Pinned to ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
-              <Pin className="size-3" aria-label="Pinned version" />
+            <span title={`Pinned ESPHome version: ${t.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+              <Pin className="size-3" aria-label="Pinned ESPHome version" />
             </span>
           )}
           {t.config_modified && <div className="config-modified">config changed</div>}
@@ -434,6 +506,9 @@ export function useDeviceColumns(options: Options) {
           onRequestDelete={onRequestDelete}
           onPin={onPin}
           onUnpin={onUnpin}
+          onOpenHistory={onOpenHistory}
+          onOpenCompileHistory={onOpenCompileHistory}
+          onCommitChanges={onCommitChanges}
           onMenuOpenChange={(o) => setMenuOpenTarget(o ? t.target : null)}
         />
       ),
@@ -451,6 +526,9 @@ export function useDeviceColumns(options: Options) {
     onRequestDelete,
     onPin,
     onUnpin,
+    onOpenHistory,
+    onOpenCompileHistory,
+    onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
   ]);

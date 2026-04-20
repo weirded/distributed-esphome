@@ -49,3 +49,28 @@ legacy `distributed_` prefix leaking through.
 one Fleet add-on against the same HA Core would require rethinking the
 `_first_coordinator` service-helper contract in `services.py`; we keep
 the UX simple and reject a second setup at the HA config-flow layer.
+
+## Branding (#58)
+
+`icon.png` (64×64) and `logo.png` (192×192) in this directory are
+copies of the add-on's top-level `../../icon.png` / `../../logo.png`,
+kept alongside the integration so anyone inspecting it knows which
+artwork the integration represents.
+
+**Caveat:** Home Assistant's Integrations UI does *not* render local
+branding for custom integrations. Logos come from the
+[`home-assistant/brands`](https://github.com/home-assistant/brands)
+repository — HA's frontend fetches them from
+`https://brands.home-assistant.io/<domain>/icon.png`. To make the logo
+actually visible on the Integrations page, submit a PR to that repo
+that lands:
+
+- `custom_integrations/esphome_fleet/icon.png` — 256×256 PNG
+- `custom_integrations/esphome_fleet/logo.png` — 256×256 PNG
+- `custom_integrations/esphome_fleet/icon@2x.png` — 512×512 PNG
+- `custom_integrations/esphome_fleet/logo@2x.png` — 512×512 PNG
+
+Our current on-disk assets are 64×64 / 192×192 because that's what the
+Supervisor add-on catalog needs. The larger sizes that the brands repo
+requires need to be regenerated from the source art before opening the
+PR — tracked as a follow-up in `WORKITEMS-future.md`.

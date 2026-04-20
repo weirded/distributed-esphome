@@ -1,0 +1,139 @@
+/*
+ * #60, #64: scoped layout + theme overrides for react-day-picker inside
+ * the TimeRangePicker popover. The default ``react-day-picker/style.css``
+ * is structurally fine but ships with 44 px cell / 42 px button defaults
+ * and a light-theme palette that blow the popover out vertically and
+ * clash with our dark ``var(--surface)`` shell.
+ *
+ * CRITICAL (#64): rdp 9.x declares its sizing variables inside
+ * ``.rdp-root { --rdp-day-height: 44px; ... }`` — the same element the
+ * ``var(...)`` consumers live on. That means setting overrides on the
+ * outer ``.rdp-tight`` wrapper is defeated by rdp's own redeclaration on
+ * ``.rdp-root``, because the cascade resolves ``var(--rdp-day-height)``
+ * against the nearer declaration on the ancestor element. We have to
+ * match rdp's own selector (``.rdp-root``) so our rule wins on
+ * specificity — hence ``.rdp-tight .rdp-root`` below, not
+ * ``.rdp-tight``.
+ */
+
+.rdp-tight .rdp-root {
+  /* #72 — constrain rdp-root to its content so the absolutely-positioned
+     ``.rdp-nav`` (anchored ``right: 0`` of ``.rdp-root``) doesn't escape
+     the popover. Without this rdp-root grows to fill the flex column
+     (~460 px) while the actual calendar grid is ~225 px wide; the nav's
+     right edge then trails the column edge and on narrow popovers the
+     next-month chevron overflows the rounded border. ``fit-content``
+     shrinks the root to the grid's natural width; ``max-width: 100%``
+     guards against weird viewports where the presets column + calendar
+     can't both fit. Combined with the ``justify-center`` wrapper, the
+     calendar ends up centered in its column with the nav tight against
+     its own grid on the right. */
+  width: fit-content;
+  max-width: 100%;
+  /* Tighter day cells so the 6-row grid fits without padding the
+     popover vertically. rdp 9 distinguishes ``day-*`` (the TD) from
+     ``day_button-*`` (the interactive inner button with its own padding);
+     overriding one without the other leaves a gap because the button
+     stays at 42 px and the cell shrinks around it (or vice versa). */
+  --rdp-day-height: 2rem;
+  --rdp-day-width: 2rem;
+  --rdp-day_button-height: 1.9rem;
+  --rdp-day_button-width: 1.9rem;
+  /* Shrink the nav strip + button sizes too so the caption row reads
+     as compact rather than occupying ~45 px of vertical space. */
+  --rdp-nav-height: 1.75rem;
+  --rdp-nav_button-height: 1.5rem;
+  --rdp-nav_button-width: 1.5rem;
+  /* Keep the weekday header compact — default ``0.5rem 0`` padding is
+     loud against the 12 px text size we use elsewhere. */
+  --rdp-weekday-padding: 0.125rem 0;
+}
+
+.rdp-tight .rdp-caption_label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Nav chevrons: keep rdp's built-in absolute positioning (sibling of
+   the month caption, anchored top-right of the month), but tone the
+   buttons + add a hover background so they match our shell. */
+.rdp-tight .rdp-button_previous,
+.rdp-tight .rdp-button_next {
+  color: var(--text-muted);
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.25rem;
+}
+.rdp-tight .rdp-button_previous:hover,
+.rdp-tight .rdp-button_next:hover {
+  background-color: var(--surface2);
+  color: var(--text);
+}
+
+/* Weekday header: match our muted-uppercase convention. */
+.rdp-tight .rdp-weekday {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-weight: normal;
+  text-transform: uppercase;
+}
+
+/* Day hover tint. */
+.rdp-tight .rdp-day_button:hover:not([data-disabled]) {
+  background-color: var(--surface2);
+  border-radius: 0.25rem;
+}
+
+/* #101 — final cage for the month grid.
+   Root cause: ``.rdp-tight .rdp-root`` was capped at its parent's width
+   via ``max-width: 100%``, but the inner ``<table>`` (``.rdp-month_grid``)
+   ignored that cap and expanded to ~500 px of auto-layout content,
+   bleeding past the popover's right edge by ~66 px. The day cells' CSS
+   ``width: var(--rdp-day-width)`` is a *minimum* in auto table-layout,
+   not a fix. Force the table to the exact 7 × day-width and switch to
+   ``table-layout: fixed`` so the cells honour the cell width var
+   instead of the browser's "distribute extra space" algorithm.
+   ``border-collapse: collapse`` removes the 2 px default border-spacing
+   per cell that would otherwise re-inflate the grid. */
+/* Constrain the `.rdp-month` block so its descendant `<table>` can't
+   push past the popover. A table's own ``width`` / ``max-width`` is
+   famously stubborn in auto-layout, so we cap the *parent's* size and
+   force the table to live inside it with ``display: block`` + allow
+   horizontal auto-sizing. */
+.rdp-tight .rdp-month {
+  max-width: 14rem;
+}
+.rdp-tight .rdp-month_grid {
+  /* Root cause of the #60→#64→#72 → #101 saga: ``theme.css`` has a
+     global ``table { min-width: 500px }`` rule (for the Devices /
+     Queue / Workers tables — they'd otherwise collapse below their
+     cell content on narrow viewports). That min-width was also
+     applied to the rdp calendar table, which is why *every* width
+     override we tried resolved to 500 px in computed style. Drop the
+     floor here. */
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+}
+.rdp-tight .rdp-weekday,
+.rdp-tight .rdp-day {
+  /* Explicit per-cell width so ``table-layout: fixed`` has a first-row
+     hint to distribute columns from. Without this the browser picks
+     minimum widths (reported as 1 px in computed style under fixed
+     layout) and the day_button overflows its cell. */
+  width: var(--rdp-day-width, 2rem);
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* #64 — zero out TD padding on day cells. rdp 9 itself doesn't add any,
+   but UA/Tailwind preflight and our own wrapper chain leave a ``6px 4px
+   6px 8px`` computed padding that inflates every row to ~43 px even
+   with the button shrunk to 30 px. Explicit ``padding: 0`` brings the
+   row back down to the button's own height. */
+.rdp-tight .rdp-day,
+.rdp-tight .rdp-weeks td {
+  padding: 0;
+}

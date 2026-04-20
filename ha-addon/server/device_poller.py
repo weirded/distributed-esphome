@@ -369,6 +369,13 @@ class DevicePoller:
                     logger.info("TTL expired %d stale device(s): %s", len(expired), expired)
                     self._save_cache()
 
+            # SP.8: read the live poll interval from Settings so drawer
+            # edits take effect on the next iteration.
+            try:
+                from settings import get_settings  # noqa: PLC0415
+                self._poll_interval = get_settings().device_poll_interval
+            except Exception:
+                logger.debug("Could not refresh poll_interval from settings; keeping cached value", exc_info=True)
             await asyncio.sleep(self._poll_interval)
 
     async def _query_device(self, name: str, ip: str) -> None:

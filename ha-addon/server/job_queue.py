@@ -84,6 +84,30 @@ class Job:
     # #92: when scheduled, distinguish recurring (cron) from one-time fires so
     # the Queue tab can show which kind triggered the job. None for user-triggered.
     schedule_kind: Optional[str] = None  # "recurring" | "once" | None
+    # Bug 27: True when the enqueue came from Home Assistant's
+    # ``esphome_fleet.compile`` / similar service action (identified by
+    # the ``esphome_fleet_integration`` system-token Bearer in ha_auth).
+    # Lets the Queue tab's Triggered column distinguish HA-driven
+    # compiles from user-clicked ones.
+    ha_action: bool = False
+    # Bug #61: True when the enqueue came from the /ui/api/compile
+    # endpoint via the system-token Bearer but NOT from the HA
+    # integration (e.g. a direct ``curl`` call, a script, or a
+    # third-party tool). Both paths currently carry the same
+    # ``esphome_fleet_integration`` ha_user tag because they share the
+    # server token; we split them by User-Agent at the endpoint
+    # (HomeAssistant/* → ha_action, anything else → api_triggered).
+    # Exposed in the Queue's Triggered column with a distinct icon so
+    # operators can tell fleet automation from ad-hoc API use.
+    api_triggered: bool = False
+    # AV.7: HEAD of /config/esphome/ at enqueue time. `None` when the
+    # config dir isn't a git repo (hasn't been through AV.1 auto-init)
+    # or git_versioning is unavailable. When auto-commit is on, this is
+    # the committed state that got compiled. When auto-commit is off,
+    # it's whatever the user last committed — the "Diff since last
+    # compile" view pairs it with the current working tree to capture
+    # both committed AND uncommitted changes since the compile.
+    config_hash: Optional[str] = None
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -113,6 +137,9 @@ class Job:
             "is_followup": self.is_followup,
             "scheduled": self.scheduled,
             "schedule_kind": self.schedule_kind,
+            "ha_action": self.ha_action,
+            "api_triggered": self.api_triggered,
+            "config_hash": self.config_hash,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -148,6 +175,9 @@ class Job:
             is_followup=d.get("is_followup", False),
             scheduled=d.get("scheduled", False),
             schedule_kind=d.get("schedule_kind"),
+            ha_action=d.get("ha_action", False),
+            api_triggered=d.get("api_triggered", False),
+            config_hash=d.get("config_hash"),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -157,8 +187,17 @@ class Job:
         return (end - self.assigned_at).total_seconds()
 
 
-def _purge_firmware(job_ids: Iterable[str]) -> None:
+def _purge_firmware(jobs: Iterable["Job"]) -> None:
     """Remove .bin files for removed jobs (FD.7).
+
+    Bug #38: download-only firmware is now retained past the job's
+    queue lifetime — the user wanted those binaries to survive
+    coalescing + explicit clears and only evict on disk budget
+    pressure. This helper now filters ``download_only`` jobs out of
+    the purge set; their binaries live on disk until the
+    ``firmware_budget_enforcer`` task in ``main.py`` evicts them (or
+    the user explicitly deletes the job-history row). OTA firmware
+    retains its original eager-delete semantics.
 
     Imported lazily so unit tests that replace `DEFAULT_FIRMWARE_DIR`
     via monkeypatch see the patched value.
@@ -167,20 +206,49 @@ def _purge_firmware(job_ids: Iterable[str]) -> None:
         from firmware_storage import delete_firmware  # noqa: PLC0415
     except Exception:
         return
-    for jid in job_ids:
+    for job in jobs:
+        if getattr(job, "download_only", False) and getattr(job, "has_firmware", False):
+            # Preserve — budget enforcer will evict on disk pressure.
+            continue
         try:
-            delete_firmware(jid)
+            delete_firmware(job.id)
         except Exception:
-            logger.debug("Firmware purge for %s raised", jid, exc_info=True)
+            logger.debug("Firmware purge for %s raised", job.id, exc_info=True)
 
 
 class JobQueue:
     """Thread-safe (asyncio) job queue with JSON persistence."""
 
-    def __init__(self, queue_file: Path = QUEUE_FILE) -> None:
+    def __init__(
+        self,
+        queue_file: Path = QUEUE_FILE,
+        history: "JobHistoryDAO | None" = None,  # type: ignore[name-defined]  # noqa: F821
+    ) -> None:
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._lock = asyncio.Lock()
         self._queue_file = queue_file
+        # JH.2: history DAO — snapshots every terminal transition so the
+        # /ui/api/history endpoint and per-device drawer can surface
+        # past compiles even after the live queue has coalesced them
+        # away. Optional; unset in tests that don't exercise history.
+        self._history = history
+
+    def _record_history(self, job: Job) -> None:
+        """JH.2: snapshot *job* into the persistent history table.
+
+        Swallows any exception — history is best-effort and must never
+        prevent a legitimate queue state transition. Logged at DEBUG to
+        avoid noise on the fast path.
+        """
+        if self._history is None:
+            return
+        try:
+            self._history.record_terminal(job)
+        except Exception:
+            logger.debug(
+                "job_history.record_terminal failed for %s (%s); continuing",
+                job.id, job.target, exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Persistence
@@ -262,10 +330,28 @@ class JobQueue:
             logger.warning("Skipped %d unparseable job entries on startup", skipped)
         logger.info("Loaded %d jobs from %s (persisted across restarts)", len(self._jobs), self._queue_file)
         # FD.7: sweep orphan firmware binaries whose job no longer
-        # exists (add-on crashed mid-cleanup, etc.).
+        # exists (add-on crashed mid-cleanup, etc.). Bug #38: the
+        # "active" set is expanded to include download-only history
+        # rows — their binaries survive queue coalescing/clears until
+        # the firmware_budget_enforcer evicts them.
         try:
             from firmware_storage import reconcile_orphans  # noqa: PLC0415
-            reconcile_orphans(self._jobs.keys())
+            protected: set[str] = set()
+            if self._history is not None:
+                try:
+                    rows = self._history.query(state="success", limit=500, offset=0)
+                    for r in rows:
+                        if r.get("download_only") and r.get("has_firmware"):
+                            protected.add(str(r["id"]))
+                except Exception:
+                    logger.debug(
+                        "Couldn't pull protected download-only IDs from history",
+                        exc_info=True,
+                    )
+            reconcile_orphans(
+                self._jobs.keys(),
+                protected_job_ids=protected,
+            )
         except Exception:
             logger.debug("Firmware reconciliation skipped", exc_info=True)
 
@@ -283,6 +369,7 @@ class JobQueue:
         download_only: bool = False,
         ota_address: Optional[str] = None,
         pinned_client_id: Optional[str] = None,
+        config_hash: Optional[str] = None,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -358,13 +445,22 @@ class JobQueue:
                     JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED
                 )
             ]
+            # JH.2: defensively record each coalesced job before evicting.
+            # Upsert in the DAO makes this idempotent: if the terminal
+            # transition path already recorded them, this is a no-op.
+            # Guards against a pre-1.6-history queue.json being loaded on
+            # a server that *does* want the rows preserved.
+            stale_jobs = [self._jobs[jid] for jid in stale]
+            for j in stale_jobs:
+                self._record_history(j)
             for jid in stale:
                 del self._jobs[jid]
-            if stale:
-                logger.debug("Removed %d stale job(s) for target %s", len(stale), target)
+            if stale_jobs:
+                logger.debug("Removed %d stale job(s) for target %s", len(stale_jobs), target)
                 # FD.7: purge any firmware binaries the stale jobs owned
                 # so per-target coalescing doesn't leak disk storage.
-                _purge_firmware(stale)
+                # Bug #38: download-only firmware is now retained.
+                _purge_firmware(stale_jobs)
 
             is_followup = active is not None and active.state == JobState.WORKING and not validate_only
             job = Job(
@@ -379,6 +475,7 @@ class JobQueue:
                 ota_address=ota_address,
                 pinned_client_id=pinned_client_id,
                 is_followup=is_followup,
+                config_hash=config_hash,
             )
             self._jobs[job.id] = job
             self._persist()
@@ -479,13 +576,32 @@ class JobQueue:
                     "Job %s (%s on %s) OTA result: %s",
                     job_id, job.target, job.assigned_hostname or "?", ota_result,
                 )
+                # JH.2: upsert history row so the new ota_result lands.
+                # The initial compile-result call already wrote state
+                # and the null ota_result; this call replaces it.
+                self._record_history(job)
                 return True
 
             if job.state != JobState.WORKING:
-                logger.warning(
-                    "submit_result: job %s (%s) in unexpected state %s",
-                    job_id, job.target, job.state,
-                )
+                # Bug #56: CANCELLED is an expected race here — the user
+                # (or smoke suite) cancels a job while a worker's still
+                # compiling, the worker runs to completion anyway, and
+                # submits its result through this code path. Cancel-
+                # during-compile is a documented affordance, not a bug,
+                # so log at INFO with a clearer message and leave WARNING
+                # for the genuinely-weird cases (duplicate submits, race
+                # with retry, etc.) that still deserve operator attention.
+                if job.state == JobState.CANCELLED:
+                    logger.info(
+                        "discarding submit_result for cancelled job %s (%s); "
+                        "worker %s finished after cancel",
+                        job_id, job.target, job.assigned_client_id or "?",
+                    )
+                else:
+                    logger.warning(
+                        "submit_result: job %s (%s) in unexpected state %s",
+                        job_id, job.target, job.state,
+                    )
                 return False
             job.state = JobState.SUCCESS if status == "success" else JobState.FAILED
             # Use the streamed log if the worker didn't send a final log
@@ -496,6 +612,11 @@ class JobQueue:
                 job.ota_result = ota_result
             job.finished_at = _utcnow()
             self._persist()
+            # JH.2: snapshot this terminal transition. Inside the async
+            # lock so the history row carries the exact in-memory state
+            # the persist just wrote. The OTA-patch branch above already
+            # returned, so only the real compile result lands here.
+            self._record_history(job)
             # #94: include target + worker hostname so log readers can see
             # which device on which worker just finished without joining IDs.
             logger.info(
@@ -514,6 +635,7 @@ class JobQueue:
         """
         async with self._lock:
             cancelled = 0
+            just_cancelled: list[Job] = []
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
                 if job is None:
@@ -524,6 +646,7 @@ class JobQueue:
                     job.finished_at = _utcnow()
                     job.log = (job.log or "") + "\nCancelled by user."
                     cancelled += 1
+                    just_cancelled.append(job)
                     logger.info(
                         "Cancelled job %s (%s) from state %s%s",
                         job_id,
@@ -535,6 +658,9 @@ class JobQueue:
                     )
             if cancelled:
                 self._persist()
+                # JH.2: record each cancellation as a terminal row.
+                for job in just_cancelled:
+                    self._record_history(job)
             return cancelled
 
     async def check_timeouts(
@@ -600,6 +726,10 @@ class JobQueue:
                     job.finished_at = now
                     reason = "timeouts" if timed_out else "offline-worker requeues"
                     job.log = (job.log or "") + f"\nPermanently failed after {MAX_RETRIES} {reason}."
+                    # JH.2: record the permanent failure. Non-permanent
+                    # retries (the else branch) go back to PENDING and
+                    # aren't terminal yet — don't record those.
+                    self._record_history(job)
                 else:
                     # CR.4: dropped the `job.state = JobState.TIMED_OUT`
                     # write that used to sit here — the very next line
@@ -624,6 +754,7 @@ class JobQueue:
         run_id: str,
         timeout_seconds: int,
         target_versions: dict[str, str] | None = None,
+        config_hash: Optional[str] = None,
     ) -> list["Job"]:
         """Re-enqueue failed/timed_out/cancelled/success jobs as new PENDING jobs.
 
@@ -656,6 +787,11 @@ class JobQueue:
                         JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED
                     )
                 ]
+                # JH.2: defensively snapshot retried-away jobs. Idempotent
+                # via upsert — if they were already recorded during their
+                # terminal transition, nothing changes.
+                for jid in stale:
+                    self._record_history(self._jobs[jid])
                 for jid in stale:
                     del self._jobs[jid]
                 version_for_target = (target_versions or {}).get(target, esphome_version)
@@ -668,6 +804,7 @@ class JobQueue:
                     timeout_seconds=timeout_seconds,
                     ota_only=is_ota_failed,
                     pinned_client_id=pin_to,
+                    config_hash=config_hash,
                 )
                 self._jobs[new_job.id] = new_job
                 new_jobs.append(new_job)
@@ -765,16 +902,17 @@ class JobQueue:
         """
         terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         async with self._lock:
-            removed_ids: list[str] = []
+            removed_jobs: list[Job] = []
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
                 if job and job.state in terminal:
                     del self._jobs[job_id]
-                    removed_ids.append(job_id)
-            if removed_ids:
+                    removed_jobs.append(job)
+            if removed_jobs:
                 self._persist()
-        _purge_firmware(removed_ids)
-        return len(removed_ids)
+        # Bug #38: _purge_firmware now takes Jobs and preserves download_only firmware.
+        _purge_firmware(removed_jobs)
+        return len(removed_jobs)
 
     async def clear(self, states: list[str], require_ota_success: bool = False) -> int:
         """Remove terminal jobs whose state is in *states*. Returns count removed.
@@ -787,17 +925,19 @@ class JobQueue:
         terminal = {JobState.SUCCESS, JobState.FAILED, JobState.TIMED_OUT, JobState.CANCELLED}
         target_states = {JobState(s) for s in states if JobState(s) in terminal}
         async with self._lock:
-            to_remove = []
+            to_remove: list[Job] = []
             for job_id, job in self._jobs.items():
                 if job.state not in target_states:
                     continue
                 if require_ota_success and job.ota_result == "failed":
                     continue
-                to_remove.append(job_id)
-            for job_id in to_remove:
-                del self._jobs[job_id]
+                to_remove.append(job)
+            for job in to_remove:
+                del self._jobs[job.id]
             if to_remove:
                 self._persist()
+        # Bug #38: _purge_firmware filters out download_only — those binaries
+        # survive user Clear and only evict via the firmware budget task.
         _purge_firmware(to_remove)
         return len(to_remove)
 

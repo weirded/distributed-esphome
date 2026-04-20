@@ -154,6 +154,235 @@ async def get_esphome_schema(request: web.Request) -> web.Response:
     return web.json_response({"components": _esphome_components_cache})
 
 
+# ---------------------------------------------------------------------------
+# AV.3 / AV.4 — file history + diff
+# ---------------------------------------------------------------------------
+
+@routes.get("/ui/api/files/{filename}/history")
+async def get_file_history(request: web.Request) -> web.Response:
+    """AV.3: per-file git history (newest first), paginated.
+
+    Query params:
+      - ``limit`` (default 50, max 500) — page size
+      - ``offset`` (default 0) — how many commits to skip
+
+    Returns ``[{hash, short_hash, date, author_name, author_email,
+    message, lines_added, lines_removed}]``. Empty list if the file has
+    no commit history yet (and 200 either way — callers render a
+    friendly "no history yet" rather than treating empty as an error).
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None:
+        return json_error("Invalid filename", 400)
+
+    try:
+        limit = min(max(int(request.rel_url.query.get("limit", "50")), 1), 500)
+    except ValueError:
+        return json_error("limit must be an integer", 400)
+    try:
+        offset = max(int(request.rel_url.query.get("offset", "0")), 0)
+    except ValueError:
+        return json_error("offset must be an integer", 400)
+
+    from git_versioning import file_history  # noqa: PLC0415
+    entries = file_history(Path(cfg.config_dir), filename, limit=limit, offset=offset)
+    return web.json_response(entries)
+
+
+@routes.get("/ui/api/files/{filename}/content-at")
+async def get_file_content_at(request: web.Request) -> web.Response:
+    """Bug #10: return the content of a file at a specific commit (or
+    working tree if no hash given). Feeds the side-by-side diff view.
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None:
+        return json_error("Invalid filename", 400)
+
+    hash_arg = request.rel_url.query.get("hash", "").strip() or None
+
+    from git_versioning import file_content_at  # noqa: PLC0415
+    content = file_content_at(Path(cfg.config_dir), filename, hash_arg)
+    if content is None:
+        return json_error("Could not read file at that version", 400)
+    return web.json_response({"content": content})
+
+
+@routes.get("/ui/api/files/{filename}/status")
+async def get_file_status(request: web.Request) -> web.Response:
+    """AV.6: per-file dirtiness + HEAD info for the history-panel banner.
+
+    Returns ``{has_uncommitted_changes, head_hash, head_short_hash}``.
+    Used by the panel to show the "You have uncommitted changes" banner
+    without chaining a separate status call.
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None:
+        return json_error("Invalid filename", 400)
+
+    from git_versioning import file_status  # noqa: PLC0415
+    return web.json_response(file_status(Path(cfg.config_dir), filename))
+
+
+@routes.post("/ui/api/files/{filename}/rollback")
+async def post_file_rollback(request: web.Request) -> web.Response:
+    """AV.5: restore a file to a historical commit's content.
+
+    Body: ``{hash: "<sha>"}``. Returns ``{content, committed, hash,
+    short_hash}`` — ``content`` is the restored file text, ``committed``
+    tells the UI whether a new revert commit was created (happens when
+    ``settings.auto_commit_on_save`` is on).
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None:
+        return json_error("Invalid filename", 400)
+    if not path.exists():
+        return json_error("Target not found", 404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("Request body must be JSON", 400)
+
+    target_hash = (body.get("hash") or "").strip() if isinstance(body, dict) else ""
+    if not target_hash:
+        return json_error("hash is required", 400)
+
+    from git_versioning import rollback_file  # noqa: PLC0415
+    result = rollback_file(Path(cfg.config_dir), filename, target_hash)
+    if not result.get("content"):
+        return json_error("Rollback failed (invalid hash or git error)", 400)
+
+    # Invalidate the scanner config cache so a subsequent /content read
+    # sees the rolled-back file.
+    from scanner import _config_cache  # noqa: PLC0415
+    _config_cache.pop(filename, None)
+
+    logger.info(
+        "Rolled back %s to %s%s%s",
+        filename,
+        target_hash[:7],
+        " (committed)" if result.get("committed") else " (working tree only)",
+        _who(request),
+    )
+    _broadcast_ws("targets_changed")
+    return web.json_response(result)
+
+
+@routes.post("/ui/api/files/{filename}/commit")
+async def post_file_commit(request: web.Request) -> web.Response:
+    """AV.11: explicitly commit any pending changes to a single file.
+
+    Body: ``{message?: str}``. Returns ``{committed, hash, short_hash,
+    message}``. ``committed: false`` with ``null`` hash means there was
+    nothing to commit — not an error.
+
+    Always runs regardless of ``settings.auto_commit_on_save`` — this
+    is the manual-commit escape valve.
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None:
+        return json_error("Invalid filename", 400)
+
+    body: dict = {}
+    if request.can_read_body:
+        try:
+            raw = await request.json()
+            if isinstance(raw, dict):
+                body = raw
+        except Exception:
+            return json_error("Request body must be JSON", 400)
+
+    message = body.get("message")
+    if message is not None and not isinstance(message, str):
+        return json_error("message must be a string", 400)
+
+    from git_versioning import commit_file_now  # noqa: PLC0415
+    result = commit_file_now(Path(cfg.config_dir), filename, message=message)
+    logger.info(
+        "Manual commit for %s: %s%s",
+        filename,
+        result.get("short_hash") or "(no-op)",
+        _who(request),
+    )
+    return web.json_response(result)
+
+
+@routes.get("/ui/api/files/{filename}/diff")
+async def get_file_diff(request: web.Request) -> web.Response:
+    """AV.4: unified diff for a file between two commits (or against HEAD).
+
+    Query params:
+      - ``from`` — commit hash (optional; omit to diff working tree vs HEAD)
+      - ``to`` — commit hash (optional; omit to diff *from* against HEAD)
+
+    Returns ``{"diff": "<unified diff text>"}``. Empty string when the
+    two versions are identical or the file has no history.
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    path = safe_resolve(Path(cfg.config_dir), filename)
+    if path is None:
+        return json_error("Invalid filename", 400)
+
+    from_hash = request.rel_url.query.get("from", "").strip() or None
+    to_hash = request.rel_url.query.get("to", "").strip() or None
+
+    from git_versioning import file_diff  # noqa: PLC0415
+    diff = file_diff(Path(cfg.config_dir), filename, from_hash=from_hash, to_hash=to_hash)
+    return web.json_response({"diff": diff})
+
+
+@routes.get("/ui/api/settings")
+async def get_settings_handler(request: web.Request) -> web.Response:
+    """SP.3: return the current in-app Settings blob.
+
+    Editable via :func:`patch_settings_handler`. Distinct from the
+    Supervisor-owned ``options.json`` (see ``app_config.py``).
+    """
+    from settings import settings_as_dict  # noqa: PLC0415
+    return web.json_response(settings_as_dict())
+
+
+@routes.patch("/ui/api/settings")
+async def patch_settings_handler(request: web.Request) -> web.Response:
+    """SP.3: partial update of in-app Settings.
+
+    Body is a JSON object ``{key: value, ...}`` — any subset of the
+    known fields. Unknown keys or out-of-range values return 400 with
+    the offending field name so the UI can surface the error.
+    """
+    from settings import SettingsValidationError, settings_as_dict, update_settings  # noqa: PLC0415
+
+    try:
+        partial = await request.json()
+    except Exception:
+        return json_error("Request body must be JSON", status=400)
+
+    if not isinstance(partial, dict):
+        return json_error("Request body must be a JSON object", status=400)
+
+    try:
+        await update_settings(partial)
+    except SettingsValidationError as exc:
+        return web.json_response(
+            {"error": str(exc), "field": exc.field},
+            status=400,
+        )
+
+    logger.info("Settings updated%s: %s", _who(request), ", ".join(sorted(partial.keys())))
+    return web.json_response(settings_as_dict())
+
+
 @routes.get("/ui/api/server-info")
 async def get_server_info(request: web.Request) -> web.Response:
     """Return server configuration needed by the UI (token, port, versions)."""
@@ -199,8 +428,9 @@ async def get_server_info(request: web.Request) -> web.Response:
         esphome_install_status = "failed"
     else:
         esphome_install_status = "installing"
+    from settings import get_settings as _gs  # noqa: PLC0415
     return web.json_response({
-        "token": cfg.token,
+        "token": _gs().server_token,
         "port": cfg.port,
         "server_ip": server_ip,
         "server_addresses": addrs,
@@ -327,6 +557,62 @@ async def get_targets(request: web.Request) -> web.Response:
 
     targets = scan_configs(cfg.config_dir)
 
+    # Bug #16: per-target uncommitted-changes flag. One bulk
+    # `git status --porcelain` for the whole repo, then O(1) lookup
+    # per target in the loop below. Empty set when the dir isn't a
+    # git repo — the flag defaults to False in that case.
+    from git_versioning import changed_paths_between, dirty_paths, get_head  # noqa: PLC0415
+    dirty_set = dirty_paths(Path(cfg.config_dir))
+
+    # Bug #32: per-target "did the YAML change since we last flashed it?"
+    # flag, used by the UI to recolor the Upgrade button. Built in three
+    # steps so we stay O(targets + unique_hashes) git invocations:
+    #   1. Walk the queue's finished jobs, newest finish first, to pick
+    #      each target's most recent successful OTA config_hash.
+    #   2. For every unique (last_flashed_hash != HEAD) combo, run one
+    #      `git diff --name-only <hash> HEAD` and cache the result set.
+    #   3. A target is "drifted" if its YAML appears in that hash's
+    #      changed-files set. Same hash as HEAD → no drift. No flash
+    #      on record, or no git repo → null (UI falls back to the older
+    #      mtime-based ``config_modified`` signal).
+    head_hash = get_head(Path(cfg.config_dir))
+    queue = request.app.get("queue")
+    last_flashed_by_target: dict[str, str] = {}
+    if queue is not None:
+        # Sort oldest first so newer jobs overwrite older entries in the dict.
+        try:
+            jobs_for_flash = sorted(
+                queue.get_all(),
+                key=lambda j: (j.finished_at.timestamp() if j.finished_at else 0.0),
+            )
+        except Exception:
+            jobs_for_flash = []
+        for job in jobs_for_flash:
+            if (
+                getattr(job, "config_hash", None)
+                and getattr(job, "ota_result", None) == "success"
+                and not getattr(job, "validate_only", False)
+                and not getattr(job, "download_only", False)
+            ):
+                last_flashed_by_target[job.target] = job.config_hash
+    drift_cache: dict[str, set[str]] = {}
+    if head_hash:
+        for h in set(last_flashed_by_target.values()):
+            if h and h != head_hash:
+                drift_cache[h] = changed_paths_between(Path(cfg.config_dir), h, head_hash)
+
+    # JH.6: per-target "last compiled" rollup. One SQL query that groups
+    # by target so the Devices tab's optional "Last compiled" column can
+    # show the most recent outcome without an N+1 call to /ui/api/history.
+    # None when the DAO is unavailable or the target has no history.
+    last_compile_by_target: dict[str, dict[str, object]] = {}
+    history_dao = request.app.get("job_history")
+    if history_dao is not None:
+        try:
+            last_compile_by_target = history_dao.last_per_target()
+        except Exception:
+            logger.debug("job_history.last_per_target() raised; continuing")
+
     # Build device lookup by compile_target filename
     devices_by_target: dict[str, Device] = {}
     if device_poller:
@@ -427,6 +713,37 @@ async def get_targets(request: web.Request) -> web.Response:
             # legacy schedules; the scheduler interprets those as UTC.
             "schedule_tz": meta.get("schedule_tz"),
             "tags": meta.get("tags"),
+            # Bug #16: dirty-state flag for the Devices-tab indicator.
+            # True when the target's YAML has uncommitted changes
+            # relative to its latest git commit.
+            "has_uncommitted_changes": target in dirty_set,
+            # Bug #32: per-target drift since last OTA. The hash is the
+            # git HEAD at enqueue time of the most recent successful
+            # flash; drift is True when that file has changed between
+            # that hash and current HEAD. Null when either side is
+            # unknown (no git repo, no past flash, or the target is
+            # uncommitted) — UI falls back to `config_modified`.
+            "last_flashed_config_hash": last_flashed_by_target.get(target),
+            "config_drifted_since_flash": (
+                None if not head_hash or target not in last_flashed_by_target
+                else False if last_flashed_by_target[target] == head_hash
+                else target in drift_cache.get(last_flashed_by_target[target], set())
+            ),
+            # JH.6: tuple of (finished_at, state) for the Devices tab's
+            # optional "Last compiled" column. Shape chosen so the UI
+            # can render relative time + a success/failure chip without
+            # a second API call.
+            "last_compile": (
+                {
+                    "at": last_compile_by_target[target]["finished_at"],
+                    "state": last_compile_by_target[target]["state"],
+                    "ota_result": last_compile_by_target[target].get("ota_result"),
+                    "validate_only": bool(last_compile_by_target[target].get("validate_only")),
+                    "download_only": bool(last_compile_by_target[target].get("download_only")),
+                }
+                if target in last_compile_by_target
+                else None
+            ),
         }
         result.append(entry)
 
@@ -460,6 +777,84 @@ async def get_queue(request: web.Request) -> web.Response:
             d["firmware_variants"] = []
         jobs.append(d)
     return web.json_response(jobs)
+
+
+@routes.get("/ui/api/history")
+async def get_history(request: web.Request) -> web.Response:
+    """JH.4: list persistent compile history rows.
+
+    Query params (all optional):
+      ``target``    — filter to one YAML filename
+      ``state``     — one of success / failed / timed_out / cancelled
+      ``since``     — epoch seconds; rows finished before this are excluded
+      ``until``     — epoch seconds; rows finished after this are excluded (bug #49)
+      ``limit``     — page size, clamped to [1, 500] (default 50)
+      ``offset``    — for pagination
+      ``sort``      — column to sort by (bug #53); see job_history.JobHistoryDAO._SORT_COLUMNS
+      ``desc``      — ``"1"`` / ``"true"`` for descending (default); anything else ascending
+
+    The live Queue tab keeps reading from /ui/api/queue — this endpoint
+    is the append-only counterpart that survives coalescing + clears.
+    """
+    history = request.app.get("job_history")
+    if history is None:
+        return web.json_response([])
+    q = request.rel_url.query
+    target = q.get("target") or None
+    state = q.get("state") or None
+
+    def _int(key: str) -> int | None:
+        raw = q.get(key)
+        if raw is None or raw == "":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    since = _int("since")
+    until = _int("until")
+    limit = _int("limit") or 50
+    offset = _int("offset") or 0
+
+    sort_by = q.get("sort", "finished_at")
+    desc_raw = (q.get("desc") or "1").lower()
+    sort_desc = desc_raw in ("1", "true", "yes")
+
+    rows = history.query(
+        target=target, state=state, since=since, until=until,
+        limit=limit, offset=offset,
+        sort_by=sort_by, sort_desc=sort_desc,
+    )
+    return web.json_response(rows)
+
+
+@routes.get("/ui/api/history/stats")
+async def get_history_stats(request: web.Request) -> web.Response:
+    """JH.4: return a compile-history rollup.
+
+    Query params:
+      ``target``       — filter to one YAML filename (optional)
+      ``window_days``  — rolling window in days (default 30, max 3650)
+
+    Response keys: total / success / failed / cancelled / timed_out /
+    avg_duration_seconds / p95_duration_seconds / last_success_at /
+    last_failure_at / window_days.
+    """
+    history = request.app.get("job_history")
+    if history is None:
+        return web.json_response({
+            "total": 0, "success": 0, "failed": 0, "cancelled": 0, "timed_out": 0,
+            "avg_duration_seconds": None, "p95_duration_seconds": None,
+            "last_success_at": None, "last_failure_at": None, "window_days": 30,
+        })
+    q = request.rel_url.query
+    target = q.get("target") or None
+    try:
+        window_days = int(q.get("window_days", "30"))
+    except ValueError:
+        window_days = 30
+    return web.json_response(history.stats(target=target, window_days=window_days))
 
 
 @routes.get("/ui/api/jobs/{id}/log")
@@ -773,12 +1168,13 @@ async def _get_workers_response(request: web.Request) -> web.Response:
     """Return list of registered build workers with online status."""
     registry = request.app["registry"]
     queue = request.app["queue"]
-    cfg = _cfg(request)
+    from settings import get_settings as _gs  # noqa: PLC0415
+    threshold = _gs().worker_offline_threshold
 
     result = []
     for worker in registry.get_all():
         d = worker.to_dict()
-        d["online"] = registry.is_online(worker.client_id, cfg.worker_offline_threshold)
+        d["online"] = registry.is_online(worker.client_id, threshold)
         if d.get("current_job_id"):
             job = queue.get(d["current_job_id"])
             if job:
@@ -986,6 +1382,25 @@ async def validate_config(request: web.Request) -> web.Response:
     if config_path is None or not config_path.exists():
         return json_error("Target file not found", 404)
 
+    # #103: ``secrets.yaml`` is a flat key/value dict consumed by
+    # ``!secret`` references in other YAMLs — it isn't itself an ESPHome
+    # device config, and ``esphome config secrets.yaml`` fails with a
+    # schema error because the top level is missing ``esphome:`` /
+    # ``esp32:`` etc. The ESPHome Dashboard's own editor treats
+    # ``secrets.yaml`` the same way (no "Validate" action). Mirror that:
+    # return success with an explanatory note so the UI's Validate
+    # button doesn't light up red on an intentional-shape file.
+    if Path(target).name == "secrets.yaml":
+        return web.json_response({
+            "success": True,
+            "output": (
+                "secrets.yaml holds !secret values — ESPHome's config "
+                "validator doesn't apply to it (no device schema). "
+                "Skipped.\n"
+            ),
+            "skipped": True,
+        })
+
     # #84: use the correct ESPHome version for validation. If the device is
     # pinned, install that version via the version manager and validate with
     # its binary — not the server's default. This ensures pinned devices
@@ -1115,6 +1530,8 @@ async def pin_target_version(request: web.Request) -> web.Response:
     meta["pin_version"] = version
     write_device_meta(cfg.config_dir, filename, meta)
     logger.info("Pinned %s to version %s%s", filename, version, _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "pin")
     return web.json_response({"ok": True, "pinned_version": version})
 
 
@@ -1131,6 +1548,8 @@ async def unpin_target_version(request: web.Request) -> web.Response:
     meta.pop("pin_version", None)
     write_device_meta(cfg.config_dir, filename, meta)
     logger.info("Unpinned %s%s", filename, _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "unpin")
     return web.json_response({"ok": True})
 
 @routes.post("/ui/api/targets/{filename}/meta")
@@ -1161,6 +1580,8 @@ async def update_target_meta(request: web.Request) -> web.Response:
             meta[key] = value
     write_device_meta(cfg.config_dir, filename, meta)
     logger.info("Updated metadata for %s: %s%s", filename, list(body.keys()), _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "meta")
     return web.json_response({"ok": True})
 
 
@@ -1221,6 +1642,8 @@ async def set_target_schedule(request: web.Request) -> web.Response:
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
     logger.info("Schedule set for %s: %s (tz=%s)%s", filename, cron_expr, tz or "UTC", _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "schedule")
     return web.json_response({
         "ok": True,
         "schedule": cron_expr,
@@ -1255,6 +1678,8 @@ async def delete_target_schedule(request: web.Request) -> web.Response:
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
     logger.info("Schedule removed for %s%s", filename, _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "unschedule")
     return web.json_response({"ok": True})
 
 
@@ -1275,6 +1700,8 @@ async def toggle_target_schedule(request: web.Request) -> web.Response:
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
     logger.info("Schedule toggled for %s: enabled=%s%s", filename, meta["schedule_enabled"], _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "schedule toggle")
     return web.json_response({"ok": True, "schedule_enabled": meta["schedule_enabled"]})
 
 
@@ -1321,6 +1748,8 @@ async def set_target_schedule_once(request: web.Request) -> web.Response:
     import scheduler as _sched  # noqa: PLC0415
     _sched.sync_target(filename)
     logger.info("One-time schedule set for %s at %s%s", filename, dt_str, _who(request))
+    from git_versioning import commit_file  # noqa: PLC0415
+    await commit_file(Path(cfg.config_dir), filename, "schedule once")
     return web.json_response({"ok": True, "schedule_once": dt_str})
 
 
@@ -1411,16 +1840,38 @@ async def start_compile(request: web.Request) -> web.Response:
             if pinned:
                 effective_version = pinned
 
+        from settings import get_settings as _gs  # noqa: PLC0415
+        from git_versioning import get_head as _get_head  # noqa: PLC0415
         job = await queue.enqueue(
             target=target,
             esphome_version=effective_version,
             run_id=run_id,
-            timeout_seconds=cfg.job_timeout,
+            timeout_seconds=_gs().job_timeout,
             download_only=download_only,
             ota_address=ota_addresses.get(target),
             pinned_client_id=pinned_client_id,
+            config_hash=_get_head(Path(cfg.config_dir)),
         )
         if job is not None:
+            # Bug 27: flag the job as triggered by a Home Assistant
+            # service action when the caller authenticated with our
+            # system-token Bearer (see ha_auth.py Path 2 —
+            # ``ha_user.name == "esphome_fleet_integration"``).
+            #
+            # Bug #61: system-token bearer splits into *two* sources —
+            # the HA integration's coordinator (HomeAssistant/* UA) vs
+            # any other tool the user aimed at /ui/api/compile with the
+            # same token (curl, scripts, Postman, etc.). Use User-Agent
+            # to split: HomeAssistant/* → ha_action, anything else →
+            # api_triggered. Both flags are mutually exclusive by
+            # construction.
+            ha_user = request.get("ha_user") or {}
+            if ha_user.get("name") == "esphome_fleet_integration":
+                user_agent = request.headers.get("User-Agent", "")
+                if user_agent.startswith("HomeAssistant/"):
+                    job.ha_action = True
+                else:
+                    job.api_triggered = True
             enqueued += 1
 
     logger.info(
@@ -1471,6 +1922,15 @@ async def save_target_content(request: web.Request) -> web.Response:
     except Exception:
         return json_error("Invalid JSON")
     content = body.get("content", "")
+    # Bug #24: optional user-entered commit message. Passed through to
+    # commit_file() which uses it instead of the auto-generated
+    # "save: <file>" subject when present. Ignored when auto-commit is
+    # off — the editor's "Save and Commit" button takes the separate
+    # /files/{f}/commit path for that case.
+    raw_msg = body.get("commit_message")
+    commit_message = raw_msg.strip() if isinstance(raw_msg, str) and raw_msg.strip() else None
+
+    from git_versioning import commit_file  # noqa: PLC0415
 
     is_staged = filename.startswith(_PENDING_PREFIX)
     if is_staged:
@@ -1486,6 +1946,7 @@ async def save_target_content(request: web.Request) -> web.Response:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
         logger.info("Saved staged %s → %s (%d bytes)", filename, final_name, len(content))
+        await commit_file(Path(config_dir), final_name, "create", commit_message)
         return web.json_response({"ok": True, "renamed_to": final_name})
 
     try:
@@ -1496,6 +1957,7 @@ async def save_target_content(request: web.Request) -> web.Response:
     from scanner import _config_cache  # noqa: PLC0415
     _config_cache.pop(filename, None)
     logger.info("Saved %s (%d bytes)%s", filename, len(content), _who(request))
+    await commit_file(Path(config_dir), filename, "save", commit_message)
     _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
@@ -1600,10 +2062,16 @@ async def delete_target(request: web.Request) -> web.Response:
 
     try:
         if archive:
-            archive_dir = config_dir / ".archive"
-            archive_dir.mkdir(exist_ok=True)
-            dest = archive_dir / filename
-            path.rename(dest)
+            # Bug #63: archive-with-git-mv preserves rename history across
+            # the soft-delete boundary. When the file is tracked, a single
+            # commit shows as ``R original → .archive/original``; `git log
+            # --follow .archive/original` threads back through the device's
+            # entire pre-archive history. Falls back to a raw rename if the
+            # file was never committed.
+            from git_versioning import archive_and_commit  # noqa: PLC0415
+            ok = await archive_and_commit(config_dir, filename)
+            if not ok:
+                return web.json_response({"error": "archive failed"}, status=500)
         else:
             path.unlink()
     except Exception as exc:
@@ -1620,6 +2088,12 @@ async def delete_target(request: web.Request) -> web.Response:
     _config_cache.pop(filename, None)
 
     logger.info("Deleted config %s (archive=%s)%s", filename, archive, _who(request))
+    if not archive:
+        # Permanent-delete path still uses commit_file to record the
+        # raw deletion — archive_and_commit above already committed
+        # the rename case.
+        from git_versioning import commit_file  # noqa: PLC0415
+        await commit_file(config_dir, filename, "delete")
     _broadcast_ws("targets_changed")
     return web.json_response({"ok": True})
 
@@ -1660,10 +2134,14 @@ async def restore_archive(request: web.Request) -> web.Response:
     if dest.exists():
         return web.json_response({"error": f"{filename} already exists in config directory"}, status=409)
 
-    try:
-        src.rename(dest)
-    except Exception as exc:
-        return web.json_response({"error": str(exc)}, status=500)
+    # Bug #63: git-mv restore threads the file's history across the
+    # archive boundary. Falls back to raw rename when the archived
+    # file isn't git-tracked (pre-#63 archive that predates the move
+    # to un-ignored .archive/).
+    from git_versioning import restore_and_commit  # noqa: PLC0415
+    ok = await restore_and_commit(config_dir, filename)
+    if not ok:
+        return web.json_response({"error": "restore failed"}, status=500)
 
     logger.info("Restored config %s from archive", filename)
     return web.json_response({"ok": True})
@@ -1671,10 +2149,18 @@ async def restore_archive(request: web.Request) -> web.Response:
 
 @routes.delete("/ui/api/archive/{filename}")
 async def delete_archived(request: web.Request) -> web.Response:
-    """Permanently delete an archived config file."""
+    """Permanently delete an archived config file.
+
+    #94: routes through :func:`git_versioning.delete_archived_and_commit`
+    so the ``git rm`` lands in history when ``.archive/`` is tracked.
+    Pre-#94 this was a bare ``os.unlink`` that left a dangling
+    ``deleted:`` entry in the working tree until the next auto-commit
+    ran for some unrelated write.
+    """
     filename = request.match_info["filename"]
     cfg = _cfg(request)
-    archive_dir = Path(cfg.config_dir) / ".archive"
+    config_dir = Path(cfg.config_dir)
+    archive_dir = config_dir / ".archive"
     path = safe_resolve(archive_dir, filename)
     if path is None:
         return json_error("Invalid filename")
@@ -1682,12 +2168,15 @@ async def delete_archived(request: web.Request) -> web.Response:
     if not path.exists():
         return json_error("File not found", 404)
 
+    from git_versioning import delete_archived_and_commit  # noqa: PLC0415
     try:
-        path.unlink()
+        ok = await delete_archived_and_commit(config_dir, filename)
     except Exception as exc:
         return web.json_response({"error": str(exc)}, status=500)
+    if not ok:
+        return web.json_response({"error": "delete failed"}, status=500)
 
-    logger.info("Permanently deleted archived config %s", filename)
+    logger.info("Deleted archived config %s", filename)
     return web.json_response({"ok": True})
 
 
@@ -1777,16 +2266,25 @@ async def rename_target(request: web.Request) -> web.Response:
 
     queue = request.app["queue"]
     server_version = get_esphome_version()
-    cfg = _cfg(request)
+    from settings import get_settings as _gs  # noqa: PLC0415
+    from git_versioning import get_head as _get_head  # noqa: PLC0415
     await queue.enqueue(
         target=new_filename,
         esphome_version=server_version,
         run_id=str(uuid.uuid4()),
-        timeout_seconds=cfg.job_timeout,
+        timeout_seconds=_gs().job_timeout,
         ota_address=old_device_addr,
+        config_hash=_get_head(config_dir),
     )
     logger.info("Enqueued compile+OTA for renamed device %s", new_filename)
 
+    # AV.2: commit both paths so the rename shows up as a
+    # delete-of-old + add-of-new. `git add --all -- <path>` picks up
+    # the missing-file state for the old path.
+    from git_versioning import commit_file  # noqa: PLC0415
+    if new_filename != filename:
+        await commit_file(config_dir, filename, "rename (old)")
+    await commit_file(config_dir, new_filename, "rename")
     return web.json_response({"ok": True, "new_filename": new_filename})
 
 
@@ -2017,9 +2515,12 @@ async def retry_jobs(request: web.Request) -> web.Response:
             pinned = meta.get("pin_version")
             target_versions[job.target] = pinned if pinned else server_version
 
+    from settings import get_settings as _gs_retry  # noqa: PLC0415
+    from git_versioning import get_head as _get_head_retry  # noqa: PLC0415
     new_jobs = await queue.retry(
-        job_ids, server_version, str(uuid.uuid4()), cfg.job_timeout,
+        job_ids, server_version, str(uuid.uuid4()), _gs_retry().job_timeout,
         target_versions=target_versions,
+        config_hash=_get_head_retry(Path(cfg.config_dir)),
     )
     return web.json_response({"retried": len(new_jobs)})
 
@@ -2027,9 +2528,9 @@ async def retry_jobs(request: web.Request) -> web.Response:
 async def _remove_worker_handler(request: web.Request, client_id: str) -> web.Response:
     """Remove an offline worker from the registry."""
     registry = request.app["registry"]
-    cfg = _cfg(request)
+    from settings import get_settings as _gs  # noqa: PLC0415
 
-    if registry.is_online(client_id, cfg.worker_offline_threshold):
+    if registry.is_online(client_id, _gs().worker_offline_threshold):
         return web.json_response({"error": "Cannot remove an online worker"}, status=409)
     if not registry.remove(client_id):
         return web.json_response({"error": "Unknown client_id"}, status=404)

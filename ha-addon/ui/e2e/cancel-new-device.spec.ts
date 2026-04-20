@@ -25,14 +25,16 @@ test('cancelling a brand-new device fires DELETE on the pending file', async ({ 
   await page.goto('/');
   await expect(page.getByText('Living Room Sensor')).toBeVisible({ timeout: 5000 });
 
-  await page.getByRole('button', { name: /new device/i }).click();
+  // #70: consolidated into "Add device ▾" dropdown.
+  await page.getByRole('button', { name: /^add device/i }).click();
+  await page.getByRole('menuitem', { name: /new device/i }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await dialog.getByPlaceholder(/kitchen-sensor/i).fill('temp-stub');
   await dialog.getByRole('button', { name: /^create$/i }).click();
 
   // Editor opens on the new pending target.
-  await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(String.raw`[data-slot="dialog-content"] [role="code"].monaco-editor`).first()).toBeVisible({ timeout: 5000 });
 
   // Close without saving — Escape works because the editor is clean (no edits made).
   await page.keyboard.press('Escape');
@@ -63,7 +65,7 @@ test('closing an existing (already-saved) target does NOT fire DELETE', async ({
     .first()
     .getByRole('button', { name: 'Edit' })
     .click();
-  await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator(String.raw`[data-slot="dialog-content"] [role="code"].monaco-editor`).first()).toBeVisible({ timeout: 5000 });
 
   // Close the clean editor. No edits → Escape closes immediately.
   await page.keyboard.press('Escape');

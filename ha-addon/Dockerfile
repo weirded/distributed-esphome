@@ -1,7 +1,14 @@
-# #7: use the BUILD_FROM arg set by the Supervisor from build.yaml. The
-# hardcoded `FROM python:3.11-slim` we had before ignored build.yaml's
-# per-arch selection — and tripped Supervisor's "build.yaml deprecated"
-# warning on every parse because nothing here took advantage of it.
+# Bug #8: build.yaml removed (Supervisor flagged it as deprecated
+# starting 2024.x). The per-arch build_from map it used to carry was
+# identical for aarch64 and amd64 (docker.io/library/python:3.11-slim)
+# — Docker's multi-arch manifest selection picks the right variant
+# based on the builder's platform, so one FROM line covers both. The
+# ``ARG BUILD_FROM`` is kept so Supervisor can still override via
+# ``--build-arg`` if needed (e.g. for a future per-arch override),
+# but the default here is authoritative and matches what build.yaml
+# used to set. Glibc-based Python is required for PlatformIO
+# toolchains that ESPHome pulls in; do NOT let this fall through to
+# Alpine/musl without a full compatibility pass.
 ARG BUILD_FROM=docker.io/library/python:3.11-slim
 FROM ${BUILD_FROM}
 

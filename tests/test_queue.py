@@ -943,7 +943,12 @@ async def test_mark_firmware_stored_rejects_non_download_only_job(tmp_queue_file
     assert ok is False
 
 
-async def test_remove_jobs_deletes_firmware_on_disk(tmp_queue_file, tmp_path, monkeypatch):
+async def test_remove_jobs_preserves_download_only_firmware(tmp_queue_file, tmp_path, monkeypatch):
+    """Bug #38: download-only firmware must survive user Remove. The
+    binary stays on disk until the firmware_budget_enforcer evicts it
+    (space pressure) or the user explicitly deletes the history row.
+    Pre-#38 behavior purged it eagerly — this test pins the new
+    contract so a future refactor can't silently bring that back."""
     from firmware_storage import save_firmware, firmware_path
     import firmware_storage
 
@@ -963,10 +968,12 @@ async def test_remove_jobs_deletes_firmware_on_disk(tmp_queue_file, tmp_path, mo
 
     removed = await q.remove_jobs([job.id])
     assert removed == 1
-    assert not firmware_path(job.id, root=firmware_dir).exists()
+    # Bug #38: retained.
+    assert firmware_path(job.id, root=firmware_dir).exists()
 
 
-async def test_clear_deletes_firmware_on_disk(tmp_queue_file, tmp_path, monkeypatch):
+async def test_clear_preserves_download_only_firmware(tmp_queue_file, tmp_path, monkeypatch):
+    """Bug #38: user Clear keeps download-only firmware around."""
     from firmware_storage import save_firmware, firmware_path
     import firmware_storage
 
@@ -983,11 +990,12 @@ async def test_clear_deletes_firmware_on_disk(tmp_queue_file, tmp_path, monkeypa
 
     removed = await q.clear(["success"])
     assert removed == 1
-    assert not firmware_path(job.id, root=firmware_dir).exists()
+    assert firmware_path(job.id, root=firmware_dir).exists()
 
 
-async def test_per_target_coalescing_purges_firmware(tmp_queue_file, tmp_path, monkeypatch):
-    """Enqueue-time stale cleanup (same target) must delete the old binary too."""
+async def test_per_target_coalescing_preserves_download_only_firmware(tmp_queue_file, tmp_path, monkeypatch):
+    """Bug #38: per-target enqueue coalescing evicts the old queue
+    entry but keeps its download-only firmware on disk."""
     from firmware_storage import save_firmware, firmware_path
     import firmware_storage
 
@@ -1003,9 +1011,32 @@ async def test_per_target_coalescing_purges_firmware(tmp_queue_file, tmp_path, m
     await q.submit_result(first.id, "success", log=None, ota_result=None)
     assert firmware_path(first.id, root=firmware_dir).is_file()
 
-    # A fresh enqueue for the SAME target clears the old job (per-target
-    # coalescing) — and its firmware must go with it.
     second = await q.enqueue("device.yaml", "2026.3.2", "run2", 300, download_only=True)
     assert second is not None
-    assert q.get(first.id) is None  # the coalescing deleted the old entry
-    assert not firmware_path(first.id, root=firmware_dir).exists()
+    assert q.get(first.id) is None  # queue entry evicted
+    assert firmware_path(first.id, root=firmware_dir).exists()
+
+
+async def test_remove_jobs_deletes_non_download_firmware(tmp_queue_file, tmp_path, monkeypatch):
+    """Bug #38: the retention exemption is scoped to download-only
+    jobs. A non-download-only job that happens to have firmware on
+    disk (OTA flow) still gets its binary purged on Remove."""
+    from firmware_storage import save_firmware, firmware_path
+    import firmware_storage
+
+    firmware_dir = tmp_path / "firmware"
+    monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", firmware_dir)
+
+    q = JobQueue(queue_file=tmp_queue_file)
+    # Non-download_only — the OTA path.
+    job = await q.enqueue("device.yaml", "2026.3.2", "run1", 300)
+    assert job is not None
+    await q.claim_next("worker-A")
+    save_firmware(job.id, b"fw", root=firmware_dir)
+    await q.mark_firmware_stored(job.id)
+    await q.submit_result(job.id, "success", log=None, ota_result="success")
+    assert firmware_path(job.id, root=firmware_dir).is_file()
+
+    removed = await q.remove_jobs([job.id])
+    assert removed == 1
+    assert not firmware_path(job.id, root=firmware_dir).exists()

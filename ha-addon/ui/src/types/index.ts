@@ -104,6 +104,44 @@ export interface Target {
   schedule_tz?: string | null;
   /** Comma-separated tags from YAML metadata comment. */
   tags?: string | null;
+  /** Bug #16: True when the target's YAML has uncommitted changes
+   * relative to the git repo under /config/esphome/. Drives the
+   * row-level indicator + the conditional "Commit changes…"
+   * hamburger item. False when the dir isn't a git repo. */
+  has_uncommitted_changes?: boolean;
+  /**
+   * Bug #32: git HEAD hash of /config/esphome/ at the moment the
+   * most-recent successful OTA-flash job was enqueued for this
+   * target. Null when there's no flash on record, no git repo, or
+   * AV.7 didn't stamp the job.
+   */
+  last_flashed_config_hash?: string | null;
+  /**
+   * Bug #32: True when this target's YAML has changed between
+   * last_flashed_config_hash and the repo's current HEAD —
+   * i.e. "the device is running stale YAML". False when the last
+   * flash hash equals HEAD, or when the target isn't among the
+   * files that changed in between. Null when the signal is
+   * unknown (no last-flashed hash, no git repo, etc).
+   *
+   * Distinct from `config_modified` — the latter is mtime-based
+   * and false-positives on `git checkout`. Prefer this flag when
+   * it's non-null; fall back to `config_modified` when it is.
+   */
+  config_drifted_since_flash?: boolean | null;
+  /**
+   * JH.6: per-target "last compiled" rollup from the persistent job
+   * history DAO. Powers the optional "Last compiled" column on the
+   * Devices tab. Null when there's no history for the target.
+   */
+  last_compile?: {
+    /** Epoch seconds (UTC). */
+    at: number;
+    state: 'success' | 'failed' | 'cancelled' | 'timed_out';
+    ota_result: string | null;
+    validate_only: boolean;
+    download_only: boolean;
+  } | null;
   /**
    * Chip MAC address, lower-case colon-separated (e.g.
    * ``"aa:bb:cc:dd:ee:ff"``). Sourced from mDNS TXT or native API
@@ -225,6 +263,25 @@ export interface Job {
   scheduled?: boolean;
   /** When `scheduled`, distinguishes recurring (cron) from one-time fires (#92). */
   schedule_kind?: 'recurring' | 'once' | null;
+  /** Bug 27: True when the job was enqueued by Home Assistant's
+   * esphome_fleet.compile (or similar) service action — i.e. the
+   * caller authenticated with the add-on's system-token Bearer as
+   * ``esphome_fleet_integration`` AND the request carried a
+   * ``HomeAssistant/*`` User-Agent (i.e. the HA integration's
+   * coordinator, not a direct API call). Drives a distinct badge in
+   * the Queue tab's Triggered column. */
+  ha_action?: boolean;
+  /** Bug #61: True when the job was enqueued through /ui/api/compile
+   * with the server-token Bearer but NOT from the HA integration —
+   * e.g. a curl call, a script, Postman. Mutually exclusive with
+   * ``ha_action`` by construction. Shown in the Triggered column
+   * with a distinct terminal icon so "fleet automation" and
+   * "ad-hoc external API use" read differently at a glance. */
+  api_triggered?: boolean;
+  /** AV.7: git HEAD hash of /config/esphome/ at enqueue time. Used by
+   * the "Diff since compile" button in the log modal to open the
+   * History panel pre-set to (from=this_hash, to=working tree). */
+  config_hash?: string | null;
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Calendar, Clock, Download, Pin, User } from 'lucide-react';
+import { Calendar, Clock, Download, History as HistoryIcon, Pin } from 'lucide-react';
+import { classifyTrigger, getTriggerBadge } from '@/utils/trigger';
 import {
   useReactTable,
   getCoreRowModel,
@@ -13,7 +14,7 @@ import {
 import type { Job, Target, Worker } from '../types';
 import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
-import { fmtDuration, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
+import { fmtDateTime, fmtDuration, fmtTimeOfDay, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -22,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from './ui/dropdown-menu';
+import { QueueHistoryDialog } from './QueueHistoryDialog';
 
 interface Props {
   queue: Job[];
@@ -36,6 +38,10 @@ interface Props {
   onClearAll: () => void;
   onOpenLog: (jobId: string) => void;
   onEdit: (target: string) => void;
+  /** Bug 20: click on the Queue's Commit-column hash opens the History
+   * panel preset to from=config_hash, to=Current. Same flow as the
+   * Log modal's "Diff since compile" button. */
+  onOpenHistoryDiff: (target: string, fromHash: string) => void;
 }
 
 const STATE_ORDER: Record<string, number> = {
@@ -86,6 +92,7 @@ export function QueueTab({
   onClearAll,
   onOpenLog,
   onEdit,
+  onOpenHistoryDiff,
 }: Props) {
   // QS.27: persist sort across reloads via localStorage.
   const [sorting, setSorting] = usePersistedState<SortingState>(
@@ -94,6 +101,8 @@ export function QueueTab({
   );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [filter, setFilter] = useState('');
+  // JH.7: fleet-wide history modal open state.
+  const [historyOpen, setHistoryOpen] = useState(false);
   // #71: lift the Download dropdown's open state out of the row cell so
   // it survives the 1 Hz SWR poll. TanStack Table re-instantiates column
   // cells on data change, and any state kept inside the `<DropdownMenu>`
@@ -259,10 +268,11 @@ export function QueueTab({
     }),
     // #17: ESPHome version column. Shows the version stamped on each job,
     // which may differ from the global default when the user picked a
-    // non-default in the Upgrade modal.
+    // non-default in the Upgrade modal. Bug #29: header is "ESPHome" so
+    // Devices / Schedules / Queue all use the same disambiguating label.
     columnHelper.accessor(row => row.esphome_version || '', {
       id: 'esphome_version',
-      header: ({ column }) => <SortHeader label="Version" column={column} />,
+      header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
       cell: ({ row: { original: job } }) => {
         const target = targets.find(t => t.target === job.target);
         const isPinned = target?.pinned_version && target.pinned_version === job.esphome_version;
@@ -270,11 +280,38 @@ export function QueueTab({
           <span className="text-[12px]">
             {job.esphome_version || <span className="text-[var(--text-muted)]">—</span>}
             {isPinned && (
-              <span title={`Pinned to ${target.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
-                <Pin className="size-3" aria-label="Pinned version" />
+              <span title={`Pinned ESPHome version: ${target.pinned_version}`} className="ml-1 inline-flex align-text-bottom">
+                <Pin className="size-3" aria-label="Pinned ESPHome version" />
               </span>
             )}
           </span>
+        );
+      },
+      sortingFn: 'alphanumeric',
+    }),
+    // Bug 18: surface the git hash the config was at when this job
+    // was enqueued (AV.7's config_hash). Short hash rendered in a
+    // muted mono font; hover shows the full SHA. Dash for jobs
+    // that predate AV.7 or were enqueued while /config/esphome/
+    // wasn't a git repo.
+    columnHelper.accessor(row => row.config_hash || '', {
+      id: 'config_hash',
+      header: ({ column }) => <SortHeader label="Commit" column={column} />,
+      cell: ({ row: { original: job } }) => {
+        if (!job.config_hash) {
+          return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
+        }
+        // Bug 20: clickable hash opens the History panel preset to
+        // diff-since-this-compile (from=config_hash, to=Current).
+        return (
+          <button
+            type="button"
+            className="font-mono text-[11px] text-[var(--text-muted)] underline-offset-2 hover:underline cursor-pointer"
+            title={`Config git HEAD at compile time: ${job.config_hash}\nClick to see what's changed since this compile.`}
+            onClick={() => onOpenHistoryDiff(job.target, job.config_hash as string)}
+          >
+            {job.config_hash.slice(0, 7)}
+          </button>
         );
       },
       sortingFn: 'alphanumeric',
@@ -284,44 +321,52 @@ export function QueueTab({
     // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
     // Hover reveals the full cron expression + tz so users can reconcile with
     // the Schedules tab.
-    columnHelper.accessor(row => row.scheduled ? (row.schedule_kind ?? 'schedule') : 'user', {
+    // #65: shared trigger-badge helper (utils/trigger.tsx) returns the
+    // icon + label used on BOTH Queue and Compile-History surfaces —
+    // used to drift ("HA action" here vs "HA" there). Queue still adds
+    // the cron-string detail after the badge for scheduled jobs so the
+    // operator can reconcile against the Schedules tab.
+    columnHelper.accessor(
+      row => classifyTrigger(row),
+      {
       id: 'triggered_by',
       header: ({ column }) => <SortHeader label="Triggered" column={column} />,
       cell: ({ row: { original: job } }) => {
-        if (!job.scheduled) {
-          // UX.5: "User" → "Manual" until AU.* auth lets us attribute to a
-          // specific HA user. Tooltip spells out "manual action from the UI".
-          return (
-            <span className="inline-flex items-center gap-1 text-[12px]" title="Manual action (from the Fleet UI)">
-              <User className="size-3" aria-hidden="true" /> Manual
-            </span>
-          );
-        }
-        const target = targets.find(t => t.target === job.target);
-        if (job.schedule_kind === 'once') {
+        const badge = getTriggerBadge(job);
+        // Scheduled rows keep their cron/once detail as a secondary
+        // muted suffix — "Once @ 2026-04-21 14:00" / "Recurring · every Sunday at 2am".
+        if (job.scheduled && job.schedule_kind === 'once') {
+          const target = targets.find(t => t.target === job.target);
           const when = target?.schedule_once;
-          const pretty = when ? new Date(when).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
+          const pretty = when ? fmtDateTime(new Date(when), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : null;
           return (
             <span
               className="inline-flex items-center gap-1 text-[12px]"
-              title={when ? `Triggered by one-time schedule fired at ${when}` : 'Triggered by one-time schedule'}
+              title={when ? `Triggered by one-time schedule fired at ${when}` : badge.title}
             >
-              <Calendar className="size-3" aria-hidden="true" />
-              {pretty ? <>Once <span className="text-[var(--text-muted)]">@ {pretty}</span></> : 'Once'}
+              {badge.icon}
+              {pretty ? <>{badge.label} <span className="text-[var(--text-muted)]">@ {pretty}</span></> : badge.label}
             </span>
           );
         }
-        // Default for scheduled (covers 'recurring' and legacy nulls).
-        const cron = target?.schedule;
-        const tz = target?.schedule_tz;
-        const human = formatCronHuman(cron);
-        const tipParts: string[] = ['Triggered by recurring cron schedule'];
-        if (cron) tipParts.push(`cron: ${cron}`);
-        if (tz) tipParts.push(`tz: ${tz}`);
+        if (job.scheduled) {
+          const target = targets.find(t => t.target === job.target);
+          const cron = target?.schedule;
+          const tz = target?.schedule_tz;
+          const human = formatCronHuman(cron);
+          const tipParts: string[] = [badge.title];
+          if (cron) tipParts.push(`cron: ${cron}`);
+          if (tz) tipParts.push(`tz: ${tz}`);
+          return (
+            <span className="inline-flex items-center gap-1 text-[12px]" title={tipParts.join(' · ')}>
+              {badge.icon}
+              {human ? <>{badge.label} <span className="text-[var(--text-muted)]">· {human}</span></> : badge.label}
+            </span>
+          );
+        }
         return (
-          <span className="inline-flex items-center gap-1 text-[12px]" title={tipParts.join(' · ')}>
-            <Clock className="size-3" aria-hidden="true" />
-            {human ? <>Recurring <span className="text-[var(--text-muted)]">· {human}</span></> : 'Recurring'}
+          <span className="inline-flex items-center gap-1 text-[12px]" title={badge.title}>
+            {badge.icon} {badge.label}
           </span>
         );
       },
@@ -332,9 +377,9 @@ export function QueueTab({
       header: ({ column }) => <SortHeader label="Start Time" column={column} />,
       cell: ({ row: { original: job } }) => {
         const d = new Date(job.created_at);
-        const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const time = fmtTimeOfDay(d);
         return (
-          <span className="text-[12px]" title={d.toLocaleString()}>
+          <span className="text-[12px]" title={fmtDateTime(d)}>
             {time}
             <div className="text-[10px] text-[var(--text-muted)]">{timeAgo(job.created_at)}</div>
           </span>
@@ -354,12 +399,12 @@ export function QueueTab({
         }
         if (!job.finished_at) return <span className="text-[12px]">—</span>;
         const finished = new Date(job.finished_at);
-        const time = finished.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const time = fmtTimeOfDay(finished);
         // Duration = wall clock from enqueue to finish, not just worker compile time
         const wallSeconds = (finished.getTime() - new Date(job.created_at).getTime()) / 1000;
         const dur = wallSeconds >= 0 ? fmtDuration(wallSeconds) : null;
         return (
-          <span className="text-[12px]" title={finished.toLocaleString()}>
+          <span className="text-[12px]" title={fmtDateTime(finished)}>
             {time}
             {dur && <div className="text-[10px] text-[var(--text-muted)]">Took {dur}</div>}
           </span>
@@ -462,7 +507,7 @@ export function QueueTab({
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, targetNameMap, downloadMenuOpenJobId]);
+  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, onOpenHistoryDiff, targetNameMap, downloadMenuOpenJobId]);
 
   const table = useReactTable({
     data: filteredQueue,
@@ -524,14 +569,26 @@ export function QueueTab({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={onRetryAllFailed} disabled={!hasFailedJobs}>
+                  <DropdownMenuItem
+                    onClick={onRetryAllFailed}
+                    disabled={!hasFailedJobs}
+                    title={!hasFailedJobs ? 'No failed jobs in the current queue' : undefined}
+                  >
                     Retry All Failed
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleRetrySelected} disabled={queue.length === 0}>
+                  <DropdownMenuItem
+                    onClick={handleRetrySelected}
+                    disabled={queue.length === 0}
+                    title={queue.length === 0 ? 'Queue is empty' : undefined}
+                  >
                     Retry Selected
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleCancelSelected} disabled={queue.length === 0}>
+                  <DropdownMenuItem
+                    onClick={handleCancelSelected}
+                    disabled={queue.length === 0}
+                    title={queue.length === 0 ? 'Queue is empty' : undefined}
+                  >
                     Cancel Selected
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
@@ -545,19 +602,47 @@ export function QueueTab({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={onClearSucceeded} disabled={!hasSuccessfulJobs}>
+                  <DropdownMenuItem
+                    onClick={onClearSucceeded}
+                    disabled={!hasSuccessfulJobs}
+                    title={!hasSuccessfulJobs ? 'No succeeded jobs to clear' : undefined}
+                  >
                     Clear Succeeded
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={onClearFinished} disabled={!hasFinishedJobs}>
+                  <DropdownMenuItem
+                    onClick={onClearFinished}
+                    disabled={!hasFinishedJobs}
+                    title={!hasFinishedJobs ? 'No finished jobs to clear' : undefined}
+                  >
                     Clear All Finished
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={onClearAll} disabled={queue.length === 0}>
+                  <DropdownMenuItem
+                    onClick={onClearAll}
+                    disabled={queue.length === 0}
+                    title={queue.length === 0 ? 'Queue is empty' : undefined}
+                  >
                     Clear Entire Queue
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* #67: History button anchors to the far right of the
+                toolbar with a visible outline. Look-back action, not a
+                mutating one — ``outline`` variant picks up an actual
+                ``border-border`` class (``secondary`` didn't) so the
+                button reads as a tappable surface rather than a
+                link-styled blob. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHistoryOpen(true)}
+              title="Browse persistent compile history for the whole fleet"
+            >
+              <HistoryIcon className="size-3.5" aria-hidden="true" />
+              History
+            </Button>
           </div>
         </div>
         <div className="table-wrap">
@@ -596,6 +681,14 @@ export function QueueTab({
           </table>
         </div>
       </div>
+
+      {/* JH.7: fleet-wide history modal — mounted once; SWR gates on `open`. */}
+      <QueueHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        targets={targets}
+        onOpenHistoryDiff={onOpenHistoryDiff}
+      />
     </div>
   );
 }

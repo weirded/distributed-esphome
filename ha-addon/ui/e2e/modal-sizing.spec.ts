@@ -17,8 +17,14 @@ async function openEditor(page: import('@playwright/test').Page) {
     .first()
     .getByRole('button', { name: 'Edit' })
     .click();
-  // Monaco mounts asynchronously; wait for its container.
-  await expect(page.locator('[class*="monaco"], [data-keybinding-context]')).toBeVisible({ timeout: 5000 });
+  // Monaco mounts asynchronously; wait for the editor instance inside the modal.
+  // CF.1: we now bundle Monaco locally, which means the loader registers
+  // ``.monaco-colors`` / body classes at page boot — the old broad selector
+  // matched 14 elements and tripped strict mode. Anchor on the actual
+  // editor element (``[role="code"].monaco-editor``) inside the dialog.
+  await expect(
+    page.locator('[data-slot="dialog-content"] [role="code"].monaco-editor').first(),
+  ).toBeVisible({ timeout: 5000 });
 }
 
 async function openLogModal(page: import('@playwright/test').Page) {

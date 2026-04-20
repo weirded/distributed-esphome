@@ -3,11 +3,18 @@
 #   requires at least one `/` in the path — `python:3.11-slim` alone doesn't
 #   qualify, but `docker.io/library/python:3.11-slim` does. Same image.
 #
-# build.yaml itself is flagged as deprecated by the Supervisor in favor of
-# an `ARG BUILD_FROM` in the Dockerfile. Keeping it for now because HA's
-# modern ghcr.io base images are alpine/musl-only for Python, and we need
-# glibc for PlatformIO toolchains used by ESPHome. Revisit when HA ships a
-# Debian-based Python base or we switch PlatformIO install strategy.
+# Bug #8: Supervisor emits a "build.yaml is deprecated, move params into the
+# Dockerfile directly" WARNING on every addon-validation pass. We tried
+# removing this file in dev.12 — that made Supervisor fall back to its own
+# default base (ghcr.io/home-assistant/<arch>-base, which is Alpine/musl),
+# and the build immediately failed because our Dockerfile uses `apt-get`
+# (Debian/glibc) for gcc/libffi/libssl/git, which PlatformIO needs at
+# runtime for its toolchains. Alpine-compatible fixes would mean either
+# rewriting the Dockerfile against apk + recompiling every native
+# dependency, or switching to a pre-built glibc image with a Supervisor
+# `image:` key. Both are bigger changes than we want right now, so we're
+# keeping build.yaml and eating the deprecation warning. Revisit when we
+# have time for a full Alpine port or a prebuilt base strategy.
 build_from:
   aarch64: "docker.io/library/python:3.11-slim"
   amd64: "docker.io/library/python:3.11-slim"

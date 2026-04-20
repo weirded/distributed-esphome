@@ -55,29 +55,33 @@ async def version_header_middleware(request: web.Request, handler):
 # consumed programmatically by build workers and the headers add no value.
 #
 # CSP design notes:
-# - script-src needs 'unsafe-inline' because Monaco's @monaco-editor/react
-#   loader injects inline script elements for worker bootstrap. Tailwind v4
-#   also generates inline styles at runtime.
+# - script-src needs 'unsafe-inline' because Tailwind v4 generates
+#   inline styles at runtime and @monaco-editor/react's loader still
+#   injects a small script tag for worker bootstrap even under the local
+#   bundle config.
 # - style-src needs 'unsafe-inline' for the same Tailwind + Monaco reason.
 # - connect-src must allow wss: for the live-log WebSocket and
 #   https://schema.esphome.io for the editor schema fetcher (api/esphomeSchema.ts).
 # - worker-src 'self' blob: covers Monaco's editor worker.
 # - frame-ancestors 'self' enforces clickjacking protection without breaking
 #   HA Ingress (which loads us in an iframe served from the same origin).
-# NOTE: ``cdn.jsdelivr.net`` is allowed in script-src + connect-src because
-# the @monaco-editor/react wrapper loads Monaco's runtime from jsDelivr by
-# default. Bundling Monaco locally (via vite-plugin-monaco-editor) would let
-# us drop this origin entirely and ship a fully self-hosted UI; tracked as a
-# follow-up after #15 was found mid-1.3.1 (the editor was breaking because
-# the CSP from E.9 blocked the CDN). For now we allow it explicitly so the
-# editor works in all install topologies.
+#
+# CF.1: ``cdn.jsdelivr.net`` is NO LONGER allowed. Monaco now ships
+# bundled into the app via ``src/monaco-local.ts`` and
+# ``loader.config({ monaco })`` — the @monaco-editor/react wrapper no
+# longer fetches runtime/worker scripts from jsDelivr at editor-open
+# time, so the CDN origin was dropped from every CSP directive. The
+# editor now works in air-gapped installs and survives a jsDelivr
+# outage as a side-benefit. Any regression that tries to re-add
+# ``cdn.jsdelivr.net`` to any directive is caught by
+# ``tests/test_security_headers.py::test_csp_has_no_jsdelivr``.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: https:; "
-    "font-src 'self' data: https://cdn.jsdelivr.net; "
-    "connect-src 'self' ws: wss: https://schema.esphome.io https://cdn.jsdelivr.net; "
+    "font-src 'self' data:; "
+    "connect-src 'self' ws: wss: https://schema.esphome.io; "
     "worker-src 'self' blob:; "
     "frame-ancestors 'self'; "
     "base-uri 'self'; "
@@ -179,6 +183,35 @@ def _normalize_peer_ip(raw: str) -> str:
         return raw
 
 
+# Bug #7: rate-limiting state for the auth-failure WARNING emitter.
+# Log once per (peer_ip, reason) pair per AUTH_FAIL_LOG_WINDOW_SECONDS,
+# and then again with a summary count of suppressed lines when the
+# next real log fires — so operators still see the pattern without
+# the raw line-per-request torrent (hass-4 saw ~14k/hour).
+AUTH_FAIL_LOG_WINDOW_SECONDS = 60.0
+_auth_fail_last_logged: dict[tuple[str, str], float] = {}
+_auth_fail_suppressed: dict[tuple[str, str], int] = {}
+
+
+def _log_auth_failure(path: str, reason: str, peer_ip: str) -> None:
+    """Throttled WARNING emitter for /api/v1/* auth failures."""
+    from constants import HA_SUPERVISOR_IP  # noqa: PLC0415
+    now = time.monotonic()
+    key = (peer_ip or "<unknown>", reason)
+    last = _auth_fail_last_logged.get(key, 0.0)
+    elapsed = now - last
+    if elapsed < AUTH_FAIL_LOG_WINDOW_SECONDS:
+        _auth_fail_suppressed[key] = _auth_fail_suppressed.get(key, 0) + 1
+        return
+    suppressed = _auth_fail_suppressed.pop(key, 0)
+    tail = f" ({suppressed} similar suppressed in last {int(elapsed)}s)" if suppressed else ""
+    logger.warning(
+        "401 on %s: reason=%s peer_ip=%s (expected supervisor=%s)%s",
+        path, reason, peer_ip or "<unknown>", HA_SUPERVISOR_IP, tail,
+    )
+    _auth_fail_last_logged[key] = now
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     path = request.path
@@ -209,26 +242,27 @@ async def auth_middleware(request: web.Request, handler):
         if peer_ip and peer_ip == _normalize_peer_ip(HA_SUPERVISOR_IP):
             return await handler(request)
 
-        cfg: AppConfig = request.app["config"]
-        if cfg.token:
+        # SP.8: read the token live from Settings, so flipping it in
+        # the drawer propagates to the next request with no restart.
+        from settings import get_settings  # noqa: PLC0415
+        token = get_settings().server_token
+        if token:
             from helpers import constant_time_compare  # noqa: PLC0415
             auth_header = request.headers.get(HEADER_AUTHORIZATION, "")
-            if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], cfg.token):
+            if auth_header.startswith("Bearer ") and constant_time_compare(auth_header[7:], token):
                 return await handler(request)
 
             # Diagnose the refusal. Each branch logs a distinct structured
             # reason so operators can tell "wrong token" from "missing header"
             # from "non-supervisor peer IP" without enabling debug logging.
+            # Rate-limited per (peer_ip, reason) via _log_auth_failure (#7).
             if not auth_header:
                 reason = "missing_authorization_header"
             elif not auth_header.startswith("Bearer "):
                 reason = "authorization_not_bearer_scheme"
             else:
                 reason = "bearer_token_mismatch"
-            logger.warning(
-                "401 on %s: reason=%s peer_ip=%s (expected supervisor=%s)",
-                path, reason, peer_ip or "<unknown>", HA_SUPERVISOR_IP,
-            )
+            _log_auth_failure(path, reason, peer_ip or "")
         else:
             # No token configured — allow all (development mode)
             logger.warning("No auth token configured; allowing unauthenticated request to %s", path)
@@ -255,7 +289,6 @@ async def timeout_checker(app: web.Application) -> None:
     """
     queue: JobQueue = app["queue"]
     registry: WorkerRegistry = app["registry"]
-    cfg: AppConfig = app["config"]
     while True:
         await asyncio.sleep(30)
         try:
@@ -264,14 +297,88 @@ async def timeout_checker(app: web.Application) -> None:
             # JOB_TIMEOUT (600s default) before the elapsed-time check
             # noticed. Now check_timeouts also re-queues WORKING jobs
             # whose assigned worker has no recent heartbeat.
+            #
+            # SP.8: both the offline-threshold probe and the job-timeout
+            # value read live from Settings each iteration, so Settings
+            # drawer edits take effect on the next 30s tick.
+            from settings import get_settings  # noqa: PLC0415
+            s = get_settings()
+
             def _is_online(cid: str) -> bool:
-                return registry.is_online(cid, threshold_secs=cfg.worker_offline_threshold)
+                return registry.is_online(cid, threshold_secs=s.worker_offline_threshold)
 
             timed_out = await queue.check_timeouts(is_worker_online=_is_online)
             if timed_out:
                 logger.info("Timeout checker: processed %d timed-out jobs", len(timed_out))
         except Exception:
             logger.exception("Error in timeout checker")
+
+
+async def firmware_budget_enforcer(app: web.Application) -> None:
+    """Bug #38: evict oldest firmware binaries when over
+    ``firmware_cache_max_gb`` Settings budget.
+
+    First tick 90 s after startup (lets reconcile_orphans run first
+    and the queue settle), then every 30 min. Live-queue binaries
+    with ``has_firmware`` are protected from eviction; everything
+    else is fair game, oldest-mtime first. No-op when the budget
+    Setting resolves to ``<= 0`` (unlimited).
+    """
+    queue = app.get("queue")
+    if queue is None:
+        return
+    first = True
+    while True:
+        await asyncio.sleep(90 if first else 30 * 60)
+        first = False
+        try:
+            from settings import get_settings  # noqa: PLC0415
+            from firmware_storage import enforce_budget  # noqa: PLC0415
+            gb = float(getattr(get_settings(), "firmware_cache_max_gb", 0.0) or 0.0)
+            max_bytes = int(gb * 1024 * 1024 * 1024)
+            if max_bytes <= 0:
+                continue
+            protected = {
+                job.id for job in queue.get_all()
+                if getattr(job, "has_firmware", False)
+            }
+            deleted = enforce_budget(max_bytes=max_bytes, protected_job_ids=protected)
+            if deleted:
+                logger.info(
+                    "Firmware budget enforcer: evicted %d file(s) (limit %.2f GiB)",
+                    deleted, gb,
+                )
+        except Exception:
+            logger.exception("Error in firmware_budget_enforcer loop")
+
+
+async def job_history_retention(app: web.Application) -> None:
+    """JH.3: evict job-history rows older than Settings' retention window.
+
+    Runs once a day. Reads ``job_history_retention_days`` from Settings
+    on every tick so drawer edits take effect on the next run without
+    a server restart (0 disables retention; the DAO treats ``days <= 0``
+    as a no-op). Does its first tick one minute after startup so a
+    fresh boot doesn't stall while the migration/init dance runs.
+    """
+    history = app.get("job_history")
+    if history is None:
+        return
+    first = True
+    while True:
+        await asyncio.sleep(60 if first else 24 * 60 * 60)
+        first = False
+        try:
+            from settings import get_settings  # noqa: PLC0415
+            days = int(getattr(get_settings(), "job_history_retention_days", 0) or 0)
+            deleted = history.evict_older_than(days)
+            if deleted:
+                logger.info(
+                    "Job-history retention: evicted %d row(s) older than %d day(s)",
+                    deleted, days,
+                )
+        except Exception:
+            logger.exception("Error in job_history_retention loop")
 
 
 async def ha_entity_poller(app: web.Application) -> None:
@@ -679,12 +786,15 @@ async def _old_schedule_checker(app: web.Application) -> None:
                             elif (now - once_dt).total_seconds() <= misfire_grace:
                                 version = meta.get("pin_version") or get_esphome_version()
                                 run_id = str(_uuid.uuid4())
+                                from settings import get_settings  # noqa: PLC0415
+                                from git_versioning import get_head  # noqa: PLC0415
                                 job = await queue.enqueue(
                                     target=target,
                                     esphome_version=version,
                                     run_id=run_id,
-                                    timeout_seconds=cfg.job_timeout,
+                                    timeout_seconds=get_settings().job_timeout,
                                     ota_address=_get_ota_address(target),
+                                    config_hash=get_head(Path(cfg.config_dir)),
                                 )
                                 if job is not None:
                                     job.scheduled = True
@@ -740,14 +850,17 @@ async def _old_schedule_checker(app: web.Application) -> None:
                         write_device_meta(cfg.config_dir, target, fresh_meta)
                         continue
 
+                    from settings import get_settings  # noqa: PLC0415
+                    from git_versioning import get_head  # noqa: PLC0415
                     version = meta.get("pin_version") or get_esphome_version()
                     run_id = str(_uuid.uuid4())
                     job = await queue.enqueue(
                         target=target,
                         esphome_version=version,
                         run_id=run_id,
-                        timeout_seconds=cfg.job_timeout,
+                        timeout_seconds=get_settings().job_timeout,
                         ota_address=_get_ota_address(target),
+                        config_hash=get_head(Path(cfg.config_dir)),
                     )
                     if job is not None:
                         job.scheduled = True
@@ -921,6 +1034,20 @@ async def _fetch_pypi_versions(session: aiohttp.ClientSession) -> list[str]:
     return []
 
 
+# Bug #30: used by the standalone-Docker fallback to pick "latest stable"
+# from a PyPI version list. Stable ESPHome versions are pure digit-and-dot
+# strings ("2024.3.0"); pre-releases carry letters ("2024.3.0b1", "…rc1").
+_STABLE_VERSION_RE = re.compile(r"^\d+(\.\d+)*$")
+
+
+def _pick_latest_stable_version(versions: list[str]) -> Optional[str]:
+    """Return the first stable entry from a newest-first list, or None."""
+    for v in versions:
+        if _STABLE_VERSION_RE.match(v):
+            return v
+    return None
+
+
 async def pypi_version_refresher(app: web.Application) -> None:
     """Background task: refresh PyPI versions hourly and re-check HA ESPHome add-on every 30s.
 
@@ -1029,12 +1156,52 @@ async def serve_index(request: web.Request) -> web.Response:
 def create_app() -> web.Application:
     cfg = AppConfig.load()
 
-    queue = JobQueue()
+    # AV.1 + Bug #19: run git auto-init FIRST, then settings. The
+    # return value tells us whether a pre-existing repo was found
+    # (False) or we created a fresh one (True). settings.init_settings
+    # uses that signal on first boot to pick the auto-commit-on-save
+    # default — pre-existing repo → off by default (Pat-with-git),
+    # fresh-init → on by default (Pat-no-git). Sync call here is fine;
+    # the event loop hasn't started yet.
+    try:
+        from git_versioning import init_repo  # noqa: PLC0415
+        fresh_repo = init_repo(Path(cfg.config_dir))
+    except Exception:
+        logger.exception("git auto-init raised unexpectedly")
+        fresh_repo = None  # "don't override the default"
+
+    # SP.1/SP.2: load in-app settings (/data/settings.json) — created on
+    # first boot after 1.6 upgrade and seeded from the current options.json
+    # for any fields that have migrated. See ha-addon/server/settings.py.
+    from settings import clear_supervisor_options_if_needed, init_settings  # noqa: PLC0415
+    init_settings(fresh_repo_init=fresh_repo)
+    # Bug #9: after the settings have been safely imported, tell
+    # Supervisor to drop its stale options cache so it stops spamming
+    # "Option X does not exist in the schema" warnings on every read.
+    # One-shot — a marker file under /data prevents re-POSTing on
+    # subsequent boots.
+    clear_supervisor_options_if_needed()
+
+    # JH.1/JH.2: persistent job history DAO. One DAO per app; JobQueue
+    # snapshots every terminal transition into it so the /ui/api/history
+    # endpoint and per-device drawer survive queue coalescing + clears.
+    # Init is lazy — the first record/query creates the DB on demand.
+    # Deliberate: eager init on a test rig without /data writable would
+    # crash startup where the real path would "just work".
+    from job_history import JobHistoryDAO  # noqa: PLC0415
+    job_history = JobHistoryDAO()
+
+    queue = JobQueue(history=job_history)
     queue.load()
 
     registry = WorkerRegistry()
 
-    device_poller = DevicePoller(poll_interval=cfg.device_poll_interval)
+    # SP.8: device_poll_interval is now settings-driven. Pass the
+    # current value as the initial interval; DevicePoller re-reads
+    # live via get_settings() at each iteration, so drawer edits
+    # take effect without a restart.
+    from settings import get_settings as _get_settings_for_init  # noqa: PLC0415
+    device_poller = DevicePoller(poll_interval=_get_settings_for_init().device_poll_interval)
 
     # FD.5: firmware upload needs a body budget larger than aiohttp's
     # 1 MB default. ESP32 `firmware.factory.bin` is 1-4 MB typically;
@@ -1059,6 +1226,7 @@ def create_app() -> web.Application:
     )
     app["config"] = cfg
     app["queue"] = queue
+    app["job_history"] = job_history
     app["registry"] = registry
     app["scanner_config_dir"] = cfg.config_dir
     app["device_poller"] = device_poller
@@ -1101,7 +1269,8 @@ def create_app() -> web.Application:
     async def on_startup(app: web.Application) -> None:
         logger.info("Starting ESPHome Fleet")
         logger.info("Config dir: %s", cfg.config_dir)
-        logger.info("Token configured: %s", bool(cfg.token))
+        from settings import get_settings as _get_settings_startup  # noqa: PLC0415
+        logger.info("Token configured: %s", bool(_get_settings_startup().server_token))
 
         # HI.8: auto-install the bundled HA custom integration into
         # /config/custom_components/esphome_fleet on every boot.
@@ -1111,6 +1280,10 @@ def create_app() -> web.Application:
             install_integration()
         except Exception:
             logger.exception("HA integration auto-install raised unexpectedly")
+
+        # AV.1: git auto-init already ran synchronously in create_app
+        # (before settings, so the fresh-vs-existing signal can drive
+        # the auto-commit default — see Bug #19). No work to do here.
 
         # Use the locally installed ESPHome package version as the initial
         # active version.  The pypi_version_refresher background task will
@@ -1126,22 +1299,68 @@ def create_app() -> web.Application:
             ensure_esphome_installed,
         )
 
+        # `_get_installed_esphome_version()` returns the string "installing"
+        # or "unknown" as diagnostic sentinels when no ESPHome is bundled.
+        # Those aren't real versions — don't cache them as the selected
+        # version (would pollute UI payloads and compile-job stamps).
+        # Leave `_selected_esphome_version` unset; the install flow below
+        # will set it once it resolves a real version.
         selected = _get_installed_esphome_version()
-        set_esphome_version(selected)
-        logger.info("Active ESPHome version: %s (background task will refine from HA Supervisor)", selected)
+        if selected not in ("installing", "unknown"):
+            set_esphome_version(selected)
+            logger.info(
+                "Active ESPHome version: %s (background task will refine from HA Supervisor)",
+                selected,
+            )
+        else:
+            logger.info(
+                "No bundled ESPHome; version will be resolved from HA Supervisor "
+                "or PyPI fallback (bug #30)"
+            )
 
-        # SE.2: kick off the lazy-install of ESPHome into the server's
-        # venv cache. While SE.1 hasn't shipped yet (ESPHome is still
-        # bundled in requirements.txt), this is effectively a no-op on
-        # the hot path — VersionManager.ensure_version is a fast cache
-        # hit if the version is already installed. Once SE.1 lands and
-        # the bundled package is gone, this becomes the primary install
-        # path. Runs in an executor so it never blocks aiohttp startup.
+        # SE.2 + bug #30: lazy-install ESPHome into the server's venv
+        # cache. Three paths to a version:
+        #   1. Bundled package (test harness / pre-SE.1): `selected` is
+        #      already a real version.
+        #   2. HA add-on: the `pypi_version_refresher` loop picks up the
+        #      Supervisor-reported version within 30s and triggers its
+        #      own `ensure_esphome_installed`. We defer to that path and
+        #      don't pre-install a PyPI default.
+        #   3. Standalone Docker (no `SUPERVISOR_TOKEN`, no bundled
+        #      package): fall back to the latest stable from PyPI so the
+        #      user isn't stuck on the "Installing ESPHome…" banner
+        #      forever (GitHub #63).
+        # Runs in an executor so it never blocks aiohttp startup.
         async def _install_esphome_background() -> None:
             target = _get_installed_esphome_version()
             if target in ("unknown", "installing"):
-                # No point trying to install a phantom version.
-                return
+                if os.environ.get("SUPERVISOR_TOKEN"):
+                    # Path 2 — the refresher loop will resolve + install
+                    # from the HA ESPHome add-on's version. Nothing to do.
+                    return
+                # Path 3 — fetch latest stable from PyPI.
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        versions = await _fetch_pypi_versions(session)
+                except Exception:
+                    logger.exception("Bug #30: PyPI version fetch raised")
+                    versions = []
+                picked = _pick_latest_stable_version(versions)
+                if picked is None:
+                    logger.warning(
+                        "Bug #30: no bundled ESPHome, no HA Supervisor, "
+                        "and PyPI lookup returned no stable versions. "
+                        "UI will keep showing 'Installing ESPHome…'; "
+                        "user must pick a version manually once network "
+                        "access or Supervisor comes back."
+                    )
+                    return
+                target = picked
+                logger.info(
+                    "Bug #30: no Supervisor and no bundled ESPHome — "
+                    "installing latest stable from PyPI: %s", target,
+                )
+                set_esphome_version(target)
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, ensure_esphome_installed, target)
         app["esphome_install_task"] = asyncio.create_task(_install_esphome_background())
@@ -1173,8 +1392,9 @@ def create_app() -> web.Application:
         # the user to paste credentials.
         try:
             from supervisor_discovery import register_discovery  # noqa: PLC0415
+            from settings import get_settings as _get_s  # noqa: PLC0415
             app["_rt"]["supervisor_discovery_uuid"] = await register_discovery(
-                cfg.port, token=cfg.token,
+                cfg.port, token=_get_s().server_token,
             )
         except Exception:
             logger.debug("Supervisor discovery registration raised", exc_info=True)
@@ -1184,6 +1404,14 @@ def create_app() -> web.Application:
         app["config_scanner_task"] = asyncio.create_task(config_scanner(app))
         app["pypi_version_refresher_task"] = asyncio.create_task(pypi_version_refresher(app))
         app["ha_entity_poller_task"] = asyncio.create_task(ha_entity_poller(app))
+        # JH.3: nightly job-history retention task. Reads the Settings
+        # value live each tick so drawer edits take effect next run.
+        app["job_history_retention_task"] = asyncio.create_task(job_history_retention(app))
+        # Bug #38: firmware disk-budget enforcer. Complements
+        # reconcile_orphans at startup — this one runs periodically
+        # while the server is up so download-only binaries saved days
+        # ago get evicted when they fall out of budget.
+        app["firmware_budget_task"] = asyncio.create_task(firmware_budget_enforcer(app))
 
         # #87: APScheduler replaces the DIY schedule_checker
         import scheduler as scheduler_module  # noqa: PLC0415
@@ -1193,18 +1421,31 @@ def create_app() -> web.Application:
         local_worker_script = Path("/app/client/client.py")
         if local_worker_script.exists():
             import subprocess as sp  # noqa: PLC0415
-            # Restore persisted slot count (default 0 on first run)
+            # #99: fresh installs default to 1 slot (active). Previously
+            # defaulted to 0 (paused) which was a poor out-of-the-box
+            # experience — new users saw "local-worker: 0 slots" and
+            # had to discover the +/- buttons before any compile would
+            # run. If the user has explicitly configured a slot count
+            # via the UI, the persisted file wins; we only use the
+            # default when the file is absent.
             local_slots_file = Path("/data/local_worker_slots")
-            local_slots = "0"
+            local_slots = "1"
             try:
                 if local_slots_file.exists():
-                    local_slots = local_slots_file.read_text().strip() or "0"
+                    local_slots = local_slots_file.read_text().strip() or "1"
             except Exception:
                 pass
+            # SP.8: local-worker is a subprocess started once at add-on
+            # boot. Its SERVER_TOKEN is captured at spawn time; if the
+            # user later rotates the token via the Settings drawer, the
+            # local worker keeps using the old token until the add-on
+            # restarts (documented behavior; remote workers have the
+            # same property). Read the current value fresh at spawn.
+            from settings import get_settings as _get_s_lw  # noqa: PLC0415
             local_env = {
                 **os.environ,
                 "SERVER_URL": f"http://127.0.0.1:{cfg.port}",
-                "SERVER_TOKEN": cfg.token,
+                "SERVER_TOKEN": _get_s_lw().server_token,
                 "MAX_PARALLEL_JOBS": local_slots,
                 "ESPHOME_VERSIONS_DIR": "/data/esphome-versions",
                 "HOSTNAME": "local-worker",
@@ -1231,7 +1472,7 @@ def create_app() -> web.Application:
                 proc.kill()
             logger.info("Local worker stopped")
 
-        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task", "esphome_install_task"):
+        for task_name in ("timeout_checker_task", "config_scanner_task", "pypi_version_refresher_task", "ha_entity_poller_task", "esphome_install_task", "job_history_retention_task", "firmware_budget_task"):
             task = app.get(task_name)
             if task:
                 task.cancel()

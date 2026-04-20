@@ -37,6 +37,20 @@ header img {
   --radius: 8px;
   --shadow: 0 2px 8px rgba(0,0,0,0.4);
 
+  /* Bug 5: themed button palette. Success and warn variants used to
+     hardcode very dark hex values (#14532d / #78350f) which looked
+     deliberate on the dark bg but jarringly inky on light mode. These
+     tokens move the palette under theme control — dark mode keeps the
+     same deep colours for continuity, light mode gets the full-saturation
+     cyan/amber/green equivalents matching the rest of the UI's light
+     palette. Consumed by the `success` / `warn` button variants. */
+  --button-success-bg: #14532d;
+  --button-success-fg: #4ade80;
+  --button-success-bg-hover: #166534;
+  --button-warn-bg: #78350f;
+  --button-warn-fg: #fcd34d;
+  --button-warn-bg-hover: #92400e;
+
   /* ---- shadcn/ui variables (dark mode default — matches app theme) ---- */
   --background: var(--bg);
   --foreground: var(--text);
@@ -66,6 +80,17 @@ header img {
   /* accent, success, warn, danger, info, orange remain the same */
   --shadow: 0 2px 8px rgba(0,0,0,0.12);
   /* shadcn variables follow app variables via var() references, no overrides needed */
+
+  /* Bug 5: light-mode button palette. The green/amber backgrounds stay
+     clearly semantic but are now saturated instead of ink-dark, so the
+     Upgrade button reads as "green action" rather than "nearly black
+     blob" on a white header. Foregrounds go dark for legibility. */
+  --button-success-bg: #22c55e;
+  --button-success-fg: #064e3b;
+  --button-success-bg-hover: #16a34a;
+  --button-warn-bg: #f59e0b;
+  --button-warn-fg: #451a03;
+  --button-warn-bg-hover: #d97706;
 }
 
 /* Prevent the page from scrolling sideways on narrow viewports.
@@ -111,14 +136,14 @@ header {
      no scrollbar). */
   overflow-x: auto;
 }
-/* Keep header dark in light mode so the ESPHome logo (light gray text) stays readable */
-[data-theme="light"] header {
-  background: #1a1d27;
-  border-bottom-color: #2e3350;
-  color: #e2e8f0;
-}
-[data-theme="light"] header span { color: #8892a4; }
-[data-theme="light"] header .status-dot { background: #22c55e; }
+/* #85: old override kept the header dark in light mode because the
+   retired ESPHome wordmark was rendered in light gray text that was
+   unreadable against a white header. The new house-glyph logo has
+   its own colour (cyan/blue) so it reads fine on both backgrounds,
+   and keeping the header dark-on-light looked jarring. Drop the
+   override and let the header use the themed --surface / --text
+   variables like every other surface in the app. */
+[data-theme="light"] header .status-dot { background: var(--success); }
 
 
 header .spacer { flex: 1; }

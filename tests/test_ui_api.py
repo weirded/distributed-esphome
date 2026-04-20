@@ -61,7 +61,22 @@ async def _make_ui_app(tmp_path: Path) -> _UiApp:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
 
-    cfg = AppConfig(token="ui-test-token", config_dir=str(config_dir))
+    cfg = AppConfig(config_dir=str(config_dir))
+    # SP.8: server token now lives in Settings, not AppConfig. Ensure
+    # the scratch settings module has it set for auth-requiring tests.
+    import settings as _settings_mod
+    _settings_mod._reset_for_tests()
+    _settings_mod.init_settings(
+        settings_path=tmp_path / "settings.json",
+        options_path=tmp_path / "options.json",
+    )
+    # #98: tests in this module exercise the active versioning path
+    # (file history, rollback, commit endpoints). The dataclass
+    # default is now ``'unset'``, which makes ``_versioning_active``
+    # return False and turns every git op into a no-op. Flip to
+    # ``'on'`` so the existing tests keep their behaviour.
+    await _settings_mod.update_settings({"versioning_enabled": "on"})
+    await _settings_mod.update_settings({"server_token": "ui-test-token"})
     queue = JobQueue(queue_file=tmp_path / "queue.json")
     registry = WorkerRegistry()
 
@@ -964,4 +979,463 @@ async def test_firmware_download_404_when_job_missing(tmp_path):
         resp = await ta.get("/ui/api/jobs/ghost/firmware")
         assert resp.status == 404
     finally:
+        await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# settings (SP.3)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def _settings_init(tmp_path):
+    """Redirect the settings module to a scratch dir for each test."""
+    import settings as settings_mod
+    settings_mod._reset_for_tests()
+    settings_mod.init_settings(
+        settings_path=tmp_path / "settings.json",
+        options_path=tmp_path / "options.json",
+    )
+    yield
+    settings_mod._reset_for_tests()
+
+
+async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.get("/ui/api/settings")
+        assert resp.status == 200
+        data = await resp.json()
+        # Token is auto-generated + test harness sets "ui-test-token"
+        # (see _make_ui_app); assert on shape, not the value.
+        assert isinstance(data.pop("server_token"), str)
+        assert data == {
+            # _make_ui_app PATCHes 'on' so the file-history endpoints
+            # in this module's other tests work; that's what GET sees
+            # here. The dataclass default ('unset' on a truly-fresh
+            # boot) is covered by tests/test_settings.py.
+            "versioning_enabled": "on",
+            "auto_commit_on_save": True,
+            "git_author_name": "HA User",
+            "git_author_email": "ha@distributed-esphome.local",
+            "job_history_retention_days": 365,
+            "firmware_cache_max_gb": 2.0,
+            "job_log_retention_days": 30,
+            "job_timeout": 600,
+            "ota_timeout": 120,
+            "worker_offline_threshold": 30,
+            "device_poll_interval": 60,
+            "require_ha_auth": True,
+            "time_format": "auto",
+        }
+    finally:
+        await ta.close()
+
+
+async def test_patch_settings_updates_and_returns_full_blob(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.client.patch(
+            "/ui/api/settings",
+            json={"auto_commit_on_save": False, "job_history_retention_days": 90},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["auto_commit_on_save"] is False
+        assert data["job_history_retention_days"] == 90
+        # Unspecified fields preserved.
+        assert data["firmware_cache_max_gb"] == 2.0
+    finally:
+        await ta.close()
+
+
+async def test_patch_settings_rejects_unknown_key(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.client.patch(
+            "/ui/api/settings",
+            json={"bogus": 1},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["field"] == "bogus"
+    finally:
+        await ta.close()
+
+
+async def test_patch_settings_rejects_out_of_range(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.client.patch(
+            "/ui/api/settings",
+            json={"firmware_cache_max_gb": 0.0},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["field"] == "firmware_cache_max_gb"
+    finally:
+        await ta.close()
+
+
+async def test_patch_settings_rejects_non_json_body(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.client.patch(
+            "/ui/api/settings",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+async def test_patch_settings_rejects_non_object_body(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.client.patch(
+            "/ui/api/settings",
+            json=[1, 2, 3],
+        )
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+async def test_patch_settings_persists_across_get(tmp_path, _settings_init):
+    """Live-effect floor: a PATCH is immediately observable via GET."""
+    ta = await _make_ui_app(tmp_path)
+    try:
+        patch_resp = await ta.client.patch(
+            "/ui/api/settings",
+            json={"auto_commit_on_save": False},
+        )
+        assert patch_resp.status == 200
+
+        get_resp = await ta.get("/ui/api/settings")
+        data = await get_resp.json()
+        assert data["auto_commit_on_save"] is False
+    finally:
+        await ta.close()
+
+
+# ---------------------------------------------------------------------------
+# auto-versioning (AV.1 / AV.2)
+# ---------------------------------------------------------------------------
+
+async def test_editor_save_triggers_auto_commit(tmp_path, _settings_init):
+    """AV.2: save via POST /ui/api/targets/{f}/content produces a git commit."""
+    import subprocess
+
+    import git_versioning as gv
+    gv._reset_for_tests()
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        # Seed a config file and init the repo under the test config dir.
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        # Short debounce so the test doesn't stall.
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            resp = await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# edited\n"},
+            )
+            assert resp.status == 200
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        log = subprocess.run(
+            ["git", "log", "--format=%s"],
+            cwd=str(ta.config_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        # Bug #34: auto-save subject is the human-readable form.
+        assert "Automatically saved after editing in UI" in log
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_file_history_endpoint_returns_entries(tmp_path, _settings_init):
+    """AV.3: GET /ui/api/files/{f}/history returns the file's commit log."""
+    import subprocess
+    import git_versioning as gv
+    gv._reset_for_tests()
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        # Make an edit via the editor endpoint so we get a commit.
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            resp = await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# edit 1\n"},
+            )
+            assert resp.status == 200
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        resp = await ta.get("/ui/api/files/bedroom.yaml/history")
+        assert resp.status == 200
+        entries = await resp.json()
+        assert isinstance(entries, list)
+        assert len(entries) >= 1
+        # Newest entry should be our save. Bug #34: human-readable subject.
+        assert entries[0]["message"] == "Automatically saved after editing in UI"
+        assert "hash" in entries[0]
+        assert "short_hash" in entries[0]
+        assert isinstance(entries[0]["date"], int)
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_file_history_endpoint_rejects_invalid_pagination(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        resp = await ta.get("/ui/api/files/bedroom.yaml/history?limit=nope")
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+async def test_file_status_endpoint(tmp_path, _settings_init):
+    """AV.6: GET /files/{f}/status reports dirty state + HEAD hash."""
+    import git_versioning as gv
+    gv._reset_for_tests()
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        # Clean tree first.
+        resp = await ta.get("/ui/api/files/bedroom.yaml/status")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["has_uncommitted_changes"] is False
+        assert data["head_hash"]
+
+        # Dirty the tree without going through a committing endpoint.
+        (ta.config_dir / "bedroom.yaml").write_text("esphome:\n  name: bedroom\n# external-edit\n")
+        resp = await ta.get("/ui/api/files/bedroom.yaml/status")
+        data = await resp.json()
+        assert data["has_uncommitted_changes"] is True
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_file_rollback_endpoint_restores_and_commits(tmp_path, _settings_init):
+    """AV.5: rollback endpoint restores file content and records a revert."""
+    import git_versioning as gv
+    gv._reset_for_tests()
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        # Create two more versions via editor saves.
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# v2\n"},
+            )
+            await gv.drain_pending_commits()
+            await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# v3\n"},
+            )
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        hist = await (await ta.get("/ui/api/files/bedroom.yaml/history")).json()
+        target_hash = hist[1]["hash"]  # the v2 commit
+
+        resp = await ta.post(
+            "/ui/api/files/bedroom.yaml/rollback",
+            json={"hash": target_hash},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["committed"] is True
+        assert "# v2" in data["content"]
+        assert "# v3" not in data["content"]
+
+        # File on disk was updated.
+        assert (ta.config_dir / "bedroom.yaml").read_text() == "esphome:\n  name: bedroom\n# v2\n"
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_file_rollback_endpoint_rejects_missing_hash(tmp_path, _settings_init):
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        resp = await ta.post("/ui/api/files/bedroom.yaml/rollback", json={})
+        assert resp.status == 400
+    finally:
+        await ta.close()
+
+
+async def test_file_commit_endpoint_creates_commit(tmp_path, _settings_init):
+    """AV.11: manual commit endpoint works even with auto-commit off."""
+    import git_versioning as gv
+    gv._reset_for_tests()
+    # Flip auto-commit off to mimic the Pat-with-git scenario.
+    from settings import update_settings
+    await update_settings({"auto_commit_on_save": False})
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        # Save via editor — no commit happens because auto-off.
+        await ta.post(
+            "/ui/api/targets/bedroom.yaml/content",
+            json={"content": "esphome:\n  name: bedroom\n# manually-committed\n"},
+        )
+
+        # Manual commit: no message → default marker.
+        resp = await ta.post("/ui/api/files/bedroom.yaml/commit", json={})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["committed"] is True
+        assert data["hash"]
+        # Bug #34: manual-commit default subject is human-readable.
+        assert data["message"] == "Manually committed from UI"
+
+        # Re-committing without changes is a no-op.
+        resp = await ta.post("/ui/api/files/bedroom.yaml/commit", json={})
+        data = await resp.json()
+        assert data["committed"] is False
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_file_commit_endpoint_respects_custom_message(tmp_path, _settings_init):
+    import git_versioning as gv
+    gv._reset_for_tests()
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+        (ta.config_dir / "bedroom.yaml").write_text("external edit\n")
+
+        resp = await ta.post(
+            "/ui/api/files/bedroom.yaml/commit",
+            json={"message": "captured external edit"},
+        )
+        data = await resp.json()
+        assert data["committed"] is True
+        assert data["message"] == "captured external edit"
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_file_diff_endpoint_returns_unified_diff(tmp_path, _settings_init):
+    """AV.4: GET /ui/api/files/{f}/diff returns a unified diff between two commits."""
+    import git_versioning as gv
+    gv._reset_for_tests()
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# v2\n"},
+            )
+            await gv.drain_pending_commits()
+            await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# v3\n"},
+            )
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        hist_resp = await ta.get("/ui/api/files/bedroom.yaml/history")
+        entries = await hist_resp.json()
+        newer = entries[0]["hash"]
+        older = entries[1]["hash"]
+
+        diff_resp = await ta.get(f"/ui/api/files/bedroom.yaml/diff?from={older}&to={newer}")
+        assert diff_resp.status == 200
+        body = await diff_resp.json()
+        assert "diff" in body
+        assert "-# v2" in body["diff"]
+        assert "+# v3" in body["diff"]
+    finally:
+        gv._reset_for_tests()
+        await ta.close()
+
+
+async def test_editor_save_skips_commit_when_toggle_off(tmp_path, _settings_init):
+    """AV.2: turning off auto_commit_on_save disables the git interaction."""
+    import subprocess
+
+    import git_versioning as gv
+    gv._reset_for_tests()
+
+    # Flip the toggle before the save.
+    from settings import update_settings
+    await update_settings({"auto_commit_on_save": False})
+
+    ta = await _make_ui_app(tmp_path)
+    try:
+        _write_config(ta.config_dir, "bedroom.yaml", "bedroom")
+        gv.init_repo(ta.config_dir)
+
+        baseline_log = subprocess.run(
+            ["git", "log", "--format=%s"],
+            cwd=str(ta.config_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+
+        old = gv.DEBOUNCE_SECONDS
+        gv.DEBOUNCE_SECONDS = 0.05
+        try:
+            resp = await ta.post(
+                "/ui/api/targets/bedroom.yaml/content",
+                json={"content": "esphome:\n  name: bedroom\n# edited-but-no-commit\n"},
+            )
+            assert resp.status == 200
+            await gv.drain_pending_commits()
+        finally:
+            gv.DEBOUNCE_SECONDS = old
+
+        after_log = subprocess.run(
+            ["git", "log", "--format=%s"],
+            cwd=str(ta.config_dir),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        assert after_log == baseline_log
+    finally:
+        gv._reset_for_tests()
         await ta.close()

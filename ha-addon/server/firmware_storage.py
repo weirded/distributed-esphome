@@ -170,7 +170,11 @@ def read_firmware(
         return None
 
 
-def reconcile_orphans(active_job_ids: Iterable[str], root: Optional[Path] = None) -> int:
+def reconcile_orphans(
+    active_job_ids: Iterable[str],
+    root: Optional[Path] = None,
+    protected_job_ids: Optional[Iterable[str]] = None,
+) -> int:
     """Delete any `.bin` in *root* whose job is no longer active.
 
     Called once at server startup: the queue file is the source of
@@ -178,6 +182,12 @@ def reconcile_orphans(active_job_ids: Iterable[str], root: Optional[Path] = None
     stale (e.g. add-on was killed mid-cleanup on a previous run).
     Returns the number of files removed. Covers both the pre-#69
     ``{job_id}.bin`` layout and the ``{job_id}.{variant}.bin`` layout.
+
+    Bug #38: *protected_job_ids* is a second "keep" set — typically
+    the job-history job IDs where ``download_only == 1`` so a user's
+    ``.bin`` survives queue coalescing + explicit clears (the user
+    still wants to download it later via the History tab). Protected
+    IDs are unioned with the active set.
     """
     r = _resolve_root(root)
     try:
@@ -185,7 +195,9 @@ def reconcile_orphans(active_job_ids: Iterable[str], root: Optional[Path] = None
             return 0
     except Exception:
         return 0
-    active = set(active_job_ids)
+    keep = set(active_job_ids)
+    if protected_job_ids is not None:
+        keep |= set(protected_job_ids)
     removed = 0
     for entry in r.iterdir():
         if not entry.is_file() or entry.suffix != ".bin":
@@ -195,7 +207,7 @@ def reconcile_orphans(active_job_ids: Iterable[str], root: Optional[Path] = None
         # "foo") and legacy (foo.bin → "foo") layouts.
         base = entry.name[:-len(".bin")]
         job_id = base.split(".", 1)[0]
-        if job_id in active:
+        if job_id in keep:
             continue
         try:
             entry.unlink()
@@ -204,4 +216,70 @@ def reconcile_orphans(active_job_ids: Iterable[str], root: Optional[Path] = None
             logger.debug("Couldn't remove orphan firmware %s", entry, exc_info=True)
     if removed:
         logger.info("Reconciled %d orphan firmware file(s) in %s", removed, r)
+    return removed
+
+
+def enforce_budget(
+    max_bytes: int,
+    protected_job_ids: Iterable[str] = (),
+    root: Optional[Path] = None,
+) -> int:
+    """Evict oldest-mtime firmware files until total size ≤ *max_bytes*.
+
+    Bug #38's "disk pressure eviction" — called by the periodic task
+    in ``main.py``. Files owned by *protected_job_ids* (typically the
+    live queue's ``has_firmware`` set) are never evicted. Within the
+    evictable set we go oldest-mtime first so the most-recent
+    download-only builds stay around for the user.
+
+    Returns the number of files deleted. ``max_bytes <= 0`` is treated
+    as "no limit" and is a no-op.
+    """
+    if max_bytes <= 0:
+        return 0
+    r = _resolve_root(root)
+    try:
+        if not r.is_dir():
+            return 0
+    except Exception:
+        return 0
+    protected = set(protected_job_ids)
+    entries: list[tuple[Path, int, float, str]] = []
+    total = 0
+    for entry in r.iterdir():
+        if not entry.is_file() or entry.suffix != ".bin":
+            continue
+        try:
+            stat = entry.stat()
+        except OSError:
+            continue
+        base = entry.name[:-len(".bin")]
+        job_id = base.split(".", 1)[0]
+        entries.append((entry, stat.st_size, stat.st_mtime, job_id))
+        total += stat.st_size
+    if total <= max_bytes:
+        return 0
+    # Oldest first; protected files stay in place.
+    entries.sort(key=lambda e: e[2])
+    removed = 0
+    for path, size, _mtime, job_id in entries:
+        if total <= max_bytes:
+            break
+        if job_id in protected:
+            continue
+        try:
+            path.unlink()
+            total -= size
+            removed += 1
+            logger.info(
+                "Firmware budget eviction: removed %s (%d bytes, job=%s)",
+                path.name, size, job_id,
+            )
+        except Exception:
+            logger.debug("Firmware budget eviction failed for %s", path, exc_info=True)
+    if removed:
+        logger.info(
+            "Firmware budget enforced: evicted %d file(s); new total ≈ %d bytes (limit %d)",
+            removed, total, max_bytes,
+        )
     return removed

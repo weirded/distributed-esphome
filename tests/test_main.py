@@ -400,3 +400,36 @@ def test_esphome_version_key_mixed_stable_and_betas():
     versions = ["2026.4.0b3", "2026.3.2", "2026.4.0", "2026.4.0b1", "2026.3.3"]
     versions.sort(key=_esphome_version_key, reverse=True)
     assert versions == ["2026.4.0", "2026.4.0b3", "2026.4.0b1", "2026.3.3", "2026.3.2"]
+
+
+# ---------------------------------------------------------------------------
+# Bug #30 — standalone-Docker fallback picks latest stable from PyPI
+# ---------------------------------------------------------------------------
+
+def test_pick_latest_stable_skips_pre_releases():
+    """Picks the newest pure `\\d+(\\.\\d+)*` string, skipping beta/rc/dev."""
+    from main import _pick_latest_stable_version
+
+    # _fetch_pypi_versions returns newest-first, so the picker mirrors that.
+    versions = ["2026.5.0b1", "2026.5.0rc1", "2026.4.0", "2026.4.0b2", "2026.3.3"]
+    assert _pick_latest_stable_version(versions) == "2026.4.0"
+
+
+def test_pick_latest_stable_returns_none_when_empty():
+    from main import _pick_latest_stable_version
+
+    assert _pick_latest_stable_version([]) is None
+
+
+def test_pick_latest_stable_returns_none_when_no_stable():
+    """All pre-releases → nothing to install; caller surfaces a warning."""
+    from main import _pick_latest_stable_version
+
+    assert _pick_latest_stable_version(["2026.5.0b1", "2026.4.0rc2", "2026.3.0dev"]) is None
+
+
+def test_pick_latest_stable_accepts_short_versions():
+    """ESPHome has historically shipped `X.Y` and `X.Y.Z` — both are stable."""
+    from main import _pick_latest_stable_version
+
+    assert _pick_latest_stable_version(["2024.12", "2024.11.5", "2024.11"]) == "2024.12"

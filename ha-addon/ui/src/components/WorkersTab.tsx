@@ -87,12 +87,17 @@ function ClientVersionCell({
   scv,
   imageVer,
   minImageVer,
+  hostname,
   onReinstall,
 }: {
   ver?: string;
   scv?: string;
   imageVer?: string | null;
   minImageVer?: string;
+  /** Worker hostname — used as the default container name in the
+   *  WU.2 refresh-command tooltip. Falls back to a placeholder when
+   *  the worker hasn't reported a hostname yet. */
+  hostname?: string;
   onReinstall: () => void;
 }) {
   // Docker image version is checked first — a stale image blocks source-code
@@ -103,7 +108,7 @@ function ClientVersionCell({
     return (
       <span className="text-[var(--text-muted)]">
         —
-        {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
+        {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} hostname={hostname} onReinstall={onReinstall} />}
       </span>
     );
   }
@@ -118,7 +123,7 @@ function ClientVersionCell({
         {ver}
         {isOutdated && ' ↑'}
       </code>
-      {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} onReinstall={onReinstall} />}
+      {imageStale && <ImageStaleBadge imageVer={imageVer} minImageVer={minImageVer} hostname={hostname} onReinstall={onReinstall} />}
     </span>
   );
 }
@@ -126,23 +131,34 @@ function ClientVersionCell({
 function ImageStaleBadge({
   imageVer,
   minImageVer,
+  hostname,
   onReinstall,
 }: {
   imageVer?: string | null;
   minImageVer?: string;
+  hostname?: string;
   onReinstall: () => void;
 }) {
   const reported = imageVer ?? 'pre-LIB.0';
+  // WU.2: surface the two-liner refresh command directly in the tooltip
+  // so the user doesn't have to find the Connect Worker modal first.
+  // Hostname defaults to a visible placeholder so the user sees where
+  // their container name goes even when we haven't got it on file.
+  const containerName = hostname || '<your-worker-container>';
   return (
     <button
       type="button"
       onClick={onReinstall}
       title={
-        `This worker's Docker image is out of date ` +
+        `Worker image out of date ` +
         `(IMAGE_VERSION=${reported}, server requires ${minImageVer}). ` +
-        `Source-code auto-updates are disabled until the image is rebuilt.\n\n` +
-        `We recommend reinstalling the worker using the latest "docker run" ` +
-        `command from the Connect Worker modal — click this badge to open it.`
+        `Source-code auto-updates are disabled until the image is refreshed.\n\n` +
+        `Refresh in-place (same token, same slots):\n` +
+        `  docker pull ghcr.io/weirded/esphome-dist-client:latest\n` +
+        `  docker restart ${containerName}\n\n` +
+        `Full re-install (new token / changed host platform / stepping past MIN_IMAGE_VERSION): ` +
+        `click this badge to open Connect Worker and copy a fresh snippet.\n\n` +
+        `Details: DOCS → Keeping workers up to date.`
       }
       className="inline-flex items-center rounded-full border border-[var(--destructive)] bg-[var(--destructive)]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--destructive)] cursor-pointer hover:bg-[var(--destructive)]/20"
     >
@@ -372,7 +388,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
             <td>{statusEl}{uptimeEl}</td>
             <td>{jobEl}</td>
-            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} onReinstall={() => onConnectWorker({
+            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} hostname={c.hostname} onReinstall={() => onConnectWorker({
               hostname: c.hostname,
               max_parallel_jobs: c.max_parallel_jobs,
               host_platform: c.system_info?.os_version,
@@ -458,7 +474,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onClick={onCleanAllCaches} disabled={!workers.some(w => w.online)}>
+                  <DropdownMenuItem
+                    onClick={onCleanAllCaches}
+                    disabled={!workers.some(w => w.online)}
+                    title={!workers.some(w => w.online) ? 'No workers are online' : undefined}
+                  >
                     Clean All Caches
                   </DropdownMenuItem>
                 </DropdownMenuGroup>

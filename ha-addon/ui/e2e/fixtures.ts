@@ -139,6 +139,9 @@ export const queue: Job[] = [
     created_at: new Date(Date.now() - 600_000).toISOString(),
     duration_seconds: 120,
     ota_result: 'success',
+    // AV.7: config_hash stamped at enqueue time so the log modal can
+    // offer a "Diff since compile" shortcut into the History panel.
+    config_hash: 'fedcba9876543210fedcba9876543210fedcba98',
   },
   {
     id: 'job-002',
@@ -340,5 +343,129 @@ export async function mockApi(page: Page) {
       return route.fulfill({ status: 200, json: {} });
     }
     return route.fallback();
+  });
+
+  // SP.3 — in-app Settings store. In-memory so GET + PATCH behave like
+  // the real server during a spec: a PATCH returns the updated blob,
+  // and a subsequent GET reflects the change. Reset on each test by
+  // virtue of mockApi running once per beforeEach.
+  // AV.6 mock state — history + status + diff + rollback + manual commit.
+  // Trailing `*` catches any `?limit=...&offset=...` query string.
+  await page.route('**/ui/api/files/*/history*', route => {
+    route.fulfill({
+      json: [
+        {
+          hash: 'fedcba9876543210fedcba9876543210fedcba98',
+          short_hash: 'fedcba9',
+          date: Math.floor(Date.now() / 1000) - 60,
+          author_name: 'HA User',
+          author_email: 'ha@distributed-esphome.local',
+          message: 'save: living-room.yaml',
+          lines_added: 3,
+          lines_removed: 1,
+        },
+        {
+          hash: '0123456789abcdef0123456789abcdef01234567',
+          short_hash: '0123456',
+          date: Math.floor(Date.now() / 1000) - 3600,
+          author_name: 'HA User',
+          author_email: 'ha@distributed-esphome.local',
+          message: 'pin: living-room.yaml',
+          lines_added: 1,
+          lines_removed: 0,
+        },
+      ],
+    });
+  });
+  await page.route('**/ui/api/files/*/status', route => {
+    route.fulfill({
+      json: {
+        has_uncommitted_changes: false,
+        head_hash: 'fedcba9876543210fedcba9876543210fedcba98',
+        head_short_hash: 'fedcba9',
+      },
+    });
+  });
+  await page.route('**/ui/api/files/*/diff*', route => {
+    route.fulfill({
+      json: {
+        diff: '--- a/living-room.yaml\n+++ b/living-room.yaml\n@@ -1,3 +1,3 @@\n-# old line\n+# new line\n',
+      },
+    });
+  });
+  // Bug #10: content-at endpoint for side-by-side diff.
+  await page.route('**/ui/api/files/*/content-at*', route => {
+    const url = new URL(route.request().url());
+    const hash = url.searchParams.get('hash');
+    route.fulfill({
+      json: {
+        content: hash
+          ? `esphome:\n  name: living-room\n# content-at ${hash.slice(0, 7)}\n`
+          : 'esphome:\n  name: living-room\n# current working tree\n',
+      },
+    });
+  });
+  await page.route('**/ui/api/files/*/rollback', route => {
+    route.fulfill({
+      json: {
+        content: '# restored\n',
+        committed: true,
+        hash: 'cafeba5ecafeba5ecafeba5ecafeba5ecafeba5e',
+        short_hash: 'cafeba5',
+      },
+    });
+  });
+  await page.route('**/ui/api/files/*/commit', route => {
+    route.fulfill({
+      json: {
+        committed: true,
+        hash: '1111111111111111111111111111111111111111',
+        short_hash: '1111111',
+        message: 'save: living-room.yaml (manual)',
+      },
+    });
+  });
+
+  const settingsState: Record<string, unknown> = {
+    // #97 + #98: master versioning tristate. ``'on'`` keeps the
+    // existing specs' assumptions (Config-versioning-section inputs
+    // enabled). Specs that exercise the onboarding modal override
+    // this to ``'unset'`` via their own page.route overlay.
+    versioning_enabled: 'on',
+    auto_commit_on_save: true,
+    git_author_name: 'HA User',
+    git_author_email: 'ha@distributed-esphome.local',
+    job_history_retention_days: 365,
+    firmware_cache_max_gb: 2.0,
+    job_log_retention_days: 30,
+    // SP.8 fields (formerly in Supervisor options.json).
+    server_token: 'test-token-abc',
+    job_timeout: 600,
+    ota_timeout: 120,
+    worker_offline_threshold: 30,
+    device_poll_interval: 60,
+    require_ha_auth: true,
+    // #82: default to 'auto' (follow browser locale).
+    time_format: 'auto',
+  };
+  await page.route('**/ui/api/settings', async (route) => {
+    const method = route.request().method();
+    if (method === 'PATCH') {
+      let body: Record<string, unknown> = {};
+      try {
+        body = JSON.parse(route.request().postData() ?? '{}');
+      } catch {
+        return route.fulfill({ status: 400, json: { error: 'bad json' } });
+      }
+      // Reject unknown keys the way the real endpoint does.
+      for (const key of Object.keys(body)) {
+        if (!(key in settingsState)) {
+          return route.fulfill({ status: 400, json: { error: `${key}: unknown settings key`, field: key } });
+        }
+        settingsState[key] = body[key];
+      }
+      return route.fulfill({ json: settingsState });
+    }
+    return route.fulfill({ json: settingsState });
   });
 }

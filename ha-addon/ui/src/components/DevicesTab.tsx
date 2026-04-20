@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { Settings2 } from 'lucide-react';
 import {
   useReactTable,
@@ -9,11 +10,22 @@ import {
   type VisibilityState,
   type RowSelectionState,
 } from '@tanstack/react-table';
-import { pinTargetVersion, unpinTargetVersion } from '../api/client';
+import {
+  getArchivedConfigs,
+  pinTargetVersion,
+  unpinTargetVersion,
+  type ArchivedConfig,
+} from '../api/client';
 import type { AddressSource, Device, Job, Target, Worker } from '../types';
 import { stripYaml, haDeepLink, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
-import { Button } from './ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+import { ArchivedDevicesList } from './ArchivedDevicesList';
 import { getAriaSort } from './ui/sort-header';
 import { DeleteModal, RenameModal } from './devices/DeviceTableModals';
 import { useDeviceColumns } from './devices/useDeviceColumns';
@@ -30,7 +42,7 @@ import {
 } from './ui/dropdown-menu';
 
 /* ---- Column configuration ---- */
-type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule';
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule' | 'last_compiled';
 
 interface OptionalColumnDef {
   id: OptionalColumnId;
@@ -38,15 +50,22 @@ interface OptionalColumnDef {
   defaultVisible: boolean;
 }
 
+// #69: entries are ordered to match the actual column render order in
+// ``useDeviceColumns.tsx``. The picker renders checkboxes in this
+// order, so keeping them aligned means toggling a column on/off
+// matches the user's left-to-right reading of the table itself.
 const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'status', label: 'Status', defaultVisible: true },
   { id: 'ha', label: 'HA', defaultVisible: true },
   { id: 'ip', label: 'IP', defaultVisible: true },
   { id: 'net', label: 'Net', defaultVisible: true },
-  { id: 'running', label: 'Version', defaultVisible: true },
   { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
   { id: 'ap', label: 'AP', defaultVisible: false },
   { id: 'schedule', label: 'Schedule', defaultVisible: true },
+  // JH.6: opt-in "Last compiled" column. Off by default so existing users
+  // see no layout churn; power users toggle it on to spot stale devices.
+  { id: 'last_compiled', label: 'Last compiled', defaultVisible: false },
+  { id: 'running', label: 'ESPHome', defaultVisible: true },
   { id: 'area', label: 'Area', defaultVisible: false },
   { id: 'comment', label: 'Comment', defaultVisible: false },
   { id: 'project', label: 'Project', defaultVisible: false },
@@ -100,6 +119,12 @@ interface Props {
   onNewDevice: () => void;
   /** CD.6: open the NewDeviceModal in "duplicate" mode, pre-filling the source. */
   onDuplicate: (sourceTarget: string) => void;
+  /** AV.6: open the per-file History panel from the row hamburger menu. */
+  onOpenHistory: (target: string) => void;
+  /** JH.5: open the per-device Compile History panel. */
+  onOpenCompileHistory: (target: string) => void;
+  /** Bug #16: open the manual-commit dialog for a target. */
+  onCommitChanges: (target: string) => void;
   /** Trigger an immediate SWR revalidation of the devices/targets data. */
   onRefresh: () => void;
 }
@@ -137,7 +162,7 @@ function formatAddressSource(source: AddressSource | null | undefined): string |
 // RenameModal is re-exported so App.tsx's existing import path still works.
 export { RenameModal };
 
-export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename, onSchedule, onNewDevice, onDuplicate, onRefresh }: Props) {
+export function DevicesTab({ targets, devices, workers, streamerMode, activeJobsByTarget, onCompile, onUpgradeOne, onEdit, onLogs, onToast, onDelete, onRename, onSchedule, onNewDevice, onDuplicate, onOpenHistory, onOpenCompileHistory, onCommitChanges, onRefresh }: Props) {
   const [filter, setFilter] = useState('');
   // QS.27: persist sort across reloads via localStorage.
   const [sorting, setSorting] = usePersistedState<SortingState>('devices-sort', []);
@@ -149,6 +174,31 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   // triggered by SWR polls. See useDeviceColumns / DeviceContextMenu.
   const [menuOpenTarget, setMenuOpenTarget] = useState<string | null>(null);
   const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
+  // #62: Devices-toolbar Archive button → shadcn Dialog wrapping the
+  // shared ArchivedDevicesList component. State lives here rather
+  // than in App.tsx because the button's local to this tab.
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  // #70: "Duplicate existing device" picker state. Opened from the
+  // "Add device ▾" dropdown. Shows a list of existing targets the
+  // user can pick to duplicate; selection calls onDuplicate() which
+  // routes back to the NewDeviceModal in duplicate mode.
+  const [duplicatePickerOpen, setDuplicatePickerOpen] = useState(false);
+  // #73: watch archive count so we can (a) gray out the "Restore from
+  // archive" menu item when the archive is empty and (b) auto-close
+  // the archive dialog once the user restores or permanently-deletes
+  // its last item. Both this hook and ArchivedDevicesList subscribe to
+  // the same SWR key, so SWR dedupes the request and a mutate() from
+  // the list re-renders both. revalidateOnFocus stays off to match
+  // the list's config.
+  const { data: archivedConfigs } = useSWR<ArchivedConfig[]>(
+    'archived-configs',
+    getArchivedConfigs,
+    { revalidateOnFocus: false },
+  );
+  const archiveEmpty = !archivedConfigs || archivedConfigs.length === 0;
+  useEffect(() => {
+    if (archiveOpen && archiveEmpty) setArchiveOpen(false);
+  }, [archiveOpen, archiveEmpty]);
 
   // VP.4 / QS.20: pin/unpin version from the hamburger menu. Memoized so
   // useDeviceColumns' dep array can actually cache — the hook re-runs only
@@ -262,6 +312,9 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
     onRequestDelete: setDeleteTarget,
     onPin: handlePin,
     onUnpin: handleUnpin,
+    onOpenHistory,
+    onOpenCompileHistory,
+    onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
   });
@@ -331,12 +384,38 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
             )}
           </div>
           <div className="actions">
-            {/* CD.5: "+ New Device" button. #46: use default variant (primary
-                styling) so it reads as a real action button, matching the visual
-                weight of the Upgrade/Actions dropdown triggers next to it. */}
-            <Button size="sm" onClick={onNewDevice} title="Create a new device YAML">
-              + New Device
-            </Button>
+            {/* #70: "Add device ▾" dropdown consolidates the three ways
+                a device lands in the fleet — blank-slate new, duplicate
+                from an existing YAML, or restore from the soft-delete
+                archive. Replaces the separate "+ New Device" + "Archive…"
+                buttons. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
+                Add device <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[220px]">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={onNewDevice}>
+                    New device…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setDuplicatePickerOpen(true)}
+                    disabled={targets.length === 0}
+                    title={targets.length === 0 ? "No existing devices to duplicate" : undefined}
+                  >
+                    Duplicate existing device…
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setArchiveOpen(true)}
+                    disabled={archiveEmpty}
+                    title={archiveEmpty ? "Archive is empty — delete a device to populate it" : undefined}
+                  >
+                    Restore from archive…
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {/* Upgrade dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-primary px-2.5 h-7 text-[0.8rem] font-medium text-primary-foreground hover:bg-primary/80 cursor-pointer">
@@ -487,6 +566,61 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
       )}
 
       {/* QS.18: bulk schedule UpgradeModal moved into DeviceTableActions. */}
+
+      {/* #62: Archive modal — toolbar "Archive…" button opens a Dialog
+          that wraps the shared ArchivedDevicesList. Same list the
+          Settings drawer renders; only the entry point differs. */}
+      <Dialog open={archiveOpen} onOpenChange={setArchiveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Archived devices</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 pb-4 pt-2">
+            <ArchivedDevicesList />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* #70: "Duplicate existing device" picker — list every current
+          target as a clickable row; picking one forwards to
+          onDuplicate() which is wired to the NewDeviceModal in
+          duplicate mode in App.tsx. */}
+      <Dialog open={duplicatePickerOpen} onOpenChange={setDuplicatePickerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pick a device to duplicate</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 pb-4 pt-2 flex flex-col gap-2 max-h-[50vh] overflow-y-auto">
+            {targets.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)]">
+                No existing devices to duplicate.
+              </p>
+            ) : (
+              targets
+                .slice()
+                .sort((a, b) => (a.friendly_name || a.target).localeCompare(b.friendly_name || b.target))
+                .map((t) => (
+                  <button
+                    key={t.target}
+                    type="button"
+                    className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-left hover:border-[var(--accent)] cursor-pointer"
+                    onClick={() => {
+                      setDuplicatePickerOpen(false);
+                      onDuplicate(t.target);
+                    }}
+                  >
+                    <span className="flex-1 text-[13px] text-[var(--text)]">
+                      {t.friendly_name || t.device_name || t.target}
+                    </span>
+                    <span className="ml-2 text-[11px] font-mono text-[var(--text-muted)]">
+                      {t.target}
+                    </span>
+                  </button>
+                ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

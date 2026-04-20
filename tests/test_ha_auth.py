@@ -18,7 +18,11 @@ from ha_auth import (
 
 def _make_app(require_ha_auth: bool = False, token: str = "") -> web.Application:
     app = web.Application()
-    app["config"] = AppConfig(require_ha_auth=require_ha_auth, token=token)
+    app["config"] = AppConfig()
+    # SP.8: token + require_ha_auth live in Settings now.
+    import settings as _s
+    _s._reset_for_tests()
+    _s._set_for_tests(server_token=token or "placeholder", require_ha_auth=require_ha_auth)
     return app
 
 
@@ -362,7 +366,10 @@ async def test_empty_server_token_does_not_accept_empty_bearer() -> None:
 
 
 async def test_require_ha_auth_default_is_true() -> None:
-    """AU.7: mandatory in 1.5.0. AppConfig() with no overrides must set
-    require_ha_auth=True so the middleware rejects unauthenticated calls."""
-    cfg = AppConfig()
-    assert cfg.require_ha_auth is True
+    """AU.7: mandatory in 1.5.0, still mandatory post-SP.8 move to Settings.
+
+    The default lives on AppSettings now — setting up the drawer without
+    any user edits must still leave direct-port access locked.
+    """
+    from settings import AppSettings  # noqa: PLC0415
+    assert AppSettings().require_ha_auth is True

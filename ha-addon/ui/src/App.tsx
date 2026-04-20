@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Eye, EyeOff, Moon, Sun } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, Moon, Settings as SettingsIcon, Sun } from 'lucide-react';
 import useSWR from 'swr';
 import {
   cancelJobs,
   cleanWorkerCache,
   clearQueue,
+  commitFile,
   compile,
   deleteTarget,
 
@@ -15,8 +16,10 @@ import {
   getInitialAddonVersion,
   getQueue,
   getServerInfo,
+  getSettings,
   getTargets,
   getWorkers,
+  type AppSettings,
   isUnauthorizedError,
   removeWorker,
   renameTarget,
@@ -43,11 +46,25 @@ import { EditorModal } from './components/EditorModal';
 import { EsphomeVersionDropdown } from './components/EsphomeVersionDropdown';
 import { LogModal } from './components/LogModal';
 import { QueueTab } from './components/QueueTab';
+import { SettingsDrawer } from './components/SettingsDrawer';
+import { VersioningOnboardingModal } from './components/VersioningOnboardingModal';
+import { HistoryPanel } from './components/HistoryPanel';
+import { CompileHistoryPanel } from './components/CompileHistoryPanel';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
+import { Button } from './components/ui/button';
+import { Input } from './components/ui/input';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog';
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, Job, Target, Worker } from './types';
-import { stripYaml } from './utils';
+import { setTimeFormatPref, stripYaml } from './utils';
 import esphomeLogoUrl from './assets/esphome-logo.svg';
 import './theme.css';
 
@@ -133,6 +150,27 @@ function _initialTab(): TabName {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabName>(_initialTab);
+  // SP.4: Settings drawer (gear icon in header). Lifted here so other
+  // surfaces can deep-link into Settings later (e.g. a tooltip's
+  // "Configure auto-commit →").
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // AV.6: per-file history panel. `null` = closed; otherwise the filename.
+  const [historyTarget, setHistoryTarget] = useState<string | null>(null);
+  // JH.5: which target's Compile History drawer is open (null = closed).
+  const [compileHistoryTarget, setCompileHistoryTarget] = useState<string | null>(null);
+  // Bug #31: nonce bumped whenever the History panel reports an on-disk
+  // change for the currently-edited file (rollback, manual commit, etc).
+  // EditorModal depends on this in its fetch effect so the buffer
+  // reloads to reflect the restored version.
+  const [editorReloadNonce, setEditorReloadNonce] = useState(0);
+  // AV.7: optional "from" hash preset passed to HistoryPanel so the
+  // "Diff since compile" flow lands on (from=job.config_hash, to=Current).
+  const [historyFromHash, setHistoryFromHash] = useState<string | null>(null);
+  // Bug #16: manual-commit dialog state. When set, the Commit-Changes
+  // dialog renders with this target prefilled.
+  const [commitDialogTarget, setCommitDialogTarget] = useState<string | null>(null);
+  const [commitDialogMessage, setCommitDialogMessage] = useState('');
+  const [commitDialogBusy, setCommitDialogBusy] = useState(false);
   // QS.6: SWR's default compare (stable-hash) already prevents re-renders
   // when polled data is structurally unchanged. The custom JSON.stringify
   // compare we used to have was strictly worse — O(n) serialization of the
@@ -161,6 +199,18 @@ export default function App() {
     getEsphomeVersions,
     { refreshInterval: 15 * 60_000, onError: logSwrError('versions') },
   );
+  // #82 / UX_REVIEW §3.10 — subscribe to /ui/api/settings at the app
+  // root so the time-format preference propagates to every surface
+  // (Queue, History, Log timestamps) via the module-local pref in
+  // utils/format.ts. SWR's default dedupe means this is a single fetch
+  // shared with the Settings drawer + EditorModal's own subscribers.
+  const { data: appSettings, mutate: mutateAppSettings } = useSWR<AppSettings>('settings', getSettings, {
+    refreshInterval: 30_000,
+    onError: logSwrError('settings'),
+  });
+  useEffect(() => {
+    if (appSettings?.time_format) setTimeFormatPref(appSettings.time_format);
+  }, [appSettings?.time_format]);
   // Poll at 1 Hz for live-feeling updates. Workers + queue are pure in-memory
   // reads. Targets/devices does a readdir + per-target stat() for mtime cache
   // checks (metadata resolution is cached and only re-fires when a file
@@ -644,6 +694,17 @@ export default function App() {
           ESPHome Web
           <ExternalLink className="size-3" aria-hidden />
         </a>
+        {/* SP.4: Settings drawer — gear icon follows the same icon-button
+            shape as theme and streamer above. */}
+        <button
+          type="button"
+          aria-label="Settings"
+          className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-[var(--border)] bg-[var(--surface2)] text-[var(--text-muted)] cursor-pointer hover:bg-[var(--border)]"
+          onClick={() => setSettingsOpen(true)}
+          title="Settings"
+        >
+          <SettingsIcon className="size-3.5" />
+        </button>
         <span className="spacer" />
         <span className="status-dot" title="Server online" />
       </header>
@@ -689,6 +750,9 @@ export default function App() {
             onSchedule={(t) => handleOpenUpgradeModal(t, 'schedule')}
             onNewDevice={() => setNewDeviceModal({ mode: 'new' })}
             onDuplicate={(sourceTarget) => setNewDeviceModal({ mode: 'duplicate', sourceTarget })}
+            onOpenHistory={(target) => setHistoryTarget(target)}
+            onOpenCompileHistory={(target) => setCompileHistoryTarget(target)}
+            onCommitChanges={(target) => { setCommitDialogMessage(''); setCommitDialogTarget(target); }}
             onRefresh={() => mutateDevices()}
           />
         )}
@@ -706,6 +770,10 @@ export default function App() {
             onClearAll={handleClearAll}
             onOpenLog={setLogJobId}
             onEdit={(target) => setEditorTarget(target)}
+            onOpenHistoryDiff={(target, fromHash) => {
+              setHistoryFromHash(fromHash);
+              setHistoryTarget(target);
+            }}
           />
         )}
         {activeTab === 'workers' && (
@@ -763,6 +831,15 @@ export default function App() {
 
       <Toaster />
 
+      {/* #98: first-login onboarding for config versioning. Rendered
+          only when the server reports versioning_enabled='unset' —
+          the modal writes 'on' or 'off' and then unmounts via the
+          SWR mutate. No Esc/outside-click dismiss — the user has to
+          make an explicit choice (see VersioningOnboardingModal). */}
+      {appSettings?.versioning_enabled === 'unset' && (
+        <VersioningOnboardingModal onDecided={() => void mutateAppSettings()} />
+      )}
+
       <LogModal
         jobId={logJobId}
         queue={queue}
@@ -770,6 +847,11 @@ export default function App() {
         onClose={() => setLogJobId(null)}
         onRetry={handleRetryJobs}
         onEdit={(target) => { setLogJobId(null); setEditorTarget(target); }}
+        onOpenHistoryDiff={(target, fromHash) => {
+          setLogJobId(null);
+          setHistoryFromHash(fromHash);
+          setHistoryTarget(target);
+        }}
         stacked={!!editorTarget}
       />
 
@@ -809,8 +891,11 @@ export default function App() {
           // saves first (in handleSaveAndUpgrade) — this just changes what
           // happens AFTER the save.
           onCompile={(target) => handleOpenUpgradeModal(target)}
+          onOpenHistory={(target) => setHistoryTarget(target)}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
           esphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? undefined}
+          // Bug #31: bump to trigger a re-fetch after History Restore.
+          reloadNonce={editorReloadNonce}
         />
       )}
 
@@ -822,6 +907,111 @@ export default function App() {
           onClose={() => { setConnectModalOpen(false); setConnectModalPreset(null); }}
         />
       )}
+
+      {/* SP.4: Settings drawer — always mounted so the Sheet component
+          can animate its own open/close; internal SWR fetch is gated
+          on the `open` prop so closed state is zero network traffic.
+          Bug #17: dirtyTargets drives the toggle-off confirmation. */}
+      <SettingsDrawer
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        dirtyTargets={targets.filter(t => t.has_uncommitted_changes).map(t => t.target)}
+      />
+
+      {/* JH.5: per-device Compile History drawer. Mounted once;
+          internal SWR gates on the `target !== null` open state. */}
+      <CompileHistoryPanel
+        target={compileHistoryTarget}
+        onOpenChange={(open) => { if (!open) setCompileHistoryTarget(null); }}
+        // Bug #41: hash-cell → AV.6 History drawer preset to
+        // `from=hash, to=Current`. Matches Queue tab's Commit column.
+        onOpenHistoryDiff={(target, fromHash) => {
+          setHistoryFromHash(fromHash);
+          setHistoryTarget(target);
+        }}
+      />
+
+      {/* AV.6: per-file History + diff panel. Same Sheet pattern —
+          mounted once, internal SWR gates on `filename !== null`.
+          AV.7 passes an initialFromHash when opened via "Diff since
+          compile" so the panel lands on the right comparison. */}
+      <HistoryPanel
+        filename={historyTarget}
+        initialFromHash={historyFromHash}
+        // #100: thread the app theme into the DiffEditor so the history
+        // panel matches the surrounding surface in light mode instead
+        // of hard-coding vs-dark. Same expression EditorModal uses.
+        monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
+        onOpenChange={(open) => { if (!open) { setHistoryTarget(null); setHistoryFromHash(null); } }}
+        // Bug #31: bump the nonce on rollback / manual commit so any
+        // open EditorModal re-fetches the file content. Conditioned on
+        // the editor being open for the same target — no point bumping
+        // when the editor is closed (the next open will fetch fresh).
+        onFileChanged={() => {
+          if (editorTarget && historyTarget === editorTarget) {
+            setEditorReloadNonce(n => n + 1);
+          }
+        }}
+      />
+
+      {/* Bug #16: manual-commit Dialog for the Devices-row "Commit
+          changes…" hamburger action. Optional message defaults to the
+          server-side "Manually committed from UI" marker when left blank. */}
+      <Dialog
+        open={commitDialogTarget !== null}
+        onOpenChange={(open) => { if (!open) setCommitDialogTarget(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Commit changes to {commitDialogTarget}</DialogTitle>
+          </DialogHeader>
+          <div className="px-4 py-3 flex flex-col gap-2 text-sm text-[var(--text)]">
+            <p className="text-xs text-[var(--text-muted)]">
+              Optional commit message. Leave blank to use the default{' '}
+              <code className="font-mono text-xs">Manually committed from UI</code>.
+            </p>
+            <Input
+              type="text"
+              className="font-mono text-xs"
+              placeholder="Manually committed from UI"
+              value={commitDialogMessage}
+              onChange={e => setCommitDialogMessage(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <DialogClose>
+              <Button variant="secondary" size="sm" disabled={commitDialogBusy}>Cancel</Button>
+            </DialogClose>
+            <Button
+              size="sm"
+              disabled={commitDialogBusy || commitDialogTarget === null}
+              onClick={async () => {
+                const target = commitDialogTarget;
+                if (!target) return;
+                setCommitDialogBusy(true);
+                try {
+                  const result = await commitFile(target, commitDialogMessage.trim() || undefined);
+                  if (result.committed) {
+                    addToast(`Committed ${result.short_hash}`, 'success');
+                  } else {
+                    addToast('Nothing to commit', 'info');
+                  }
+                  setCommitDialogTarget(null);
+                  setCommitDialogMessage('');
+                  await mutateDevices();
+                } catch (err) {
+                  addToast('Commit failed: ' + (err as Error).message, 'error');
+                } finally {
+                  setCommitDialogBusy(false);
+                }
+              }}
+            >
+              Commit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* #22: Unified Upgrade modal — handles both immediate upgrades and scheduling */}
       {upgradeModalTarget && (() => {
