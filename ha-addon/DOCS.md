@@ -20,17 +20,26 @@ Start the add-on, then open the web UI via the **ESPHome Fleet** entry in the HA
 
 Everything user-facing is configured from the **Settings drawer** inside the web UI — click the gear icon in the top-right of the header. As of 1.6.0 the Supervisor **Configuration** tab is intentionally empty: all the old options (`token`, timeouts, thresholds, `require_ha_auth`) moved into the Settings drawer so edits apply instantly without restarting the add-on. Existing values from pre-1.6 installs are auto-migrated on first boot.
 
-The Settings drawer, section by section:
+The drawer is split into **Basic** and **Advanced** tabs. Basic holds the settings you'll touch most (versioning, authentication, display). Advanced holds the plumbing knobs (retention, cache, timeouts, polling) that rarely need tweaking after install.
+
+### Basic tab
 
 | Section | Setting | Default | What it does |
 |---|---|---|---|
-| Config versioning | Auto-commit on save | on | Every save creates a local git commit in `/config/esphome/`. Turn off if you manage this directory with your own git workflow. |
+| Config versioning | Enable versioning | *(asks on first login)* | Master toggle for the local git-backed history of `/config/esphome/`. When on, every save is a commit, and the Devices hamburger + Queue tab gain history/diff/rollback affordances. When off, Fleet runs zero git commands. Fresh installs show a one-time onboarding modal that asks your preference; existing git repos auto-enable. |
+| Config versioning | Auto-commit on save | on | Every save creates a local git commit in `/config/esphome/`. Turn off if you manage this directory with your own git workflow and only want manual commits through the History panel. |
 | Config versioning | Commit author name / email | `HA User` / `ha@distributed-esphome.local` | Identity used on Fleet-created commits. Respects the repo's own `user.name`/`user.email` if you've set one — the Settings values only kick in when the repo has nothing configured. |
+| Authentication | Server token | *(auto-generated)* | Shared bearer token workers and direct-port API use. Changing it will disconnect existing workers until their `SERVER_TOKEN` env var is updated. Masked by default — click the eye to reveal, the copy button to grab for a worker snippet. |
+| Authentication | Require HA auth on direct port | on | When on, port-8765 requests outside the Ingress tunnel must carry a valid HA bearer token or this server token. Leave on unless you have a specific reason to allow anonymous direct-port access. Ingress access is unaffected either way. |
+| Display | Time format | auto | How times render in the Queue, History, and log timestamps. `auto` follows the browser's resolved locale (`Intl.DateTimeFormat` hour12); `12h` / `24h` force the format. |
+
+### Advanced tab
+
+| Section | Setting | Default | What it does |
+|---|---|---|---|
 | Job history | Retention (days) | 365 | How long to keep per-job compile history. `0` = unlimited. |
 | Disk management | Firmware cache size (GB) | 2.0 | Maximum disk space the server will use to cache compiled firmware. |
 | Disk management | Job log retention (days) | 30 | How long to keep per-job build logs on disk. `0` = unlimited. |
-| Authentication | Server token | *(auto-generated)* | Shared bearer token workers and direct-port API use. Changing it will disconnect existing workers until their `SERVER_TOKEN` env var is updated. Masked by default — click the eye to reveal, the copy button to grab for a worker snippet. |
-| Authentication | Require HA auth on direct port | on | When on, port-8765 requests outside the Ingress tunnel must carry a valid HA bearer token or this server token. Leave on unless you have a specific reason to allow anonymous direct-port access. Ingress access is unaffected either way. |
 | Timeouts | Job timeout (seconds) | 600 | Maximum wall-clock seconds a single compile job may run. Bump if you have unusually large configs or a slow worker. |
 | Timeouts | OTA timeout (seconds) | 120 | Maximum seconds for the OTA upload after a successful compile. Bump if you have a slow / lossy WiFi link to some devices. |
 | Timeouts | Worker offline threshold (seconds) | 30 | Seconds without a heartbeat before a worker is flagged offline in the Workers tab. Don't set below the worker's heartbeat interval (default 10s) — 30s gives three missed beats before the UI flips. |

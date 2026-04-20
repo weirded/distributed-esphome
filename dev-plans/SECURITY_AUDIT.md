@@ -1,9 +1,13 @@
 # Security Audit: ESPHome Fleet
 
 **Original audit:** 2026-03-29 (version 0.0.21; at the time of audit the product was called "ESPHome Distributed Build Server", renamed to ESPHome Fleet in 1.4.1, renumbered to 1.5.0 late cycle).
-**Last refreshed:** 2026-04-16 against 1.5.0-dev.75+.
+**Last refreshed:** 2026-04-19 against 1.6.0.
 **Scope:** Server add-on (`ha-addon/server/`), Dockerfile, `run.sh`, `config.yaml`, and the bundled worker (`client/client.py`) as it interacts with the server security model.
 
+> **Refresh note (2026-04-19, 1.6.0):** No new security workitems this cycle. The 1.6 release is feature-focused (config versioning, job history, in-app Settings drawer) and didn't alter the server's auth model, token handling, or trust boundaries. All 1.5.0-era mitigations (SC.1/SC.3, SA.1/SA.2, AU.1) remain in place and are re-verified by the same invariants and tests that gate CI. Finding statuses from the 2026-04-16 refresh carry forward unchanged — `grep -nE '^- \[x\] \*\*(SC|SA|AU)\.[0-9]' dev-plans/WORKITEMS-1.6.md` returns empty.
+>
+> Note on new attack surface: the auto-versioning (AV.*) feature shells out to `git` with a fixed config directory and hash-validated arguments (`_run` helper + 4–40 hex regex for every hash input), so the new code doesn't widen the argv injection surface. Archive-restore + delete go through the same helper. Job history DAO uses parameterised SQLite queries (no string-formatted SQL anywhere in `job_history.py`), so the new `/ui/api/history` query endpoints don't open a SQLi vector. Settings PATCH validator is per-field and rejects unknown keys (same shape as 1.5) — the new `versioning_enabled: 'on'/'off'/'unset'` and `time_format: 'auto'/'12h'/'24h'` enums are whitelist-checked.
+>
 > **Refresh note (2026-04-16):** Walk-through with the project owner against current code. Status flips in this refresh:
 > - **F-06, F-07, F-08, F-17** moved OPEN/PARTIAL → **WONTFIX** — each is by-design for the documented home-network threat model (see new Threat Model section below). The code isn't changing; this is the audit catching up to the decisions.
 > - **F-11** moved WONTFIX → **INFO** — build logs contain values the server already has (it distributed them in `secrets.yaml` via the job bundle); logging them back doesn't cross a trust boundary. Not a finding.
