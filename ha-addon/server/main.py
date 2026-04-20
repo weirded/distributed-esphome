@@ -818,12 +818,18 @@ async def _old_schedule_checker(app: web.Application) -> None:
     app["_rt"]["schedule_checker_last_error"] = None
 
     def _get_ota_address(target: str) -> str | None:
+        # Bug #18 (1.6.1): route through ``resolve_ota_address`` so the
+        # static_ip vs. mDNS vs. ``.local`` precedence stays consistent
+        # with scheduler + ui_api. The old inline expression preferred
+        # the override over the real IP even when the override was a
+        # stale ``.local`` fallback; the helper picks the best IP
+        # literal available.
         device_poller = app.get("device_poller")
         if not device_poller:
             return None
         for dev in device_poller.get_devices():
             if dev.compile_target == target and dev.ip_address:
-                return device_poller._address_overrides.get(dev.name) or dev.ip_address
+                return device_poller.resolve_ota_address(dev.name)
         return None
 
     next_sleep = 5.0  # first tick after 5s

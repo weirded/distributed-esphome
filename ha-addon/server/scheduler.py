@@ -53,7 +53,9 @@ async def _fire_recurring(target: str) -> None:
     if device_poller:
         for dev in device_poller.get_devices():
             if dev.compile_target == target and dev.ip_address:
-                ota_address = device_poller._address_overrides.get(dev.name) or dev.ip_address
+                # Bug #18 (1.6.1): shared best-address helper — picks
+                # a real IP over a stale ``.local`` fallback.
+                ota_address = device_poller.resolve_ota_address(dev.name)
                 break
 
     run_id = str(uuid.uuid4())
@@ -95,7 +97,9 @@ async def _fire_once(target: str) -> None:
     if device_poller:
         for dev in device_poller.get_devices():
             if dev.compile_target == target and dev.ip_address:
-                ota_address = device_poller._address_overrides.get(dev.name) or dev.ip_address
+                # Bug #18 (1.6.1): shared best-address helper — picks
+                # a real IP over a stale ``.local`` fallback.
+                ota_address = device_poller.resolve_ota_address(dev.name)
                 break
 
     run_id = str(uuid.uuid4())

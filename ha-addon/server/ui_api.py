@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -353,6 +354,23 @@ async def get_settings_handler(request: web.Request) -> web.Response:
     return web.json_response(settings_as_dict())
 
 
+def _versioning_just_enabled(previous: str | None, partial: dict) -> bool:
+    """Bug #19 (1.6.1): pure-function transition detector used by
+    :func:`patch_settings_handler` to decide whether to fire
+    :func:`git_versioning.init_repo` after a PATCH. Lifted out of the
+    handler so it's testable without the aiohttp request harness.
+
+    Returns True only when the partial update explicitly sets
+    ``versioning_enabled`` to ``"on"`` AND the previous value was
+    something else (``"unset"`` first boot, ``"off"`` deliberate opt
+    out). No-ops when the key isn't in the partial at all — that's
+    important because other PATCH calls mustn't re-trigger init.
+    """
+    if partial.get("versioning_enabled") != "on":
+        return False
+    return previous != "on"
+
+
 @routes.patch("/ui/api/settings")
 async def patch_settings_handler(request: web.Request) -> web.Response:
     """SP.3: partial update of in-app Settings.
@@ -361,7 +379,7 @@ async def patch_settings_handler(request: web.Request) -> web.Response:
     known fields. Unknown keys or out-of-range values return 400 with
     the offending field name so the UI can surface the error.
     """
-    from settings import SettingsValidationError, settings_as_dict, update_settings  # noqa: PLC0415
+    from settings import SettingsValidationError, get_settings, settings_as_dict, update_settings  # noqa: PLC0415
 
     try:
         partial = await request.json()
@@ -371,6 +389,14 @@ async def patch_settings_handler(request: web.Request) -> web.Response:
     if not isinstance(partial, dict):
         return json_error("Request body must be a JSON object", status=400)
 
+    # Bug #19 (1.6.1): capture the pre-write value so we can detect the
+    # versioning_enabled "unset|off → on" transition and kick off a
+    # one-shot ``git init`` in the config directory. Without this the
+    # user flips the toggle on, every subsequent save lands on disk
+    # but silently bypasses commit_file (no .git/), and the History
+    # drawer reads empty until the next add-on restart.
+    previous_versioning = get_settings().versioning_enabled
+
     try:
         await update_settings(partial)
     except SettingsValidationError as exc:
@@ -378,6 +404,27 @@ async def patch_settings_handler(request: web.Request) -> web.Response:
             {"error": str(exc), "field": exc.field},
             status=400,
         )
+
+    # Bug #19: post-swap hook. Runs outside the settings lock so a
+    # slow ``git init`` doesn't stall concurrent settings reads.
+    if _versioning_just_enabled(previous_versioning, partial):
+        try:
+            from git_versioning import init_repo  # noqa: PLC0415
+            cfg = _cfg(request)
+            loop = asyncio.get_running_loop()
+            created = await loop.run_in_executor(None, init_repo, Path(cfg.config_dir))
+            if created:
+                logger.info(
+                    "Bug #19: git repo initialised at %s after post-boot "
+                    "versioning_enabled flip (was %r → on)",
+                    cfg.config_dir, previous_versioning,
+                )
+        except Exception:
+            logger.exception(
+                "Bug #19: init_repo failed after versioning flip; history "
+                "will stay empty until the add-on is restarted. See "
+                "dev-plans/WORKITEMS-1.6.1.md bug #19 for context.",
+            )
 
     logger.info("Settings updated%s: %s", _who(request), ", ".join(sorted(partial.keys())))
     return web.json_response(settings_as_dict())
@@ -1876,12 +1923,16 @@ async def start_compile(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid targets value"}, status=400)
 
     # Build a map of target → device IP for OTA addressing
+    # Bug #18 (1.6.1): resolve_ota_address picks a real IP over a
+    # stale ``.local`` fallback so static-IP devices can't regress
+    # to the mDNS hostname the worker's container can't resolve.
     ota_addresses: dict[str, str] = {}
     if device_poller:
         for dev in device_poller.get_devices():
             if dev.compile_target and dev.ip_address:
-                addr = device_poller._address_overrides.get(dev.name) or dev.ip_address
-                ota_addresses[dev.compile_target] = addr
+                addr = device_poller.resolve_ota_address(dev.name)
+                if addr:
+                    ota_addresses[dev.compile_target] = addr
 
     run_id = str(uuid.uuid4())
     enqueued = 0
@@ -2307,7 +2358,10 @@ async def rename_target(request: web.Request) -> web.Response:
         for d in device_poller.get_devices():
             if d.compile_target == filename:
                 old_dev_name = d.name
-                old_device_addr = device_poller._address_overrides.get(d.name) or d.ip_address
+                # Bug #18 (1.6.1): route through the shared best-address
+                # helper so rename compiles get the same static-IP-aware
+                # resolution as every other OTA path.
+                old_device_addr = device_poller.resolve_ota_address(d.name)
                 break
         if old_dev_name and old_dev_name in device_poller._devices:
             del device_poller._devices[old_dev_name]

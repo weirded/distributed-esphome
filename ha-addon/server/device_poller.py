@@ -67,6 +67,23 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _is_ip_literal(addr: str) -> bool:
+    """Bug #18 (1.6.1): True when *addr* parses as an IPv4 or IPv6
+    literal. Used by :meth:`DevicePoller.resolve_ota_address` to
+    decide whether to trust an address override; a literal is
+    always better than a ``.local`` hostname on networks where the
+    worker's Docker container can't resolve mDNS.
+    """
+    if not addr:
+        return False
+    import ipaddress  # noqa: PLC0415
+    try:
+        ipaddress.ip_address(addr)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
 @dataclass
 class Device:
     name: str
@@ -620,6 +637,47 @@ class DevicePoller:
         ESPHome normalizes device names for mDNS — hyphens become underscores.
         """
         return name.replace("-", "_")
+
+    def resolve_ota_address(self, device_name: str) -> Optional[str]:
+        """Bug #18 (1.6.1): best available address for OTA + native-API
+        calls, consolidating the ``_address_overrides.get(name) or
+        dev.ip_address`` pattern that was copy-pasted across main.py,
+        scheduler.py, and ui_api.py.
+
+        Precedence, strongest-signal first:
+
+        1. ``_address_overrides[name]`` when it's a real IP literal
+           (user put a ``use_address`` / ``manual_ip.static_ip`` in
+           the YAML — authoritative, always wins).
+        2. ``dev.ip_address`` when it's a real IP (mDNS-resolved).
+        3. ``_address_overrides[name]`` even if it's a ``.local``
+           hostname — used to be the primary path, still a better
+           answer than nothing on a LAN where mDNS proxies work.
+        4. ``None`` — let the worker fall back to ESPHome's ``--device
+           OTA`` sentinel so ESPHome's own resolver runs.
+
+        The bug (radiowave911 at issue #60) was that (1) fell through
+        to the ``.local`` fallback when ``_resolve_esphome_config``
+        failed during the ESPHome install window — and the
+        override-takes-precedence shape then hid the real IP that
+        mDNS had since discovered. With this helper, a real IP from
+        mDNS beats a stale ``.local`` override every time.
+        """
+        dev = self._devices.get(device_name) or (
+            next((d for d in self._devices.values() if d.compile_target and self._map_target(device_name) == d.compile_target), None)
+        )
+        override = self._address_overrides.get(device_name)
+        dev_ip = dev.ip_address if dev else None
+        # Real IP in the override (static_ip / use_address) wins first.
+        if override and _is_ip_literal(override):
+            return override
+        # mDNS-resolved real IP is next.
+        if dev_ip and _is_ip_literal(dev_ip):
+            return dev_ip
+        # Fall back to whatever override we have — probably a `.local`
+        # hostname — which is still better than ``None`` when the
+        # worker's network can resolve it.
+        return override or dev_ip or None
 
     def _map_target(self, device_name: str) -> Optional[str]:
         """Return the YAML filename matching *device_name*, or None.
