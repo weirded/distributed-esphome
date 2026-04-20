@@ -39,22 +39,6 @@ updates:
       - dependencies
       - python
 
-  # ha-addon/client/esphome-constraints/*.txt is a hash-pinned lockfile
-  # generated wholesale by scripts/regen-esphome-constraints.sh (run from
-  # .github/workflows/regen-esphome-constraints.yml on a weekly schedule).
-  # Dependabot was scanning it as a requirements file and opening PRs for
-  # every transitive dep of ESPHome (tibs, resvg-py, uvicorn, …) —
-  # individual line bumps break --require-hashes integrity and get
-  # overwritten by the next regen anyway. Declare the directory with a
-  # zero PR cap so Dependabot knows about it and leaves it alone.
-  - package-ecosystem: pip
-    directory: /ha-addon/client/esphome-constraints
-    target-branch: develop
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 0
-
   - package-ecosystem: npm
     directory: /ha-addon/ui
     target-branch: develop

@@ -24,11 +24,6 @@ WORKDIR /app
 COPY requirements.lock .
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 COPY *.py .
-# SC.3: ship the hash-pinned ESPHome constraints files alongside the
-# source. version_manager._install() reads from esphome-constraints/
-# at runtime; without this COPY the auto-update path wouldn't see
-# them (auto-update only rewrites .py files, not arbitrary data).
-COPY esphome-constraints ./esphome-constraints
 # IMAGE_VERSION is intentionally SEPARATE from CLIENT_VERSION (the source code
 # version). Workers auto-update their source code from the server in place via
 # os.execv, but the Docker image itself (system packages, Python, requirements)
