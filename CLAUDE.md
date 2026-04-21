@@ -206,7 +206,7 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.6.md` — current release (power-user fleet management: git versioning, job history, archive viewer, device tags, disk management, worker constraints).
+- `dev-plans/WORKITEMS-1.7.md` — current release (LLM assistance — multi-provider in-editor YAML assistant, fleet-wide tool-calling chat, release breaking-change analyzer).
 - `dev-plans/WORKITEMS-future.md` — unscheduled items. Things we may do someday but haven't picked a release for yet.
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.

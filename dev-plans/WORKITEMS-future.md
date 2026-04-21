@@ -184,3 +184,9 @@ Browse and edit any file in the ESPHome config directory, including subdirectori
 - [ ] **FT.8 Conditional buttons** — Save & Upgrade/Validate/Rename only for entry-point YAML; includes get Save only
 - [ ] **FT.9 API functions** — `listFiles()`, `readFile()`, `writeFile()` in client.ts
 - [ ] **FT.10 Git status badges** — show modified/untracked badges on files in the tree using `git status --porcelain`. Pairs with 1.6's auto-versioning (AV.*) — the file tree becomes the place Pat sees at a glance which files have uncommitted edits. Fetched once per tree load + re-fetched on save. Small dot or letter glyph next to the filename; hover reveals the status ("modified" / "untracked" / "staged").
+
+## Integration Quality Scale
+
+Carried forward from 1.6.1 (QS.8 was deferred there; the bronze → silver flip landed in 1.6.1 as QS.9). Graduates to a `WORKITEMS-X.Y.md` when we're ready to commit the cycle budget.
+
+- [ ] **QS.8 Test coverage to ≥95% (real-hass lifecycle)** *(carried forward from 1.6.1)* — blocked on the follow-up to IT.2 (1.6.0-dev.27): the `test_integration_setup.py` real-hass scaffolding is in place but the first lifecycle tests are `@pytest.mark.skip`-ed pending `async_mock_integration` wiring for the integration's package layout under `ha-addon/custom_integration/`. The existing 17-case suite across `test_integration_*_logic.py` covers setup, services, coordinator auth + events, device_info, installer, config flow, diagnostics, system health, stale devices, and reconfigure using mock `hass` fixtures — honest bronze-plus / silver-tier coverage. Gold-grade coverage requires real-hass fixture coverage of the lifecycle (entry load/unload/reload, listener leak detection, platform registration). Unblocks the `quality_scale: silver` → `gold` flip.
