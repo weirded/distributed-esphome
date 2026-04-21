@@ -12,6 +12,7 @@ pip-wheel-metadata/
 .venv/
 venv/
 env/
+.ha-testenv/
 
 # Testing / type checking / linting
 .pytest_cache/

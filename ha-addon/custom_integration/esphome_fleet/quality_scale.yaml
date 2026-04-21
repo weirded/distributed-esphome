@@ -201,17 +201,18 @@ rules:
   test-coverage:
     status: todo
     comment: >
-      Silver's bar is ≥95% real line-coverage. We have 17 mock-based
-      logic tests across `tests/test_integration_*_logic.py` (setup,
+      Silver's bar is ≥95% real line-coverage. We have 11 mock-based
+      logic files across `tests/test_integration_*_logic.py` (setup,
       services, coordinator auth + events, device_info, installer,
       config flow, diagnostics, system health, stale devices,
-      reconfigure, worker-selection reason) but no real-hass
-      lifecycle tests — `tests/test_integration_setup.py` has the
-      scaffolding but the first tests are `@pytest.mark.skip`-ed
-      pending `async_mock_integration` wiring (TODO(QS.8)). Honest
-      coverage is bronze-plus, not silver. Tracked in
-      `WORKITEMS-future.md` → Integration Quality Scale as QS.8; the
-      silver claim flips back on once real-hass coverage passes 95%.
+      reconfigure, worker-selection reason) PLUS `tests/test_integration_setup.py`
+      with three real-hass lifecycle tests via
+      `pytest-homeassistant-custom-component` (HT.1 in 1.6.2 —
+      happy-path setup+unload, setup→unload→setup reload cycle,
+      and first-poll-failure → recover). Coverage hasn't yet been
+      measured at the integration-package level; HT.12 (1.6.2) adds
+      the `--cov=ha-addon/custom_integration/esphome_fleet` gate.
+      Flips to `done` when that gate reports ≥95%.
 
   # ---- Gold (blocks for now; promoted to `status: done` when each lands) ----
 
