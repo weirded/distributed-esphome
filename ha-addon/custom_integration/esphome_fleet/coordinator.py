@@ -137,13 +137,14 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         gone from the server's snapshot.
 
         The hub device itself is always kept — removing it would take
-        the whole config entry's device tree with it. Identifiers are
-        matched against the ``{DOMAIN}`` tuple space so third-party
-        integrations that merged their own identifiers onto one of our
-        devices (e.g. the native ESPHome integration via MAC) are left
-        alone (HA only removes an identifier tuple owned by our domain,
-        leaving the device in place if any non-Fleet identifier
-        survives).
+        the whole config entry's device tree with it. For devices that
+        are shared with another integration (the native ESPHome
+        integration merging by MAC is the common case), we detach
+        ourselves via ``async_update_device(remove_config_entry_id=…)``
+        instead of calling ``async_remove_device`` — otherwise we'd
+        yank the whole HA device row out from under the other
+        integration's entities. This matches the setup-time prune in
+        ``__init__.py`` (bug #27 for merged, #39 for the prune loop).
         """
         if self._entry is None:
             return
@@ -160,24 +161,28 @@ class EsphomeFleetCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 live_ids.add(f"worker:{client_id}")
 
         reg = dr.async_get(self.hass)
-        stale_device_ids: list[str] = []
         for device in dr.async_entries_for_config_entry(reg, self._entry.entry_id):
-            # Each device carries 1+ (domain, identifier) tuples. If
-            # this integration owns ANY of them, check whether at least
-            # one of those owned tuples is still live.
             own_ids = {ident for (domain, ident) in device.identifiers if domain == DOMAIN}
             if not own_ids:
                 continue
             if own_ids & live_ids:
                 continue
-            stale_device_ids.append(device.id)
-
-        for device_id in stale_device_ids:
-            _LOGGER.info(
-                "QS.6: removing stale device registry entry %s (target/worker "
-                "no longer in the fleet)", device_id,
-            )
-            reg.async_remove_device(device_id)
+            if len(device.config_entries) > 1:
+                _LOGGER.info(
+                    "QS.6: detaching stale Fleet identifier from shared "
+                    "device %s (%s) — other integrations still own it",
+                    device.name, device.id,
+                )
+                reg.async_update_device(
+                    device.id, remove_config_entry_id=self._entry.entry_id
+                )
+            else:
+                _LOGGER.info(
+                    "QS.6: removing stale device registry entry %s (%s) — "
+                    "target/worker no longer in the fleet",
+                    device.name, device.id,
+                )
+                reg.async_remove_device(device.id)
 
     def _fire_terminal_events(self, queue: list[dict[str, Any]]) -> None:
         """Compare queue against last-poll state, fire events on transitions."""

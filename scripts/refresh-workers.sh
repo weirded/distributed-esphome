@@ -5,8 +5,10 @@
 
 set -uo pipefail
 
-SERVER_URL="http://hass-4.local:8765"
-SERVER_TOKEN="2416d179b5d41bca62091f681065bca9"
+# PR #80 review: read server URL + token from env so no credentials
+# live in the repo. Fail fast with a clear message if either's missing.
+: "${SERVER_URL:?set SERVER_URL (e.g. http://hass-4.local:8765)}"
+: "${SERVER_TOKEN:?set SERVER_TOKEN (fleet server bearer from /data/settings.json on the add-on host)}"
 IMAGE="ghcr.io/weirded/esphome-dist-client:latest"
 CONTAINER="esphome-dist-client"
 

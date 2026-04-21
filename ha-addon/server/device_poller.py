@@ -680,9 +680,15 @@ class DevicePoller:
         mDNS had since discovered. With this helper, a real IP from
         mDNS beats a stale ``.local`` override every time.
         """
-        dev = self._devices.get(device_name) or (
-            next((d for d in self._devices.values() if d.compile_target and self._map_target(device_name) == d.compile_target), None)
-        )
+        dev = self._devices.get(device_name)
+        if dev is None:
+            mapped_target = self._map_target(device_name)
+            if mapped_target is not None:
+                dev = next(
+                    (d for d in self._devices.values()
+                     if d.compile_target == mapped_target),
+                    None,
+                )
         override = self._address_overrides.get(device_name)
         dev_ip = dev.ip_address if dev else None
         # Real IP in the override (static_ip / use_address) wins first.

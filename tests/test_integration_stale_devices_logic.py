@@ -23,10 +23,17 @@ if str(_INT_PARENT) not in sys.path:
     sys.path.insert(0, str(_INT_PARENT))
 
 
-def _make_device(id_: str, identifiers: set) -> MagicMock:
+def _make_device(
+    id_: str,
+    identifiers: set,
+    config_entries: set[str] | None = None,
+) -> MagicMock:
     dev = MagicMock()
     dev.id = id_
     dev.identifiers = identifiers
+    # Default to the single-owner case. Tests that need the shared-device
+    # path set this to >1 entries explicitly.
+    dev.config_entries = config_entries if config_entries is not None else {"entry-42"}
     return dev
 
 
@@ -72,18 +79,19 @@ def test_prune_removes_gone_target() -> None:
 
 def test_prune_keeps_merged_devices() -> None:
     """When another integration merged its own identifier onto one of
-    our target rows, we must not remove the device even when our own
-    identifier is stale — HA's remove would yank the shared row out
-    from under the other integration's entities."""
+    our target rows, we must detach via ``remove_config_entry_id`` —
+    calling ``async_remove_device`` would yank the shared row out from
+    under the other integration's entities. Matches the setup-time
+    prune behavior in ``__init__.py``."""
     from esphome_fleet.const import DOMAIN
 
     coord = _build_coordinator("entry-42")
 
     # A device owned by us (stale target) but also carrying the native
-    # ESPHome integration's identifier. In practice this shape comes
+    # ESPHome integration's config entry. In practice this shape comes
     # from our ``connections={CONNECTION_NETWORK_MAC,…}`` on target
     # DeviceInfo — if HA has merged by MAC, the native ESPHome entry
-    # attaches its own identifier here too.
+    # attaches its config_entry_id here too.
     reg = MagicMock()
     merged = _make_device(
         "merged-row",
@@ -91,6 +99,7 @@ def test_prune_keeps_merged_devices() -> None:
             (DOMAIN, "target:gone.yaml"),
             ("esphome", "aabbccddeeff"),
         },
+        config_entries={"entry-42", "native-esphome-entry"},
     )
     with (
         patch("homeassistant.helpers.device_registry.async_get", return_value=reg),
@@ -101,11 +110,13 @@ def test_prune_keeps_merged_devices() -> None:
     ):
         coord._prune_stale_devices(targets=[], workers=[])
 
-    # We still ``async_remove_device`` because our own identifier is
-    # stale and that's the correct thing at the HA API level — the
-    # device registry will drop only our (DOMAIN, target:gone.yaml)
-    # identifier and keep the row alive via the esphome identifier.
-    reg.async_remove_device.assert_called_once_with("merged-row")
+    # Must NOT remove the whole device row — that would take the native
+    # ESPHome integration's entities with it. Detach our config entry
+    # instead so the row survives with just the non-Fleet owner.
+    reg.async_remove_device.assert_not_called()
+    reg.async_update_device.assert_called_once_with(
+        "merged-row", remove_config_entry_id="entry-42",
+    )
 
 
 def test_prune_keeps_live_workers() -> None:

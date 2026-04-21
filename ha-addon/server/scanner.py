@@ -581,31 +581,34 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
     #    rewrite doesn't stack up multiple copies.
     new_lines: list[str] = []
     in_block = False
-    skipping_header_comment = False
+    # Buffered explanatory-header line we've tentatively skipped. Kept so
+    # that if the *next* non-blank line turns out NOT to be the marker,
+    # we can re-emit it instead of silently dropping a user-authored
+    # comment that happens to match our header text.
+    pending_header: str | None = None
     for line in lines:
         stripped = line.strip()
         if not in_block:
-            # Explanatory-header comment we write above the block; skip it so
-            # it doesn't double up on rewrites. Only skip when it immediately
-            # precedes the marker (we verify by continuing to consume lines
-            # until we see the marker or a non-matching line).
             if stripped in _EXPLANATORY_HEADERS:
-                skipping_header_comment = True
+                # Tentatively skip — we'll commit to dropping it only if
+                # the very next line is the marker.
+                if pending_header is not None:
+                    # Two headers in a row? Keep the first, re-evaluate
+                    # the second with the same buffering rule.
+                    new_lines.append(pending_header)
+                pending_header = line
                 continue
             if _is_meta_marker(stripped):
                 in_block = True
-                skipping_header_comment = False
+                pending_header = None  # commit: header belonged to us
                 continue  # skip the marker line
-            if skipping_header_comment:
-                # We started skipping an explanatory header but the next line
-                # wasn't the marker — put the header back by flushing both
-                # the line we tentatively skipped and this one.
-                # (Rare: user inserted content between our header and marker.)
-                skipping_header_comment = False
-                # Note: we already consumed the header line; best-effort
-                # reconstruction would be complex. The downside of dropping
-                # a stray explanatory line is minimal (the next write rebuilds
-                # it), so we accept the rare data loss.
+            if pending_header is not None:
+                # Header wasn't immediately followed by the marker —
+                # it's user content that coincidentally matched our
+                # header text. Put it back before processing the
+                # current line.
+                new_lines.append(pending_header)
+                pending_header = None
         if in_block:
             # Continuation: "# " + 2+ spaces indent
             raw = line.rstrip("\n").rstrip("\r")
@@ -616,6 +619,11 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
                 continue
             in_block = False
         new_lines.append(line)
+
+    # File ended mid-tentative-skip (header was the last line with no
+    # marker after it) — it's user content, put it back.
+    if pending_header is not None:
+        new_lines.append(pending_header)
 
     # 2. If meta is non-empty, build the new block and prepend.
     if meta:
