@@ -116,10 +116,11 @@ _MOCK_COORDINATOR_DATA: dict[str, Any] = {
 # kept), and the next batch of integration-test work lands on top of
 # this scaffolding.
 _SKIP_REASON = (
-    "TODO(IT.2): plug in async_mock_integration so HA's loader can find "
+    "TODO(QS.8): plug in async_mock_integration so HA's loader can find "
     "esphome_fleet under pytest-homeassistant-custom-component. "
     "Skipped — framework is ready, first real test deferred. "
-    "See WORKITEMS-1.6.md → Integration Test Refactor for the follow-up."
+    "See WORKITEMS-future.md → Integration Quality Scale (QS.8) for the "
+    "follow-up."
 )
 
 

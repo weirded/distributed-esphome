@@ -99,6 +99,28 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
 
 ### You do
 
+- [ ] **Drain PR review feedback before merge.** If a release PR (`develop → main`) is open, every review thread on it must be either addressed with a code change or closed with a pointer to a tracked workitem — and in both cases **marked resolved** on GitHub. Unresolved threads on a merged release PR look like open concerns that nobody looked at; they clutter the PR sidebar until archive. Concrete steps:
+  ```bash
+  # List unresolved threads:
+  gh api graphql -f query='
+    query($owner:String!,$repo:String!,$pr:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$pr) {
+          reviewThreads(first:50) {
+            nodes { id isResolved path line comments(first:1) { nodes { body } } }
+          }
+        }
+      }
+    }' -F owner=weirded -F repo=distributed-esphome -F pr=<PR> |
+    jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)'
+  ```
+  For each one: fix the code (or file it as a WORKITEMS entry with an explicit scope-deferral rationale), push, then resolve:
+  ```bash
+  gh api graphql -f query='
+    mutation($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }
+  ' -F id=<PRRT_id>
+  ```
+  Re-run the list query until zero unresolved threads. "Fix and leave the thread open" doesn't count as done (see `CLAUDE.md` → PR Review Loop).
 - [ ] **Deploy + smoke test**: `./push-to-hass-4.sh`. Runs the full `e2e-hass-4` Playwright suite (device load, schedule upgrade, compile + OTA with live log streaming, editor edit + validate, live device logs, parallel-compile pinned to local-worker).
 - [ ] **Read the changelog draft** — does it represent what users care about?
 - [ ] **Sanity-check editor autocomplete on a real config** — the only thing Playwright can't verify end-to-end.
