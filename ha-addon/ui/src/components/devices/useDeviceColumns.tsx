@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Calendar, Clock, ExternalLink, GitBranch, Pin } from 'lucide-react';
 import { createColumnHelper } from '@tanstack/react-table';
 import type { AddressSource, Job, Target } from '../../types';
-import { stripYaml, timeAgo, haDeepLink, formatCronHuman } from '../../utils';
+import { stripYaml, timeAgo, haDeepLink, formatCronHuman, fmtEpochRelative, fmtEpochAbsolute } from '../../utils';
 import { getJobBadge } from '../../utils/jobState';
 import { StatusDot } from '../StatusDot';
 import { SortHeader } from '../ui/sort-header';
@@ -83,6 +83,7 @@ function formatAddressSource(source: AddressSource | null | undefined): string |
     case 'wifi_static_ip': return 'wifi static_ip';
     case 'ethernet_static_ip': return 'ethernet static_ip';
     case 'mdns_default': return null;
+    case 'arp': return 'via ARP';
     default: return null;
   }
 }
@@ -276,6 +277,20 @@ export function useDeviceColumns(options: Options) {
       },
       sortingFn: 'alphanumeric',
     }),
+    // Bug #12 (1.6.1): MAC column. Off by default so the row width
+    // doesn't blow up for users who don't care — toggle on via the
+    // Columns picker. Sourced from ``dev.mac_address`` in the
+    // device_poller, populated via mDNS TXT or native API poll.
+    columnHelper.accessor(row => row.mac_address || '', {
+      id: 'mac',
+      header: ({ column }) => <SortHeader label="MAC" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        <span className="sensitive font-mono text-[12px] text-[var(--text-muted)] whitespace-nowrap">
+          {t.mac_address || '—'}
+        </span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
     columnHelper.accessor(
       row => `${row.network_type ?? 'zzz'}-${row.network_static_ip ? '0' : '1'}-${row.network_matter ? '0' : '1'}`,
       {
@@ -414,23 +429,26 @@ export function useDeviceColumns(options: Options) {
           validate_only: lc.validate_only,
           download_only: lc.download_only,
         });
-        const diff = Math.floor(Date.now() / 1000) - lc.at;
-        const rel = diff < 60 ? `${diff}s`
-          : diff < 3600 ? `${Math.floor(diff / 60)}m`
-            : diff < 86400 ? `${Math.floor(diff / 3600)}h`
-              : `${Math.floor(diff / 86400)}d`;
-        const iso = new Date(lc.at * 1000).toLocaleString();
+        // PR #64 review: use shared fmtEpochRelative + fmtEpochAbsolute
+        // so this cell respects the ``time_format`` Settings preference
+        // (auto / 12h / 24h) via the module-local pref in utils/format.
+        // Prior inline ``toLocaleString()`` call ignored that setting.
+        const rel = fmtEpochRelative(lc.at);
+        const iso = fmtEpochAbsolute(lc.at);
         return (
           <span
             className="text-[12px] tabular-nums inline-flex items-center gap-1.5"
             title={`${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`}
           >
-            <span className="text-[var(--text-muted)]">{rel} ago</span>
+            <span className="text-[var(--text-muted)]">{rel}</span>
             <span className={badge.cls}>{badge.label}</span>
           </span>
         );
       },
-      sortingFn: 'alphanumeric',
+      // PR #64 review: epoch seconds are a number — ``alphanumeric``
+      // sorts them lexically (100 < 9). ``basic`` compares with
+      // ``<`` directly on the accessor value, which is what we want.
+      sortingFn: 'basic',
     }),
     columnHelper.accessor(row => row.running_version || '', {
       id: 'running',

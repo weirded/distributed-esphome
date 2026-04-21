@@ -43,8 +43,29 @@ class AppConfig:
 
     @classmethod
     def load(cls) -> "AppConfig":
-        """Build config from env vars, falling back to the dataclass defaults."""
+        """Build config from env vars, falling back to the dataclass defaults.
+
+        PR #64 review: ``int(os.environ.get("PORT", ...))`` used to run
+        unguarded, which raised ``ValueError`` (and took the add-on
+        down at startup) when ``PORT`` was set but not numeric —
+        "80a", empty string from a partial interpolation, etc. Now
+        logs a WARNING and falls back to the dataclass default so a
+        typo in the env doesn't block boot. ``ESPHOME_CONFIG_DIR``
+        is a string so it needs no parsing.
+        """
+        port_raw = os.environ.get("PORT")
+        if port_raw is None or port_raw == "":
+            port = cls.port
+        else:
+            try:
+                port = int(port_raw)
+            except ValueError:
+                logger.warning(
+                    "PORT env var %r is not an integer; falling back to default %d",
+                    port_raw, cls.port,
+                )
+                port = cls.port
         return cls(
             config_dir=os.environ.get("ESPHOME_CONFIG_DIR", cls.config_dir),
-            port=int(os.environ.get("PORT", str(cls.port))),
+            port=port,
         )

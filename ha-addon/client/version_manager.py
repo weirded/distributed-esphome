@@ -18,49 +18,6 @@ MAX_ESPHOME_VERSIONS = int(os.environ.get("MAX_ESPHOME_VERSIONS", "3"))
 # Minimum free disk percentage before we start evicting versions
 MIN_FREE_DISK_PCT = int(os.environ.get("MIN_FREE_DISK_PCT", "10"))
 
-# SC.3: directory that holds `<version>.txt` hash-pinned constraints
-# files, shipped inside the worker Docker image. When a file exists
-# for the requested version, `_install` runs
-# `pip install --require-hashes -c <file> esphome==<version>` so the
-# wheel set cryptographically matches what we pinned.
-ESPHOME_CONSTRAINTS_DIR = Path(__file__).parent / "esphome-constraints"
-
-
-def _constraints_for(version: str) -> Path | None:
-    """Return the hash-pinned constraints file path for *version*, or None.
-
-    Per SC.3, a missing constraints file logs a WARNING in `_install`
-    rather than refusing the install — keeps older ESPHome versions
-    from getting locked out by this release. Roadmap (SECURITY_AUDIT
-    F-18) is to flip this to a hard refusal once we ship constraints
-    for every version we actually support.
-
-    **Linux-only scope.** The committed constraints files are generated
-    by `scripts/regen-esphome-constraints.sh` inside a `python:3.11-slim`
-    (linux/amd64) container. `pip-compile` there only resolves the
-    transitive deps for Linux — packages like `bleak` have a conditional
-    `pyobjc-core>=10.3` dep gated on `platform_system == "Darwin"` that
-    doesn't flow into the resolved graph on Linux and therefore isn't
-    committed to the `.txt`. Trying `pip install --require-hashes -r <file>`
-    on macOS then fails at install time with *"In --require-hashes mode,
-    all requirements must have their versions pinned with ==: pyobjc-core
-    from …"*. Linux workers (Docker containers, Raspberry Pi, x86_64
-    build hosts) are the primary deployment target; macOS / Windows
-    workers fall through to the WARN+unpinned path, preserving the
-    pre-SC.3 behavior they had anyway.
-    """
-    if not sys.platform.startswith("linux"):
-        logger.info(
-            "Skipping hash-pinned install on %s — constraints files are "
-            "linux-only (pip-compile doesn't resolve platform-conditional "
-            "transitives like bleak→pyobjc-core on non-Darwin hosts). "
-            "Unpinned install will proceed. (SC.3)",
-            sys.platform,
-        )
-        return None
-    candidate = ESPHOME_CONSTRAINTS_DIR / f"{version}.txt"
-    return candidate if candidate.is_file() else None
-
 
 class VersionManager:
     """
@@ -161,24 +118,6 @@ class VersionManager:
     def _install(self, version: str) -> None:
         """Create a venv and install esphome==version into it.
 
-        SC.3: when ``esphome-constraints/<version>.txt`` is present next
-        to this module, the install runs with
-        ``pip install --require-hashes --no-cache-dir -r <file>`` —
-        every wheel (esphome + every transitive) must match one of the
-        SHA-256 hashes in the file or pip refuses. Note `-r` (not `-c`):
-        the generated file is a full hash-pinned **requirements** file
-        (pip-compile output), not a constraints file — constraints
-        files don't install anything on their own, and pip's
-        `--require-hashes` mode fails if any requirement on the command
-        line is unpinned (the original bug this replaces: `-c <file>
-        esphome==<version>` gave 'Hashes are required in
-        --require-hashes mode, but they are missing' for the
-        command-line `esphome==<version>` arg).
-
-        Missing constraints file → install proceeds unpinned with a
-        WARNING logged; operators can see the gap in logs and ship a
-        constraints file for that version in a follow-up image.
-
         Must NOT be called with self._lock held (long-running subprocess).
         """
         venv_dir = self._venv_path(version)
@@ -193,30 +132,9 @@ class VersionManager:
         )
 
         pip = venv_dir / "bin" / "pip"
-        constraints_path = _constraints_for(version)
-        install_cmd: list[str] = [str(pip), "install", "--no-cache-dir"]
-        if constraints_path is not None:
-            logger.info(
-                "Using hash-pinned requirements for esphome==%s (SC.3): %s",
-                version, constraints_path,
-            )
-            install_cmd.extend([
-                "--require-hashes",
-                "-r", str(constraints_path),
-            ])
-            # Note: no explicit `esphome==<version>` arg — the
-            # requirements file already pins it (pip-compile output).
-            # Adding it would reintroduce the "Hashes are required in
-            # --require-hashes mode" error this branch exists to fix.
-        else:
-            logger.warning(
-                "No hash-pinned constraints shipped for esphome==%s — "
-                "install will resolve transitive deps unpinned. Generate "
-                "one via scripts/regen-esphome-constraints.sh and bump "
-                "IMAGE_VERSION in a follow-up image. (SC.3)",
-                version,
-            )
-            install_cmd.append(f"esphome=={version}")
+        install_cmd: list[str] = [
+            str(pip), "install", "--no-cache-dir", f"esphome=={version}",
+        ]
 
         logger.info("Running: %s", " ".join(install_cmd))
         result = subprocess.run(

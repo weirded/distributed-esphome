@@ -98,6 +98,30 @@ def test_dao_is_idempotent_on_duplicate_id(tmp_path: Path) -> None:
     assert rows[0]["ota_result"] == "failed"
 
 
+def test_dao_get_returns_single_row_by_id(tmp_path: Path) -> None:
+    """Bug #1 (1.6.1): ``get(job_id)`` powers firmware download from history.
+
+    The download endpoint (:mod:`ui_api.download_job_firmware`) falls
+    back to this DAO method when a job has been coalesced out of the
+    live queue, so the lookup must succeed on the row's raw id and
+    surface enough fields (``target``, ``has_firmware``,
+    ``firmware_variants``) to build a response.
+    """
+    dao = JobHistoryDAO(db_path=tmp_path / "history.db")
+    dao.record_terminal(_make_job(job_id="job-x", target="bedroom.yaml"))
+
+    row = dao.get("job-x")
+    assert row is not None
+    assert row["id"] == "job-x"
+    assert row["target"] == "bedroom.yaml"
+    # firmware_variants is a live filesystem probe — empty here because
+    # no firmware was saved in this test.
+    assert row["firmware_variants"] == []
+
+    # Unknown id returns None rather than raising.
+    assert dao.get("does-not-exist") is None
+
+
 def test_dao_classifies_trigger_source(tmp_path: Path) -> None:
     dao = JobHistoryDAO(db_path=tmp_path / "history.db")
     dao.record_terminal(_make_job(job_id="a", scheduled=True, schedule_kind="recurring"))

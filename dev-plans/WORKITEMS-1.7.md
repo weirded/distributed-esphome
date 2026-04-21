@@ -1,124 +1,68 @@
 # Work Items — 1.7.0
 
-Theme: **Fleet operator tools + LLM assistance.** Key/value device tags with group-by and filter, declarative worker routing, disk-budget controls, a VS-Code-style file tree editor, plus LLM-powered YAML completion and an ESPHome breaking-change analyzer that scores new releases against the components each managed device actually uses.
+Theme: **LLM assistance.** A multi-provider LLM layer powering three use cases: an in-editor YAML assistant for the device a user is currently looking at, a fleet-wide chat that can read and modify configs across the whole fleet via tool calling, and a release breaking-change analyzer that scores ESPHome upgrades against the components each managed device actually uses.
 
-## Device Organization
+Direction informed by a design conversation distilled into the items below — key decisions:
 
-Key/value tags (like AWS resource tags), stored in the per-device `# distributed-esphome:` comment block as a `tags:` map. Users can group the Devices table by any tag key (Notion-style table groups) and filter by `key=value`.
+- **Multi-provider, not Anthropic-first.** Users will run Anthropic, OpenAI, Google, **plus local Ollama and LM Studio**. Use [`litellm`](https://github.com/BerriAI/litellm) as the single call surface — same code path for cloud and local; provider/model/api_base swap at call time, not init time.
+- **No LangChain.** Heavy, breaking-change-prone, buys nothing for these use cases. The whole stack is `litellm` + `instructor` (for Pydantic-backed structured outputs) + the SDKs we already ship. Reference Python implementations to study (not embed): Aider (`aider-chat`) for the edit/confirm/apply loop; Anthropic's open-source `claude-code-sdk` for the agentic primitives.
+- **Live-reload, not restart.** LLM settings live alongside everything else under SP.* (1.6's Settings drawer). Because LiteLLM takes credentials per call, a settings save takes effect on the next request — no add-on restart.
+- **Permission tiers, not "just YOLO".** Three modes — `READ_ONLY` / `SUGGEST` (stages a diff for user approval) / `AUTO_APPROVE` (writes directly). Default `SUGGEST`; `AUTO_APPROVE` is opt-in per provider.
+- **Tool calling, not context stuffing.** For fleet-wide questions, give the model a small set of tools (`list_devices`, `get_device_config`, `search_configs`, `stage_device_change`) and let it pull what it needs. Users with 20+ devices would otherwise blow the context window every prompt.
+- **Stage, never write directly.** Every write tool stages a diff into a pending-changes panel; user approves before anything touches the filesystem. Same pattern Aider and Claude Code use.
 
-Format in the YAML comment block:
-```yaml
-# distributed-esphome:
-#   tags:
-#     location: kitchen
-#     floor: "1"
-#     env: prod
-#     owner: stefan
-```
+## Foundation: LLM provider layer
 
-The existing `tags` field landed in 1.4.0-dev.2 as a simple list of strings — that needs to migrate to a key/value map. `read_device_meta()` should accept both shapes during the transition (list → coerce to `{tag: ""}` or warn-and-ignore) and `write_device_meta()` always writes the map shape going forward.
+- [ ] **LL.1 LiteLLM call surface** — single `llm_call(messages, *, structured_model=None, tools=None, stream=False)` wrapper around `litellm.completion`. Reads provider/model/api_key/api_base/temperature/max_tokens from the live settings object on every call (no client init at startup). Models named in `<provider>/<model>` form (`anthropic/claude-opus-4-5`, `openai/gpt-4o`, `ollama/llama3.2`, `openai/local-model` for LM Studio with `api_base`). New dep: `litellm` in `requirements.txt` + lockfile (PY-8).
+- [ ] **LL.2 Settings drawer "AI" tab** — extends the SP.8 settings store. Fields: `enabled` (bool), `provider` (dropdown: anthropic / openai / google / ollama / lmstudio), `model` (free-text — model lists rot, let users type what they actually have), `api_key` (secret, hidden for local providers), `api_base` (only shown for ollama/lmstudio), `temperature` (slider, default 0.2 — YAML edits want determinism), `max_tokens` (default 4096), `permission_mode` (`READ_ONLY` / `SUGGEST` / `AUTO_APPROVE`, default `SUGGEST`). Conditional show/hide on `provider`. Persists to `/data/settings.json`. Live-reload via the existing SP.8 broadcast.
+- [ ] **LL.3 "Test connection" button** — beside the AI fields. Sends a 10-token "reply with OK" prompt through the configured provider and surfaces success / latency / error inline. Catches the most common config mistakes (wrong key, wrong api_base, model name typo) before the user discovers them mid-edit.
+- [ ] **LL.4 Permission tier enforcement** — every write tool checks `settings.ai.permission_mode` before acting. `READ_ONLY` rejects writes with a clear "permission denied" tool result. `SUGGEST` stages the change to an in-memory pending-changes map keyed by `(conversation_id, device_name)` and returns `{"status": "staged"}`. `AUTO_APPROVE` writes directly. Tier shown as a badge in the chat UI so users can see what's active.
+- [ ] **LL.5 Structured streaming events** — internal pydantic event model `AgentEvent { type: "thinking" | "tool_call" | "tool_result" | "text" | "diff" | "error", content: str | dict, ts: float }`. The agent loop yields these; `/ui/api/ai/stream` surfaces them over WebSocket so the chat UI can render thinking indicators, tool-call badges, and inline diffs progressively rather than waiting for the full turn.
+- [ ] **LL.6 Conversation persistence** — full message history (text + tool_calls + tool_results) persisted to a small SQLite table alongside JH.* (1.6's job history DB), keyed by `conversation_id`. Survives add-on restart, lets the model say "as we discussed earlier when I read your porch sensor config…" Retention bound: keep last N=20 conversations, prune older.
+- [ ] **LL.7 Hardcoded "weak local model" warning** — when `provider in {ollama, lmstudio}` and the model string doesn't match a known-good list (Llama 3.1+, Qwen 2.5+, Mistral Large), show a one-line warning under the model field: "Tool calling may be unreliable on this model — recommended: …". Doesn't block, just sets expectations. Worth doing because tool-calling failures on small local models are confusing — the model "answers" without ever calling the tool that would have given the right answer.
+- [ ] **LL.8 No telemetry / no cloud egress when disabled** — when `ai.enabled = false` we make zero outbound LLM calls and the AI tab in the editor is hidden. Spot-check with `tcpdump`/integration test. Pat-friendly: a user who never turns AI on never sees a cent of cloud cost or a packet leaving their network.
 
-- [ ] **DO.1 Tag schema migration** — `read_device_meta()` accepts either list-of-strings (legacy) or string-keyed map; normalizes to map on read. `write_device_meta()` always writes the map. Add a unit test that round-trips both shapes.
-- [ ] **DO.2 Tag CRUD endpoints** — `POST /ui/api/targets/{f}/tags` (set, body `{key, value}`), `DELETE /ui/api/targets/{f}/tags/{key}` (clear). Reuses `read_device_meta()` / `write_device_meta()`. Validates key is non-empty, max 64 chars, no leading/trailing whitespace; value is string, max 256 chars (allow empty for "key present, no value").
-- [ ] **DO.3 Tag editor UI** — modal opened from the device hamburger menu ("Edit tags…"). Shows current tags as editable rows: `[key] [value] [×]` plus an "+ Add tag" button. Save persists via `POST /ui/api/targets/{f}/tags` for each changed entry. Datalist autocomplete on `key` from the union of all keys currently in use across the fleet.
-- [ ] **DO.4 Tag column** — toggleable "Tags" column on the Devices tab showing each device's tags as compact `key=value` chips (truncated, full set in tooltip). Sortable by string representation.
-- [ ] **DO.5 Group-by-tag selector** — top-of-table dropdown: "Group by: [None / location / floor / env / …]". When set, rows are grouped under sticky group headers showing the value (e.g., "location: kitchen — 4 devices"). Devices without that tag key fall into an "— unset —" group at the bottom. Group state persists in localStorage. Like Notion table groups: collapsible group headers, group-level select-all checkbox.
-- [ ] **DO.6 Filter by tag** — top-of-table filter chips: click a tag chip in any row to add it as a filter (`location=kitchen`). Multiple chips AND together. Clear-all button. Filter state in URL query string so it survives reloads and is shareable.
-- [ ] **DO.7 Bulk tag operations** — extend multi-select on the Devices tab: "Set tag…" (prompts for key+value, applies to all selected via `Promise.all`), "Remove tag…" (prompts for key, removes from all selected). Single summary toast per bulk action.
-- [ ] **DO.8 Bulk delete + bulk validate** *(formerly 6.6)* — extend multi-select: bulk delete and bulk validate alongside the existing bulk upgrade.
+## Per-device YAML assistant (in-editor)
 
-## Disk Management
+The editor (Monaco-based, already shipped) gains an AI sidebar for the device the user is currently editing. Per-device, single-file scope — the global fleet chat (FC.*) handles cross-device prompts.
 
-LRU-based disk usage controls for both the server and workers. Currently nothing caps the growth of ESPHome version caches, PlatformIO toolchains, compiled firmware, build directories, or job logs. On a worker with limited disk (e.g., a Raspberry Pi), these can silently fill the volume.
+- [ ] **AI.1 `POST /ui/api/ai/complete`** — completion endpoint scoped to one file. Body: `{device_name, yaml_content, cursor_offset, prompt}`. Returns the completion stream. Used by AI.3's inline ghost text and AI.4's chat panel. Uses `instructor` + the `ESPHomeEdit` Pydantic model below for the diff path; raw streamed text for free-form completions.
+- [ ] **AI.2 `ESPHomeEdit` Pydantic model** — `class ESPHomeEdit(BaseModel): modified_yaml: str; explanation: str; warnings: list[str]`. Wraps every "modify YAML" call so the LLM has to return parseable structured output rather than freeform text we'd have to fence-strip. Fallback: if `instructor` parse fails (older / smaller models), regex-extract the first ` ```yaml ` block and surface a warning event.
+- [ ] **AI.3 Inline ghost-text completions** — Monaco inline-completion provider that calls AI.1 on idle (debounced ~500 ms after typing stops). Shows the suggestion as ghost text; Tab accepts, Esc rejects. `permission_mode` does not gate this — it's user-initiated and user-applied keystrokes, no filesystem write happens until they save the file the normal way.
+- [ ] **AI.4 Chat side panel in editor** — collapsible panel beside the Monaco view. Free-form prompt → response is either an `ESPHomeEdit` (rendered as a Monaco diff with Accept / Reject buttons) or freeform text (rendered as markdown). On Accept under `SUGGEST` mode, applies the change to the editor buffer (still requires the user to hit Save — symmetric with manual edits). On Accept under `AUTO_APPROVE`, saves automatically.
+- [ ] **AI.5 ESPHome-aware system prompt** — module-level constant containing: "You modify ESPHome YAML configs. Output must be valid YAML. Preserve `# distributed-esphome:` comment blocks verbatim. Prefer existing substitutions / packages / secrets over inlining values. Never embed real WiFi passwords or API keys — use `!secret` references." Versioned (`ESPHOME_PROMPT_V = 1`) so we can iterate without surprising users with regressions.
+- [ ] **AI.6 Diff-only reject path** — when the user rejects a staged AI.4 diff, we don't just discard — we feed the rejection back into the conversation as `"User rejected this change"` so a follow-up "try again" prompt has the context. Cheap to implement, big UX win.
 
-### Worker-side
+## Fleet chat (global)
 
-- [ ] **DM.1 Worker disk budget** — new env var `MAX_DISK_USAGE_GB` (default: unlimited). On each job completion, the worker checks total usage of `/esphome-versions/` (versions + builds + PlatformIO). If over budget, evicts in LRU order: oldest unused ESPHome version venvs first (already has `MAX_ESPHOME_VERSIONS` for version count — this adds a size-based cap), then oldest build cache directories, then oldest PlatformIO packages. Logs what was evicted at INFO.
-- [ ] **DM.2 Worker disk stats in heartbeat** — add `disk_total_mb`, `disk_used_mb`, `disk_free_mb` (for the `/esphome-versions` mount point) to the worker's `system_info` heartbeat. Server surfaces these on the Workers tab so operators can see when a worker is running low before it fails a compile.
-- [ ] **DM.3 Build cache LRU** — the per-target build cache (`/esphome-versions/cache/<target>/`) currently grows unboundedly. Add LRU eviction: track last-access time per target cache dir, evict oldest when total build cache exceeds `MAX_BUILD_CACHE_GB` (env var, default 10GB). The existing `MAX_ESPHOME_VERSIONS` (count-based) stays for version venvs; this adds size-based eviction for the build artifacts.
+A new top-level **AI Assistant** tab. Free-form prompts against the whole fleet, powered by tool calling so we don't blow the context window stuffing every YAML upfront. Where the per-device AI panel knows about one file, this knows about everything.
 
-### Server-side
+- [ ] **FC.1 Agentic tool loop** — the canonical "while tool_calls is not None" loop on top of LL.1. Yields LL.5's `AgentEvent`s as it goes (thinking → tool_call → tool_result → text). Loop bound: max 25 tool calls per turn (defensive — a runaway agent can easily eat thousands of tokens; surface "I hit the tool-call limit" to the user rather than silently truncating).
+- [ ] **FC.2 `list_devices` tool** — returns `[{name, board, platform, components: [...], tags: {...}}]` for every device in the fleet. Reuses `scanner.py`'s parsed config — no re-parsing per call. Cheap (~one row per device), so it's the LLM's first move on most prompts.
+- [ ] **FC.3 `get_device_config` tool** — reads one device's full YAML. Bounded by `safe_resolve` (`ha-addon/server/helpers.py`) so the LLM cannot escape `/config/esphome/`. Returns `{yaml: str, sha: str}` so a later `stage_device_change` can detect drift between read and write.
+- [ ] **FC.4 `search_configs` tool** — substring + regex search across all YAMLs. Returns `[{device, line, snippet}]`. Cheap way for the model to answer "which devices use the deprecated `xyz` component?" without reading each config in full.
+- [ ] **FC.5 `stage_device_change` tool** — write-equivalent. Takes `{device_name, modified_yaml, reason, expected_sha?}`. Under `SUGGEST` mode (default), inserts into the pending-changes panel and returns `{"status": "staged", "id": "..."}`. Under `AUTO_APPROVE`, writes via the existing AV.* commit path so changes flow through git history. Refuses if `expected_sha` doesn't match the current file (concurrent-edit guard — important if the user is editing the same device in the editor at the same time).
+- [ ] **FC.6 `read_release_notes` tool** — wraps BC.1's release-notes fetcher so the chat can answer "what changed in 2026.5.0?" without us pre-emptively passing it. Pairs with the breaking-change analyzer — users will naturally ask about a release in chat after seeing the BC.* impact report.
+- [ ] **FC.7 Chat UI** — new tab with: conversation list (left), active conversation (center, streaming `AgentEvent`s), pending-changes panel (right, shows staged diffs with Accept-all / Reject-all / per-row controls). Permission badge in the header. "New conversation" button. The pending-changes panel is the single place users review every staged write before it lands — same pattern as the per-device AI.4 diff but aggregated across the conversation.
+- [ ] **FC.8 Bulk-apply staged changes** — Accept-all on the pending-changes panel commits all staged writes in one batch via `Promise.all`, surfaces a single summary toast (per the "Batch operations get one toast" design judgment in CLAUDE.md). Each write goes through AV.*'s git path so the auto-commit subject reflects "AI: <reason from FC.5>" rather than a generic message.
+- [ ] **FC.9 Conversation history view** — left rail lists prior conversations from LL.6's persistence. Click to resume — the model picks up where it left off, including tool-call results. Pruning: oldest dropped when over the 20-conversation cap.
+- [ ] **FC.10 Cost / token surface** — small footer in the chat tab showing tokens used this turn + cumulative for this conversation, plus a per-provider $/1K-tok hint where known. Local providers show "$0.00 (local)". Optional but high-value for users on metered plans — the conversation can otherwise hide its real cost.
 
-- [ ] **DM.4 Server disk budget for caches** — `firmware_cache_max_gb` (default 2.0) and `job_log_retention_days` (default 30) live in the Settings store (see 1.6 SP.*). Background task prunes `/data/firmware/` and old job logs on a daily schedule, reading current values from `get_settings()` each run (live-effect). Exposed in the Settings drawer under `Disk management`.
-- [ ] **DM.5 Disk usage dashboard** — section on the Workers tab or a new Settings page showing: per-worker disk breakdown (versions, builds, PlatformIO, total), server-side cache sizes (PIO proxy cache, firmware, job logs), and the configured limits. Visual bar showing used/limit per category.
+## ESPHome release breaking-change analyzer
 
-## Worker Constraints
+Largely as scoped before — adapted to ride on LL.* (LiteLLM, structured outputs). Naturally paired with FC.6 so the chat can drill in after the upfront report.
 
-Let users declare which workers can run which jobs. Originated in [issue #59](https://github.com/weirded/distributed-esphome/issues/59) ("Thread devices can't be reached from Windows desktop due to IPv6 limitation — can you auto-detect?"). **Reframed:** instead of trying to probe network reachability (fragile, slow, guesses wrong), let the user express their knowledge of the topology as declarative rules. This also generalizes to every other worker-selection need a user might have — "encrypted devices only go to the on-prem worker", "big configs only go to the beefy worker", "dev YAMLs only go to my laptop".
+- [ ] **BC.1 Release notes fetcher** — pull ESPHome release notes from the GitHub releases API (fallback: `esphome.io/changelog/`); cache under `/data/esphome_releases/<version>.json`. No GitHub auth required for public repos; rate-limit is generous and we cache.
+- [ ] **BC.2 Device component inventory** — for each managed device, extract the set of components / platforms in use from its parsed YAML. Reuse `scanner.py` parsing — do not hand-roll regex per PY-1.
+- [ ] **BC.3 `POST /ui/api/ai/analyze-release`** — input: `{target_version, device_filter?}`. Calls LL.1 with an `instructor` model `BreakingChangeReport { items: list[DeviceImpact] }` where `DeviceImpact = { device, risk: "none" | "low" | "high", affected_components: list[str], summary: str, links: list[str] }`. The "links" are anchors into the cached release notes so the UI can deep-link.
+- [ ] **BC.4 UI entry points** — "Check breaking changes" action on the ESPHome version picker and on the Upgrade Outdated flow. Results modal grouped by device (high → low → none), with expandable per-component detail and a "Discuss in chat" button that opens a fresh FC.7 conversation seeded with this device's report.
+- [ ] **BC.5 Result caching** — key by `(release_version, device_yaml_sha256)`. Re-opening the modal is instant; LLM calls only happen when something actually changed (release version bumps, or the device's YAML edits). Stored alongside BC.1's release notes cache.
+- [ ] **BC.6 Surface in HA Updates** — paired with the future `UE.*` work in `WORKITEMS-future.md`, expose the `risk` value on the per-device update entity's `release_summary` so HA's native update card shows "⚠ 2 high-risk components affected" without the user having to open the Fleet UI. Stretch — drop if `UE.*` isn't on the table for this release.
 
-### Foundation: durable worker identity
+## Notes & non-goals
 
-The current `client_id` is an auto-generated UUID persisted to `/esphome-versions/.client_id` inside the worker's volume (`client.py:119,213-227`). If the volume wipes, the container gets rebuilt on a different host, or the user blows away their worker setup, they get a new UUID — breaking any saved config that referenced the old one. Worker constraints need a more durable identifier. The answer is: let the user name their workers.
-
-- [ ] **WC.1 `WORKER_NAME` env var** — new optional env on the client (`client.py`). When set, it becomes the worker's primary identifier instead of the auto-UUID. When unset, fall back to the current auto-UUID behavior for backwards compatibility. `WORKER_NAME` values must match `^[a-z0-9][a-z0-9-]{0,63}$` (same slug rules as device names) so they're safe in URLs and UI chips.
-- [ ] **WC.2 `WORKER_TAGS` env var** — comma-separated list of free-form tags, e.g. `WORKER_TAGS=ipv6,beefy,on-prem`. Sent at registration and on every heartbeat. Server surfaces them on `/ui/api/workers` for display and for constraint evaluation.
-- [ ] **WC.3 Server: name-keyed registry** — `registry.py` accepts a `name` field on `RegisterRequest` (via `protocol.py` — **PROTOCOL_VERSION bump**, see note below). Registry key preference: `name` if provided, else `client_id`. If two workers register with the same `name`, the later one wins (logs a warning about the collision). Existing UUID-keyed workers continue to work unchanged.
-- [ ] **WC.4 Protocol extension** — add `name: Optional[str]` and `tags: List[str]` to `RegisterRequest` and `HeartbeatRequest` in both `ha-addon/server/protocol.py` and `ha-addon/client/protocol.py` (byte-identical per PY-6). This is an **additive protocol change** — old workers sending neither field still register fine — so `PROTOCOL_VERSION` stays at its current value per the protocol.py docstring rule ("additive + optional unless PROTOCOL_VERSION is bumped").
-- [ ] **WC.5 UI: show worker name + tags** — Workers tab's Hostname column becomes "Name / Hostname": shows `WORKER_NAME` prominently if set, falls back to hostname. New toggleable "Tags" column rendering tags as chips. Connect Worker modal's generated `docker run` command includes `-e WORKER_NAME=<slug>` and an optional `-e WORKER_TAGS=<tags>` pre-filled with a hint.
-
-### Constraint expression
-
-Declarative matching between targets and workers, stored in the per-device `# distributed-esphome:` YAML comment block (same pattern as tags, pin_version, schedules). Constraints are **additive to the existing `pinned_client_id`** — pinning a specific worker on a job still wins over general constraints.
-
-- [ ] **WC.6 Target-side constraint fields** — extend the per-device metadata comment:
-  ```yaml
-  # distributed-esphome:
-  #   worker_requires:       # worker must have ALL of these tags
-  #     - ipv6
-  #   worker_forbids:        # worker must have NONE of these tags
-  #     - cloud
-  #   worker_only:           # whitelist by worker name (overrides tags if set)
-  #     - home-beefy
-  ```
-  `read_device_meta` / `write_device_meta` extended to parse + emit these three fields. Surfaced on `/ui/api/targets` as `worker_requires`, `worker_forbids`, `worker_only`.
-
-### Evaluation
-
-- [ ] **WC.7 `claim_next` constraint filter** — in `job_queue.claim_next()`, before a worker can claim a job, check whether its name/tags satisfy the job's target constraints. If not, the job is skipped for that worker and remains PENDING for the next eligible worker to claim. The existing `pinned_client_id` check runs first (explicit pin wins); constraints run second.
-- [ ] **WC.8 "No eligible worker" detection** — when a job has been PENDING for > N minutes AND no currently-online worker satisfies its constraints, mark it FAILED with a clear message: *"No eligible worker: target requires tags [ipv6]; online workers: home-pi (tags: []), office-desktop (tags: [beefy])"*. This is the "stuck forever" failure mode — better to fail loudly than hang.
-
-### UI
-
-- [ ] **WC.9 Constraint editor modal** — per-device hamburger menu item "Worker constraints…" opens a modal with three fields (required tags, forbidden tags, whitelisted worker names) plus an "Available tags / workers" hint that lists tags currently in use across the fleet. Saves via the existing `POST /ui/api/targets/{f}/meta` generic endpoint.
-- [ ] **WC.10 Queue tab: surface constraint misses** — when a job is PENDING longer than expected and the reason is constraints, the Queue tab's status text shows it (e.g. *"Waiting — no worker tagged `ipv6` is online"*) so the user doesn't stare at a pending job wondering what's wrong.
-- [ ] **WC.11 E2E coverage** — mocked Playwright test for the constraint editor modal. Prod hass-4 test: tag one worker with `ipv6`, set `worker_requires: [ipv6]` on a target, trigger compile, verify it lands on the tagged worker (and fails fast with the clear message if no tagged worker is online).
-
-### Notes & non-goals
-
-- **Not auto-detection.** This is deliberately user-declarative. We don't probe reachability, we don't ping from each worker, we don't parse YAML for `manual_ip` to infer things. Users know their network better than we do, and probe-based logic is a maintenance tax.
-- **Backwards compatibility.** Workers without `WORKER_NAME` keep UUIDs. Targets without `worker_requires`/`worker_forbids`/`worker_only` accept any worker. Zero breaking changes.
-- **Relationship to `pinned_client_id`.** Explicit pin in the UpgradeModal still overrides everything — that's a one-shot manual choice and shouldn't be filtered out by general constraints. Constraints are the persistent default; pins are the override.
-- **Related, out of scope:** per-worker `WORKER_CAN_RUN` whitelists (the inverse: worker declares which targets it accepts). Makes sense for shared workers in mixed-trust environments but not needed for the home-lab use case. Revisit in a future release if requested.
-
-## File Tree Editor
-
-Browse and edit any file in the ESPHome config directory, including subdirectories. VS Code-style file tree sidebar in the editor modal.
-
-- [ ] **FT.1 `GET /ui/api/files`** — recursive directory listing, returns flat `[{path, size, binary}]`
-- [ ] **FT.2 `GET /ui/api/files/{path:.+}`** — read file by relative path (path traversal prevention)
-- [ ] **FT.3 `POST /ui/api/files/{path:.+}`** — write file (invalidates config cache for .yaml)
-- [ ] **FT.4 Install `@headless-tree/core` + `@headless-tree/react`** — headless tree library
-- [ ] **FT.5 `FileTree.tsx` component** — flat list → tree, expand/collapse, active highlight, binary grayed out
-- [ ] **FT.6 Sidebar layout** — editor body flex row: `[file tree 240px] | [monaco flex-1]`, sidebar toggle
-- [ ] **FT.7 File switching** — dirty check → load/save, language detection by extension
-- [ ] **FT.8 Conditional buttons** — Save & Upgrade/Validate/Rename only for entry-point YAML; includes get Save only
-- [ ] **FT.9 API functions** — `listFiles()`, `readFile()`, `writeFile()` in client.ts
-- [ ] **FT.10 Git status badges** — show modified/untracked badges on files in the tree using `git status --porcelain`. Pairs with 1.6's auto-versioning (AV.*) — the file tree becomes the place Pat sees at a glance which files have uncommitted edits. Fetched once per tree load + re-fetched on save. Small dot or letter glyph next to the filename; hover reveals the status ("modified" / "untracked" / "staged").
-
-## AI/LLM Editor
-
-- [ ] **1.4a Server config** — add-on options for LLM provider, API key, model, endpoint
-- [ ] **1.4b Completion endpoint** — `POST /ui/api/ai/complete` proxies to LLM with YAML context
-- [ ] **1.4c Inline ghost text** — display LLM suggestions as Monaco inline completions
-- [ ] **1.4d Chat endpoint** — `POST /ui/api/ai/chat` for natural language → YAML
-- [ ] **1.4e Chat panel in editor** — side panel for prompting, accept/reject generated changes
-
-## ESPHome Release Breaking-Change Analyzer
-
-Given a target ESPHome release, use an LLM to analyze that release's notes against the components each managed device actually uses, and surface per-device breaking-change risk before the user upgrades.
-
-- [ ] **BC.1 Release notes fetcher** — pull ESPHome release notes from the GitHub releases API (fallback: esphome.io changelog); cache under `/data/esphome_releases/<version>.json`
-- [ ] **BC.2 Device component inventory** — for each managed device, extract the set of components/platforms in use from its parsed YAML (reuse the existing config cache / `scanner.py` parsing; do not hand-roll)
-- [ ] **BC.3 `POST /ui/api/ai/analyze-release`** — input: target version + optional device filter. Sends release notes + per-device component inventory to the configured LLM (reuses the 1.4a provider config). Returns `[{device, risk: none|low|high, affected_components, summary}]`
-- [ ] **BC.4 UI entry point** — "Check breaking changes" action on the ESPHome version picker and the Upgrade Outdated flow; results modal grouped by device with expandable per-component detail and a link to the relevant release-notes section
-- [ ] **BC.5 Result caching** — key by `(release_version, device_yaml_hash)` so re-opening the modal is instant and LLM calls only happen when something actually changed
+- **One LLM call per user action.** No background "ambient" calls — no auto-summarising YAML on every save, no auto-tagging devices, no "AI nudges". Pat is paying per token; opt-in is the floor.
+- **Filesystem boundary stays at `/config/esphome/`.** AI tools never touch `/config/` outside ESPHome, never reach into `/data/`, never see the worker registry token. Enforced by `safe_resolve` per the existing helper.
+- **No fine-tuning, no RAG infrastructure.** The fleet is small enough that tool calling + targeted reads handles every realistic prompt. Embeddings + a vector store would be over-engineering for ~20 YAML files.
+- **No agent autonomy across the WAN.** The agent loop only runs in response to a user prompt in the chat tab — no scheduled "review your fleet weekly" pings. If we add scheduling later (`AI Tasks API` style), it gates behind an additional opt-in.
+- **Local-first viable.** Everything works with Ollama / LM Studio for users who refuse cloud LLMs entirely. Tool-calling reliability is the main caveat — LL.7's warning sets that expectation.

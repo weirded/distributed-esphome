@@ -18,9 +18,16 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 
 from .const import CONF_BASE_URL, CONF_TOKEN, DOMAIN
+
+# Hassfest CONFIG_SCHEMA rule: integrations that implement async_setup
+# must declare a schema even when they take no YAML config. This is the
+# canonical "config entry only" declaration — it tells HA (and hassfest)
+# that we have no YAML surface; setup is via the config flow alone.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 from .coordinator import EsphomeFleetCoordinator
 from .device import hub_device_info, target_device_info, worker_device_info
 from .services import async_register_services, async_unregister_services

@@ -288,7 +288,18 @@ async def get_next_job(request: web.Request) -> web.Response:
     # Two rules:
     # 1. Defer if ANY online worker has fewer active jobs (spread evenly first)
     # 2. Among workers with equal job counts, defer if one with higher effective score has free slots
+    #
+    # Bug #8 (1.6.1): we also record WHY this worker won when it
+    # didn't defer — the reason is passed to ``claim_next`` and
+    # persisted on the Job so the UI can explain the scheduling
+    # decision without requiring an operator to cross-reference
+    # the scheduler log.
     should_defer = False
+    # Count other candidate workers so we can pick the most informative
+    # reason when we don't defer.
+    other_candidate_count = 0
+    defer_beats_me_on_jobs = False
+    defer_beats_me_on_perf = False
     if worker:
         my_info = worker.system_info or {}
         my_perf = my_info.get("perf_score", 0)
@@ -308,6 +319,7 @@ async def get_next_job(request: web.Request) -> web.Response:
                 continue
             if other.disabled or not registry.is_online(other.client_id, cfg_threshold):
                 continue
+            other_candidate_count += 1
             other_active = active_jobs_by_worker.get(other.client_id, 0)
             other_info = other.system_info or {}
             other_perf = other_info.get("perf_score", 0)
@@ -324,9 +336,28 @@ async def get_next_job(request: web.Request) -> web.Response:
             if other_active == my_active and other_effective > my_effective:
                 should_defer = True
                 break
+            # This `other` worker LOST to *client_id* — record which
+            # rule did the winning so we can name the reason below.
+            if other_active > my_active:
+                defer_beats_me_on_jobs = True
+            elif other_effective < my_effective:
+                defer_beats_me_on_perf = True
+
+    # Bug #8: compose the reason hint now that we know we aren't
+    # deferring. Only evaluated when claim_next actually hands out a
+    # job (returns None if nothing matches).
+    if other_candidate_count == 0:
+        selection_reason_hint = "only_online_worker"
+    elif defer_beats_me_on_jobs:
+        selection_reason_hint = "fewer_jobs_than_others"
+    elif defer_beats_me_on_perf:
+        selection_reason_hint = "higher_perf_score"
+    else:
+        selection_reason_hint = "first_available"
 
     job = await queue.claim_next(client_id, worker_id, hostname=hostname,
-                                  faster_idle_worker_exists=should_defer)
+                                  faster_idle_worker_exists=should_defer,
+                                  selection_reason_hint=selection_reason_hint)
     if job is None:
         return web.Response(status=204)
 
@@ -436,8 +467,13 @@ async def _handle_firmware_upload(
     job = queue.get(job_id)
     if job is None:
         return _protocol_error("job_not_found", status=404)
-    if not job.download_only:
-        return _protocol_error("job_not_download_only", status=400)
+    # Bug #9 (1.6.1): firmware uploads are accepted for every job kind,
+    # not just ``download_only``. The worker now post-OTA uploads the
+    # compiled binary so the server archives a downloadable artifact
+    # for every successful compile — useful for forensics, rollback,
+    # and hand-flashing devices whose OTA path is broken. Download-only
+    # jobs still have ``has_firmware`` set the same way; the state
+    # check below remains the real gate (only accept while WORKING).
 
     # #24 (1): state check MUST run before any disk write. A stale
     # worker (the one that was abandoned by bug #17's offline

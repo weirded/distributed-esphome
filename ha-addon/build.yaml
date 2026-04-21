@@ -15,6 +15,28 @@
 # `image:` key. Both are bigger changes than we want right now, so we're
 # keeping build.yaml and eating the deprecation warning. Revisit when we
 # have time for a full Alpine port or a prebuilt base strategy.
+# SS.4: **server-side digest pin still blocked** by Supervisor's
+# ``build.yaml`` schema regex.
+# Confirmed on current Supervisor (2026-04 hass-4) by adding
+# ``@sha256:…`` to both ``build_from`` entries and pushing — Supervisor
+# SILENTLY rejected the build.yaml (didn't surface an "invalid
+# schema" error), fell back to its default ``ghcr.io/home-assistant/
+# <arch>-base`` (Alpine/musl), and the build then failed on the
+# Dockerfile's ``apt-get install`` step (Alpine has no apt). Because
+# the rejection is silent, the symptom is "Alpine fallback" rather
+# than a validation error pointing at the pin.
+#
+# The worker Dockerfile (``ha-addon/client/Dockerfile``) pins by
+# digest directly because there's no build.yaml to route through —
+# that one is authoritative for the worker image's reproducibility.
+# The server Dockerfile ARG default also carries the same digest so
+# local ``docker build`` without Supervisor is reproducible.
+# Supervisor-driven builds remain tag-only until HA accepts a
+# ``build_from`` regex that allows ``@sha256:…``.
+#
+# Glibc requirement from Bug #8 still holds — do not remove this
+# file in an attempt to "modernise" without a plan for Alpine
+# compatibility.
 build_from:
   aarch64: "docker.io/library/python:3.11-slim"
   amd64: "docker.io/library/python:3.11-slim"

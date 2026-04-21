@@ -175,6 +175,9 @@ def _job_to_row(job: "Job") -> dict[str, object]:
         # stat) to distinguish "never had firmware" from "had it, now
         # evicted".
         "has_firmware": 1 if getattr(job, "has_firmware", False) else 0,
+        # Bug #8 (1.6.1): worker-selection reason persisted on the
+        # history row. ``None`` for jobs that predated the column.
+        "selection_reason": getattr(job, "selection_reason", None),
     }
 
 
@@ -210,7 +213,11 @@ class JobHistoryDAO:
             config_hash TEXT,
             retry_count INTEGER DEFAULT 0,
             log_excerpt TEXT,
-            has_firmware INTEGER NOT NULL DEFAULT 0
+            has_firmware INTEGER NOT NULL DEFAULT 0,
+            -- Bug #8 (1.6.1): why this worker was selected for the
+            -- job. Nullable — old rows inserted before the column
+            -- existed carry NULL, which the UI renders as "—".
+            selection_reason TEXT
         );
         -- Bug #38: late-added column. ADD COLUMN is idempotent-safe via
         -- OR IGNORE's error on existing column, so we run it unconditionally
@@ -268,6 +275,15 @@ class JobHistoryDAO:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column" not in str(exc).lower():
                             raise
+                    # Bug #8 (1.6.1): selection_reason migration. Same
+                    # idempotent-safe pattern as has_firmware above.
+                    try:
+                        conn.execute(
+                            "ALTER TABLE jobs ADD COLUMN selection_reason TEXT"
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            raise
                     conn.commit()
                 self._initialized = True
                 logger.debug("Job-history DB ready at %s", self._db_path)
@@ -318,14 +334,14 @@ class JobHistoryDAO:
                     esphome_version, assigned_client_id, assigned_hostname,
                     submitted_at, started_at, finished_at, duration_seconds,
                     ota_result, config_hash, retry_count, log_excerpt,
-                    has_firmware
+                    has_firmware, selection_reason
                 ) VALUES (
                     :id, :target, :state, :triggered_by, :trigger_detail,
                     :download_only, :validate_only, :pinned_client_id,
                     :esphome_version, :assigned_client_id, :assigned_hostname,
                     :submitted_at, :started_at, :finished_at, :duration_seconds,
                     :ota_result, :config_hash, :retry_count, :log_excerpt,
-                    :has_firmware
+                    :has_firmware, :selection_reason
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     state = excluded.state,
@@ -340,7 +356,8 @@ class JobHistoryDAO:
                     config_hash = excluded.config_hash,
                     retry_count = excluded.retry_count,
                     log_excerpt = excluded.log_excerpt,
-                    has_firmware = excluded.has_firmware
+                    has_firmware = excluded.has_firmware,
+                    selection_reason = excluded.selection_reason
                 """,
                 row,
             )
@@ -431,6 +448,13 @@ class JobHistoryDAO:
         # `.bin` is still on disk (vs evicted by the budget task).
         # `has_firmware` stays 1 either way; `firmware_variants` carries
         # the live-available variants (empty list = evicted).
+        #
+        # TODO(PH.1): ``list_variants`` is an ``os.listdir`` per row,
+        # so at ``limit=50`` + QueueHistoryDialog's infinite scroll we
+        # N+1 stat the firmware dir O(rows × N) per session. Tolerable
+        # at home-lab scale; revisit when someone accumulates hundreds
+        # of retained firmwares. Tracked in WORKITEMS-future.md → Perf
+        # hardening → PH.1 (fix shapes documented there).
         try:
             from firmware_storage import list_variants  # noqa: PLC0415
         except Exception:
@@ -444,6 +468,38 @@ class JobHistoryDAO:
             else:
                 r["firmware_variants"] = []
         return rows
+
+    def get(self, job_id: str) -> dict[str, object] | None:
+        """Return a single history row keyed by *job_id*, or ``None``.
+
+        Bug #1 (1.6.1): firmware download from history needs the target
+        name + has_firmware flag for a job that's been coalesced out of
+        the live queue. Populated fields mirror :meth:`query` — in
+        particular ``firmware_variants`` is a live ``list_variants`` probe
+        rather than a DB column, so an evicted binary surfaces as ``[]``
+        even if ``has_firmware`` is still 1 from the row's original write.
+        """
+        self.init()
+        if not self._initialized:
+            return None
+        with self._connect() as conn:
+            cur = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        r = dict(row)
+        try:
+            from firmware_storage import list_variants  # noqa: PLC0415
+        except Exception:
+            list_variants = None  # type: ignore[assignment]
+        if r.get("has_firmware") and list_variants is not None:
+            try:
+                r["firmware_variants"] = list_variants(str(r["id"]))
+            except Exception:
+                r["firmware_variants"] = []
+        else:
+            r["firmware_variants"] = []
+        return r
 
     def stats(self, target: str | None = None, window_days: int = 30) -> dict[str, object]:
         """Return a rollup for *target* (or fleet-wide if None) over the

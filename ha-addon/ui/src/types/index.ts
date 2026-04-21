@@ -27,7 +27,11 @@ export type AddressSource =
   | 'ethernet_use_address'
   | 'openthread_use_address'
   | 'wifi_static_ip'
-  | 'ethernet_static_ip';
+  | 'ethernet_static_ip'
+  // Bug #7 (1.6.1): MAC→IP fallback via the add-on's host ARP table.
+  // Kicks in when mDNS can't resolve but we've seen the device's MAC
+  // before (cached from a prior native-API poll).
+  | 'arp';
 
 export interface EsphomeVersions {
   selected: string | null;
@@ -282,6 +286,11 @@ export interface Job {
    * the "Diff since compile" button in the log modal to open the
    * History panel pre-set to (from=this_hash, to=working tree). */
   config_hash?: string | null;
+  /** Bug #8 (1.6.1): why this worker got the job. One of
+   *  "pinned_to_worker" / "only_online_worker" /
+   *  "fewer_jobs_than_others" / "higher_perf_score" / "first_available".
+   *  Null on jobs that predate the field. */
+  selection_reason?: string | null;
   duration_seconds?: number | null;
   assigned_at?: string;
   created_at: string;

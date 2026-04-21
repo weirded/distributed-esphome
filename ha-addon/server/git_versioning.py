@@ -116,6 +116,45 @@ def _is_git_repo(path: Path) -> bool:
     return git_marker.is_dir() or git_marker.is_file()
 
 
+class _PathEscapeError(ValueError):
+    """Raised when a user-supplied relpath resolves outside config_dir."""
+
+
+def _safe_relpath(config_dir: Path, relpath: str) -> Path:
+    """PR #64 review: defence-in-depth against path traversal.
+
+    ``ui_api.py`` already calls :func:`helpers.safe_resolve` on every
+    ``/ui/api/files/{filename}/...`` route, so direct HTTP traversal
+    via this module's public helpers is blocked at the aiohttp layer.
+    But the git_versioning module is also imported directly by
+    scheduler, integration_installer, archive endpoints, and any
+    future in-process caller — a missing ``safe_resolve`` at a new
+    caller site would open an arbitrary write/read primitive into
+    ``/config``. Localising the guard inside every path-accepting
+    helper makes it impossible for a new caller to forget.
+
+    Resolves ``config_dir`` + ``relpath`` to absolute paths and
+    verifies the result is still inside ``config_dir``. Raises
+    :class:`_PathEscapeError` if not. Non-existent paths are fine —
+    we compute the resolved target without requiring it to exist
+    (matches the behaviour we need for ``file_content_at`` at a
+    historical hash, etc.).
+    """
+    base = Path(config_dir).resolve()
+    # ``strict=False`` so non-existent files don't raise here — the
+    # caller handles "not found" downstream. Symlinks inside the tree
+    # resolve normally; symlinks pointing OUTSIDE the tree are caught
+    # by the relative_to check below.
+    candidate = (base / relpath).resolve(strict=False)
+    try:
+        candidate.relative_to(base)
+    except ValueError:
+        raise _PathEscapeError(
+            f"relpath {relpath!r} resolves outside {base}",
+        )
+    return candidate
+
+
 def _versioning_active(path: Path) -> bool:
     """#97 + #98: combined gate — the feature toggle AND a real repo on disk.
 
@@ -414,7 +453,15 @@ async def _delayed_commit(
 
     from settings import get_settings  # noqa: PLC0415
 
-    if not get_settings().auto_commit_on_save:
+    # PR #64 review: early-exit on the feature toggles *before*
+    # grabbing the serialising commit lock. Pre-fix, every tick
+    # contended the lock just to be told "versioning is off" or
+    # "auto-commit is off" inside ``_do_commit``. Not a correctness
+    # bug — just a locality nit that matters when commit bursts land.
+    settings = get_settings()
+    if settings.versioning_enabled != "on":
+        return
+    if not settings.auto_commit_on_save:
         return
 
     loop = asyncio.get_running_loop()
@@ -670,6 +717,11 @@ def file_history(
     errors. Never raises — callers render "no history yet" when empty.
     """
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, relpath)
+    except _PathEscapeError:
+        logger.warning("file_history rejected escape attempt: %s", relpath)
+        return []
     if not _versioning_active(config_dir):
         return []
 
@@ -837,6 +889,12 @@ async def archive_and_commit(config_dir: Path, relpath: str) -> bool:
     from settings import get_settings  # noqa: PLC0415
 
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, relpath)
+        _safe_relpath(config_dir, f"{ARCHIVE_DIRNAME}/{relpath}")
+    except _PathEscapeError:
+        logger.warning("archive_and_commit rejected escape attempt: %s", relpath)
+        return False
     moved = archive_with_git_mv(config_dir, relpath)
     if not moved:
         return False
@@ -879,6 +937,12 @@ async def restore_and_commit(config_dir: Path, filename: str) -> bool:
     from settings import get_settings  # noqa: PLC0415
 
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, filename)
+        _safe_relpath(config_dir, f"{ARCHIVE_DIRNAME}/{filename}")
+    except _PathEscapeError:
+        logger.warning("restore_and_commit rejected escape attempt: %s", filename)
+        return False
     moved = restore_with_git_mv(config_dir, filename)
     if not moved:
         return False
@@ -924,7 +988,11 @@ async def delete_archived_and_commit(config_dir: Path, filename: str) -> bool:
 
     config_dir = Path(config_dir)
     rel = f"{ARCHIVE_DIRNAME}/{filename}"
-    path = config_dir / rel
+    try:
+        path = _safe_relpath(config_dir, rel)
+    except _PathEscapeError:
+        logger.warning("delete_archived_and_commit rejected escape attempt: %s", filename)
+        return False
 
     if not path.exists():
         return False
@@ -996,10 +1064,14 @@ def archive_with_git_mv(config_dir: Path, relpath: str) -> bool:
     caller is responsible for creating the archive directory.
     """
     config_dir = Path(config_dir)
-    src = config_dir / relpath
+    try:
+        src = _safe_relpath(config_dir, relpath)
+        dest_rel = f"{ARCHIVE_DIRNAME}/{relpath}"
+        dest = _safe_relpath(config_dir, dest_rel)
+    except _PathEscapeError:
+        logger.warning("archive_with_git_mv rejected escape attempt: %s", relpath)
+        return False
     archive_dir = config_dir / ARCHIVE_DIRNAME
-    dest_rel = f"{ARCHIVE_DIRNAME}/{relpath}"
-    dest = config_dir / dest_rel
 
     archive_dir.mkdir(exist_ok=True)
 
@@ -1056,8 +1128,12 @@ def restore_with_git_mv(config_dir: Path, filename: str) -> bool:
     """
     config_dir = Path(config_dir)
     src_rel = f"{ARCHIVE_DIRNAME}/{filename}"
-    src = config_dir / src_rel
-    dest = config_dir / filename
+    try:
+        src = _safe_relpath(config_dir, src_rel)
+        dest = _safe_relpath(config_dir, filename)
+    except _PathEscapeError:
+        logger.warning("restore_with_git_mv rejected escape attempt: %s", filename)
+        return False
 
     if not src.exists():
         return False
@@ -1127,6 +1203,11 @@ def rollback_file(config_dir: Path, relpath: str, hash: str) -> dict[str, object
     Raises nothing — callers render the returned ``content`` and status.
     """
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, relpath)
+    except _PathEscapeError:
+        logger.warning("rollback_file rejected escape attempt: %s", relpath)
+        return {"content": "", "committed": False, "hash": None, "short_hash": None}
     if not _versioning_active(config_dir):
         logger.warning("rollback_file called on non-repo %s", config_dir)
         return {"content": "", "committed": False, "hash": None, "short_hash": None}
@@ -1221,6 +1302,11 @@ def commit_file_now(
     error, just informational.
     """
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, relpath)
+    except _PathEscapeError:
+        logger.warning("commit_file_now rejected escape attempt: %s", relpath)
+        return {"committed": False, "hash": None, "short_hash": None, "message": None}
     if not _versioning_active(config_dir):
         return {"committed": False, "hash": None, "short_hash": None, "message": None}
 
@@ -1270,11 +1356,16 @@ def file_content_at(config_dir: Path, relpath: str, hash: str | None) -> str | N
     out of ``git show``.
     """
     config_dir = Path(config_dir)
+    try:
+        safe_path = _safe_relpath(config_dir, relpath)
+    except _PathEscapeError:
+        logger.warning("file_content_at rejected escape attempt: %s", relpath)
+        return None
 
     # Working-tree read doesn't need a git repo.
     if hash is None:
         try:
-            return (config_dir / relpath).read_text(encoding="utf-8")
+            return safe_path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return ""
         except Exception:
@@ -1351,6 +1442,11 @@ def file_status(config_dir: Path, relpath: str) -> dict[str, object]:
     All false / None on non-repo directories.
     """
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, relpath)
+    except _PathEscapeError:
+        logger.warning("file_status rejected escape attempt: %s", relpath)
+        return {"has_uncommitted_changes": False, "head_hash": None, "head_short_hash": None}
     if not _versioning_active(config_dir):
         return {"has_uncommitted_changes": False, "head_hash": None, "head_short_hash": None}
 
@@ -1391,6 +1487,11 @@ def file_diff(
     input by validating hashes against ``[0-9a-f]{4,40}``.
     """
     config_dir = Path(config_dir)
+    try:
+        _safe_relpath(config_dir, relpath)
+    except _PathEscapeError:
+        logger.warning("file_diff rejected escape attempt: %s", relpath)
+        return ""
     if not _versioning_active(config_dir):
         return ""
 

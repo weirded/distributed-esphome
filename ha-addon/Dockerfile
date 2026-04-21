@@ -1,15 +1,38 @@
-# Bug #8: build.yaml removed (Supervisor flagged it as deprecated
-# starting 2024.x). The per-arch build_from map it used to carry was
-# identical for aarch64 and amd64 (docker.io/library/python:3.11-slim)
-# — Docker's multi-arch manifest selection picks the right variant
-# based on the builder's platform, so one FROM line covers both. The
-# ``ARG BUILD_FROM`` is kept so Supervisor can still override via
-# ``--build-arg`` if needed (e.g. for a future per-arch override),
-# but the default here is authoritative and matches what build.yaml
-# used to set. Glibc-based Python is required for PlatformIO
-# toolchains that ESPHome pulls in; do NOT let this fall through to
-# Alpine/musl without a full compatibility pass.
-ARG BUILD_FROM=docker.io/library/python:3.11-slim
+# Bug #8: keep this default aligned with ``ha-addon/build.yaml``.
+# Supervisor flags ``build.yaml`` as deprecated, but we still need it —
+# without it Supervisor falls back to its own arch-default base
+# (``ghcr.io/home-assistant/<arch>-base``, Alpine/musl), which breaks
+# the ``apt-get install`` step below and every sdist dep that ESPHome
+# pulls in at runtime. The per-arch ``build_from`` map in build.yaml
+# is identical for aarch64 and amd64
+# (``docker.io/library/python:3.11-slim``), and Docker's multi-arch
+# manifest selection picks the right variant based on the builder's
+# platform, so one FROM line covers both. The ``ARG BUILD_FROM`` lets
+# Supervisor override via ``--build-arg`` when it's actually driving
+# the build (that's the primary path in production), but this default
+# should continue to match what build.yaml sets so local ``docker
+# build`` without Supervisor still works. Glibc-based Python is
+# required for PlatformIO toolchains that ESPHome pulls in; do NOT
+# let this fall through to Alpine/musl without a full compatibility
+# pass.
+# SS.4: digest-pinned default for ``docker build`` without Supervisor
+# (local / CI reproducibility). The worker Dockerfile
+# (``ha-addon/client/Dockerfile``) pins the *same* digest — refresh
+# both in lockstep on release.
+#
+# PR #80 review: the previous comment claimed the digest "matches
+# ha-addon/build.yaml" — it doesn't. ``build.yaml`` carries the
+# **tag-only** image (``docker.io/library/python:3.11-slim``) because
+# Supervisor's ``supervisor/validate.py`` regex silently rejects
+# ``@sha256:…`` in the ``build_from`` map (it falls back to its own
+# arch-base image, which then breaks ``apt-get``). In production
+# under Supervisor, ``BUILD_FROM`` is overridden via ``--build-arg``
+# from ``build.yaml``, so the pin here is NOT applied and the server
+# base image is tag-resolved at build time. That's the last-mile gap
+# tracked as "partial" under F-13 / SS.4 in
+# ``dev-plans/SECURITY_AUDIT.md``. Revisit when upstream Supervisor
+# accepts digest pins.
+ARG BUILD_FROM=docker.io/library/python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99883bfe33964cf
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
@@ -17,13 +40,31 @@ ARG BUILD_VERSION
 
 LABEL \
     io.hass.name="ESPHome Fleet" \
-    io.hass.description="Manage fleets of ESPHome devices: distributed compile, version pinning, scheduled OTA upgrades" \
+    io.hass.description="A modern Home Assistant UI for ESPHome — git-backed config history, live compile queue, per-device version pinning, scheduled OTA, optional distributed compilation" \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
 
-# Same deps as the proven client Dockerfile — native glibc for PlatformIO toolchains
-RUN apt-get update && apt-get install -y gcc libffi-dev libssl-dev git && rm -rf /var/lib/apt/lists/*
+# PR #80 review: loud failure when Supervisor's ``build_from`` regex
+# silently falls back to ``ghcr.io/home-assistant/<arch>-base`` (Alpine/
+# musl). The existing ``apt-get install`` already fails in that case —
+# but only because apt happens to be absent on Alpine. If the Dockerfile
+# ever grows a distro-portable shim ("apt-get || apk add …"), the
+# rejection becomes invisible and we'd ship Supervisor-driven images
+# that aren't on our actual base. Turning this into an explicit guard
+# produces a single grep-able line at layer 0.
+RUN . /etc/os-release && [ "$ID" = "debian" ] || { \
+        echo "ERROR: unexpected base image (/etc/os-release ID=$ID)." >&2; \
+        echo "       Supervisor probably rejected build.yaml's BUILD_FROM and" >&2; \
+        echo "       fell back to the arch-base image. Aborting to avoid" >&2; \
+        echo "       shipping an add-on container built on the wrong base." >&2; \
+        exit 1; \
+    }
+
+# Same deps as the proven client Dockerfile — native glibc for PlatformIO toolchains.
+# Bug #6 (1.6.1): `iputils-ping` keeps the client's OTA network-diagnostics
+# probe functional when the server also hosts a local worker.
+RUN apt-get update && apt-get install -y gcc libffi-dev libssl-dev git iputils-ping && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 # E.1: install from the hash-pinned lockfile, not the >= range list. The

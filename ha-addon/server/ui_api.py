@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -353,6 +354,23 @@ async def get_settings_handler(request: web.Request) -> web.Response:
     return web.json_response(settings_as_dict())
 
 
+def _versioning_just_enabled(previous: str | None, partial: dict) -> bool:
+    """Bug #19 (1.6.1): pure-function transition detector used by
+    :func:`patch_settings_handler` to decide whether to fire
+    :func:`git_versioning.init_repo` after a PATCH. Lifted out of the
+    handler so it's testable without the aiohttp request harness.
+
+    Returns True only when the partial update explicitly sets
+    ``versioning_enabled`` to ``"on"`` AND the previous value was
+    something else (``"unset"`` first boot, ``"off"`` deliberate opt
+    out). No-ops when the key isn't in the partial at all — that's
+    important because other PATCH calls mustn't re-trigger init.
+    """
+    if partial.get("versioning_enabled") != "on":
+        return False
+    return previous != "on"
+
+
 @routes.patch("/ui/api/settings")
 async def patch_settings_handler(request: web.Request) -> web.Response:
     """SP.3: partial update of in-app Settings.
@@ -361,7 +379,7 @@ async def patch_settings_handler(request: web.Request) -> web.Response:
     known fields. Unknown keys or out-of-range values return 400 with
     the offending field name so the UI can surface the error.
     """
-    from settings import SettingsValidationError, settings_as_dict, update_settings  # noqa: PLC0415
+    from settings import SettingsValidationError, get_settings, settings_as_dict, update_settings  # noqa: PLC0415
 
     try:
         partial = await request.json()
@@ -371,6 +389,14 @@ async def patch_settings_handler(request: web.Request) -> web.Response:
     if not isinstance(partial, dict):
         return json_error("Request body must be a JSON object", status=400)
 
+    # Bug #19 (1.6.1): capture the pre-write value so we can detect the
+    # versioning_enabled "unset|off → on" transition and kick off a
+    # one-shot ``git init`` in the config directory. Without this the
+    # user flips the toggle on, every subsequent save lands on disk
+    # but silently bypasses commit_file (no .git/), and the History
+    # drawer reads empty until the next add-on restart.
+    previous_versioning = get_settings().versioning_enabled
+
     try:
         await update_settings(partial)
     except SettingsValidationError as exc:
@@ -378,6 +404,27 @@ async def patch_settings_handler(request: web.Request) -> web.Response:
             {"error": str(exc), "field": exc.field},
             status=400,
         )
+
+    # Bug #19: post-swap hook. Runs outside the settings lock so a
+    # slow ``git init`` doesn't stall concurrent settings reads.
+    if _versioning_just_enabled(previous_versioning, partial):
+        try:
+            from git_versioning import init_repo  # noqa: PLC0415
+            cfg = _cfg(request)
+            loop = asyncio.get_running_loop()
+            created = await loop.run_in_executor(None, init_repo, Path(cfg.config_dir))
+            if created:
+                logger.info(
+                    "Bug #19: git repo initialised at %s after post-boot "
+                    "versioning_enabled flip (was %r → on)",
+                    cfg.config_dir, previous_versioning,
+                )
+        except Exception:
+            logger.exception(
+                "Bug #19: init_repo failed after versioning flip; history "
+                "will stay empty until the add-on is restarted. See "
+                "dev-plans/WORKITEMS-1.6.1.md bug #19 for context.",
+            )
 
     logger.info("Settings updated%s: %s", _who(request), ", ".join(sorted(partial.keys())))
     return web.json_response(settings_as_dict())
@@ -652,6 +699,22 @@ async def get_targets(request: web.Request) -> web.Response:
             ha_name_to_device_id=ha_name_to_device_id,
         )
 
+        # Bug #7 (1.6.1): MAC→IP fallback via /proc/net/arp when the
+        # device poller's IP is empty/stale but we know the MAC from
+        # an earlier native-API poll. ``arp.lookup`` is cheap (cached
+        # for 30s) and returns None on dev hosts without the file.
+        ip_with_fallback: str | None = dev.ip_address if dev else None
+        source_with_fallback = dev.address_source if dev else None
+        if dev and not ip_with_fallback and device_mac:
+            try:
+                from arp import lookup as _arp_lookup  # noqa: PLC0415
+                fallback_ip = _arp_lookup(device_mac)
+                if fallback_ip:
+                    ip_with_fallback = fallback_ip
+                    source_with_fallback = "arp"
+            except Exception:
+                logger.debug("ARP fallback lookup failed for %s", target, exc_info=True)
+
         # 4.2c: Use HA connected state as additional online signal.
         # If the device poller hasn't confirmed online yet but HA says connected,
         # treat the device as online.
@@ -682,8 +745,12 @@ async def get_targets(request: web.Request) -> web.Response:
                 if dev and dev.running_version
                 else None
             ),
-            "ip_address": dev.ip_address if dev else None,
-            "address_source": dev.address_source if dev else None,
+            # Bug #7 (1.6.1): fall back to the host's ARP table when
+            # the device poller has a MAC but no fresh mDNS-derived IP.
+            # Keeps the IP column populated through transient mDNS
+            # outages instead of flapping to "—" until the next probe.
+            "ip_address": ip_with_fallback,
+            "address_source": source_with_fallback,
             "last_seen": dev.last_seen.isoformat() if dev and dev.last_seen else None,
             "server_version": server_version,
             "has_api_key": has_api_key,
@@ -703,7 +770,7 @@ async def get_targets(request: web.Request) -> web.Response:
             "network_ipv6": meta.get("network_ipv6", False),
             "network_ap_fallback": meta.get("network_ap_fallback", False),
             "network_matter": meta.get("network_matter", False),
-            # Per-device metadata from the # distributed-esphome: comment block.
+            # Per-device metadata from the # esphome-fleet: comment block.
             "pinned_version": meta.get("pinned_version"),
             "schedule": meta.get("schedule"),
             "schedule_enabled": meta.get("schedule_enabled", False),
@@ -891,10 +958,25 @@ async def download_job_firmware(request: web.Request) -> web.Response:
     job_id = request.match_info["id"]
     queue = request.app["queue"]
     job = queue.get(job_id)
-    if not job:
-        return web.json_response({"error": "Job not found"}, status=404)
-    if not job.has_firmware:
-        return web.json_response({"error": "Firmware not available"}, status=404)
+    # Bug #1 (1.6.1): fall back to the persistent job_history table when
+    # the job has been coalesced out of the live queue. The binary lives
+    # on disk under /data/firmware/<job_id>.*.bin regardless of queue
+    # state, so history downloads work as long as the firmware budget
+    # hasn't evicted the file. ``job_target`` is needed below to build
+    # the Content-Disposition filename.
+    job_target: str | None
+    if job is None:
+        history = request.app.get("job_history")
+        hist_row = history.get(job_id) if history is not None else None
+        if hist_row is None:
+            return web.json_response({"error": "Job not found"}, status=404)
+        if not hist_row.get("has_firmware"):
+            return web.json_response({"error": "Firmware not available"}, status=404)
+        job_target = str(hist_row.get("target") or "")
+    else:
+        if not job.has_firmware:
+            return web.json_response({"error": "Firmware not available"}, status=404)
+        job_target = job.target
 
     from firmware_storage import firmware_path, list_variants, read_firmware  # noqa: PLC0415
     available = list_variants(job_id)
@@ -923,7 +1005,8 @@ async def download_job_firmware(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "Firmware not available"}, status=404)
 
-    stem = job.target.removesuffix(".yaml").removesuffix(".yml") or job.target
+    target_name = job_target or "job"
+    stem = target_name.removesuffix(".yaml").removesuffix(".yml") or target_name
     # Surface the variant in the filename so a user who downloads both
     # doesn't end up with two indistinguishable `.bin`s in their
     # browser's Downloads folder.
@@ -975,8 +1058,17 @@ async def list_job_firmware_variants(request: web.Request) -> web.Response:
     job_id = request.match_info["id"]
     queue = request.app["queue"]
     job = queue.get(job_id)
-    if not job:
-        return web.json_response({"error": "Job not found"}, status=404)
+    # Bug #1 (1.6.1): the UI calls this from the history surfaces too,
+    # so fall back to job_history for jobs that have already been
+    # coalesced out of the live queue. The variant list itself is
+    # filesystem-derived (see :func:`firmware_storage.list_variants`),
+    # so no DB hit is needed for the variant data — we just confirm
+    # that the id is a real job before exposing the directory scan.
+    if job is None:
+        history = request.app.get("job_history")
+        hist_row = history.get(job_id) if history is not None else None
+        if hist_row is None:
+            return web.json_response({"error": "Job not found"}, status=404)
     return web.json_response({"variants": list_variants(job_id)})
 
 
@@ -1029,6 +1121,20 @@ async def ws_device_log(request: web.Request) -> web.WebSocketResponse:
 
     noise_psk = device_poller._encryption_keys.get(dev.name)
     addr = device_poller._address_overrides.get(dev.name) or dev.ip_address
+    # Bug #11 (1.6.1): if we end up with no key for a device the YAML
+    # declared one for, the usual symptom is ``Connection requires
+    # encryption`` from the device. That message lands in the user's
+    # terminal; this log line lands in the add-on log so support
+    # threads can point at the right triage endpoint in one round
+    # trip instead of asking for a code dive.
+    if noise_psk is None and dev.online:
+        logger.debug(
+            "ws_device_log: %s has no cached noise_psk. If the device "
+            "declares api.encryption.key the scan may have run before "
+            "ESPHome finished installing — check "
+            "GET /ui/api/targets/%s/api-key and restart the add-on if "
+            "it 404s.", dev.name, filename,
+        )
 
     import asyncio as _asyncio  # noqa: PLC0415
     import aioesphomeapi  # noqa: PLC0415
@@ -1509,7 +1615,7 @@ async def pin_target_version(request: web.Request) -> web.Response:
     """Pin a device to a specific ESPHome version.
 
     Body: ``{"version": "2026.3.3"}``
-    The pin is stored in the ``# distributed-esphome:`` comment block.
+    The pin is stored in the ``# esphome-fleet:`` comment block.
     """
     filename = request.match_info["filename"]
     cfg = _cfg(request)
@@ -1817,12 +1923,16 @@ async def start_compile(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid targets value"}, status=400)
 
     # Build a map of target → device IP for OTA addressing
+    # Bug #18 (1.6.1): resolve_ota_address picks a real IP over a
+    # stale ``.local`` fallback so static-IP devices can't regress
+    # to the mDNS hostname the worker's container can't resolve.
     ota_addresses: dict[str, str] = {}
     if device_poller:
         for dev in device_poller.get_devices():
             if dev.compile_target and dev.ip_address:
-                addr = device_poller._address_overrides.get(dev.name) or dev.ip_address
-                ota_addresses[dev.compile_target] = addr
+                addr = device_poller.resolve_ota_address(dev.name)
+                if addr:
+                    ota_addresses[dev.compile_target] = addr
 
     run_id = str(uuid.uuid4())
     enqueued = 0
@@ -2248,7 +2358,10 @@ async def rename_target(request: web.Request) -> web.Response:
         for d in device_poller.get_devices():
             if d.compile_target == filename:
                 old_dev_name = d.name
-                old_device_addr = device_poller._address_overrides.get(d.name) or d.ip_address
+                # Bug #18 (1.6.1): route through the shared best-address
+                # helper so rename compiles get the same static-IP-aware
+                # resolution as every other OTA path.
+                old_device_addr = device_poller.resolve_ota_address(d.name)
                 break
         if old_dev_name and old_dev_name in device_poller._devices:
             del device_poller._devices[old_dev_name]

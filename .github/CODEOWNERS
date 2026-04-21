@@ -1,0 +1,9 @@
+# CODEOWNERS for distributed-esphome (ESPHome Fleet).
+#
+# Single maintainer today; the wildcard claims the whole tree so
+# every PR gets an explicit reviewer assignment. If the project ever
+# picks up additional maintainers, split into per-directory ownership
+# lines above this wildcard — GitHub applies the last matching rule,
+# so a path-specific line overrides the catch-all.
+
+* @weirded

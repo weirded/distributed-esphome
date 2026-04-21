@@ -746,7 +746,11 @@ export interface JobHistoryEntry {
   id: string;
   target: string;
   state: 'success' | 'failed' | 'cancelled' | 'timed_out';
-  triggered_by: 'user' | 'schedule' | 'ha_action' | null;
+  // PR #64 review: server's `_triggered_by` in `job_history.py` also
+  // emits `'api'` for direct system-token callers (the non-HA bearer
+  // path). Type has to include it so the Triggered-badge helpers and
+  // filters don't narrow incorrectly.
+  triggered_by: 'user' | 'schedule' | 'ha_action' | 'api' | null;
   trigger_detail: string | null;
   download_only: 0 | 1;
   validate_only: 0 | 1;
@@ -766,13 +770,21 @@ export interface JobHistoryEntry {
   /** Bug #38: 1 when the job produced firmware. Stays 1 even after the
    *  .bin has been evicted by the firmware budget task — use
    *  `firmware_variants.length > 0` to know whether the binary is
-   *  still downloadable right now. */
-  has_firmware?: 0 | 1;
+   *  still downloadable right now.
+   *
+   *  PR #64 review: server always includes this field in the SELECT
+   *  projection, so it's required (not optional). Keeping it optional
+   *  would force defensive `?? 0` chains in callers and mask contract
+   *  regressions if the server ever stops emitting it. */
+  has_firmware: 0 | 1;
   /** Bug #38: live list of variants still on disk (e.g. ["factory","ota"]).
    *  Empty when has_firmware is 0, OR when the firmware has been evicted
    *  by the budget enforcer. Drives the Download button's visibility on
-   *  history rows. */
-  firmware_variants?: string[];
+   *  history rows. Server always emits a list (possibly empty). */
+  firmware_variants: string[];
+  /** Bug #8 (1.6.1): worker-selection reason persisted at claim time.
+   *  ``null`` on rows that predate the column. */
+  selection_reason: string | null;
 }
 
 export interface JobHistoryStats {

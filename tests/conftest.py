@@ -27,14 +27,20 @@ def _reset_auto_versioning_state():
     so tests that assert on WARNING lines don't see suppressed output
     from a prior test with the same (peer_ip, reason) key.
     """
+    # PR #80 review: don't import `main` here just to clear its state.
+    # Importing ha-addon/server/main.py has real side-effects (module-
+    # level logging.basicConfig, background-task module registrations)
+    # that slow the suite and alter log-capture behaviour for every
+    # test, even the ones that never touch `main`. Only clear the
+    # state if *some earlier test* already imported `main` itself,
+    # using ``sys.modules.get`` — that way we still clean up the
+    # rate-limit dicts when they're dirty, but a pure
+    # git_versioning/settings/queue test never pays the import tax.
     try:
         import git_versioning as _gv
     except ImportError:
         _gv = None
-    try:
-        import main as _main
-    except ImportError:
-        _main = None
+    _main = sys.modules.get("main")
 
     if _gv is not None:
         _gv._reset_for_tests()
@@ -48,6 +54,8 @@ def _reset_auto_versioning_state():
 
     if _gv is not None:
         _gv._reset_for_tests()
+    # Re-read from sys.modules post-yield in case a test imported main.
+    _main = sys.modules.get("main")
     if _main is not None:
         if hasattr(_main, "_auth_fail_last_logged"):
             _main._auth_fail_last_logged.clear()

@@ -57,7 +57,7 @@ The Settings drawer toggle for `Auto-commit on save` was demonstrably **on** at 
 **Where:** History panel → "You have uncommitted changes" banner → click *Commit…* → message field.
 **What I saw:** placeholder reads `save: cyd-office-info.yaml (manual)` — the pre-#34 raw form. Meanwhile the actual commits in the list directly below render as the curated `_DEFAULT_SUBJECTS` strings: *"Automatically saved after editing in UI"*, *"Set one-time scheduled upgrade"*, etc.
 
-**Why this matters for Pat:** Pat is the one who flagged inconsistency as a top-tier irritation in `UX_REVIEW.md` ("notices when 'Upgrade' and 'COMPILING + OTA' refer to the same thing"). Showing the old jargon-ish form as the suggested default while the rest of the surface uses the new human form is exactly the kind of inconsistency that grates. It also implies #34 was incomplete — the developer-facing default is curated, the user-facing default is not.
+**Why this matters for Pat:** Pat is the one who flagged inconsistency as a top-tier irritation in `archive/UX_REVIEW-1.5.md` ("notices when 'Upgrade' and 'COMPILING + OTA' refer to the same thing"). Showing the old jargon-ish form as the suggested default while the rest of the surface uses the new human form is exactly the kind of inconsistency that grates. It also implies #34 was incomplete — the developer-facing default is curated, the user-facing default is not.
 
 **Fix:** placeholder should show the manual-commit default subject from `_DEFAULT_SUBJECTS` (`"Manually committed from UI"`). One-line change in the UI; verify with a screenshot Playwright test against the placeholder text.
 
@@ -163,7 +163,7 @@ These are open bugs in `WORKITEMS-1.6.md` that I confirmed are still biting in t
 **Where:** Devices row hamburger → *Restart* (greyed) and *Copy API Key* (greyed) on devices that lack a `restart_button` or an `api.encryption.key`.
 **What I saw:** both greyed, no `title=` / no tooltip. Pat hovers, gets nothing, clicks (no-op or disabled), guesses.
 
-**Fix:** add the same `title=` pattern UX_REVIEW.md flagged for icon buttons. Strings: *"Add a `button.restart` to this YAML to enable Restart from the UI"* / *"Set `api.encryption.key` to enable API access"*. Also matches CLAUDE.md's "Disable, don't fail" rule — currently we disable but don't tell them how to enable.
+**Fix:** add the same `title=` pattern archive/UX_REVIEW-1.5.md flagged for icon buttons. Strings: *"Add a `button.restart` to this YAML to enable Restart from the UI"* / *"Set `api.encryption.key` to enable API access"*. Also matches CLAUDE.md's "Disable, don't fail" rule — currently we disable but don't tell them how to enable.
 
 ---
 

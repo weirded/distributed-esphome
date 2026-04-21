@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to ESPHome Fleet",
-        "description": "Enter the base URL of your ESPHome Fleet add-on (for example `http://homeassistant.local:8765`) and the shared token from the add-on's Configuration tab.",
+        "description": "Enter the base URL of your ESPHome Fleet add-on (for example {example_url}) and the shared token from the add-on's Configuration tab.",
         "data": {
           "base_url": "Base URL",
           "token": "Add-on token"
@@ -24,6 +24,14 @@
         "data": {
           "token": "Add-on token"
         }
+      },
+      "reconfigure_confirm": {
+        "title": "Reconfigure ESPHome Fleet",
+        "description": "Update the base URL or token for the ESPHome Fleet add-on currently at {url}.",
+        "data": {
+          "base_url": "Base URL",
+          "token": "Add-on token"
+        }
       }
     },
     "error": {
@@ -35,7 +43,9 @@
       "already_configured": "This server is already configured.",
       "already_in_progress": "Setup is already in progress for this server via Supervisor discovery.",
       "invalid_discovery_info": "The Supervisor discovery record was missing host or port.",
-      "reauth_successful": "The token was updated and the integration reloaded."
+      "reauth_successful": "The token was updated and the integration reloaded.",
+      "reconfigure_successful": "The integration was updated and reloaded.",
+      "reconfigure_unknown_entry": "Couldn't find the integration entry to reconfigure. Try removing and re-adding the integration."
     }
   },
   "services": {
@@ -50,6 +60,46 @@
     "validate": {
       "name": "Validate",
       "description": "Run ESPHome config validation on a target YAML."
+    }
+  },
+  "system_health": {
+    "info": {
+      "add_on_url": "Add-on URL",
+      "last_update_success": "Last poll",
+      "esphome_version": "ESPHome version",
+      "add_on_version": "Add-on version",
+      "workers": "Workers",
+      "queue_depth": "Queue depth",
+      "status": "Status"
+    }
+  },
+  "issues": {
+    "config_entry_reauth": {
+      "title": "ESPHome Fleet needs a new token",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "description": "The add-on at {url} is rejecting requests — the shared token may have been rotated. Click **Submit** to open the re-authentication form."
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_config_entry": {
+      "message": "No ESPHome Fleet config entry configured — add the integration first via Settings → Devices & Services."
+    },
+    "no_managed_target_in_selection": {
+      "message": "None of the selected devices are managed ESPHome Fleet targets."
+    },
+    "no_target_selected": {
+      "message": "Select at least one device or provide a 'targets' list."
+    },
+    "no_single_target_selected": {
+      "message": "Select a device or provide a 'target' filename."
+    },
+    "invalid_worker_device": {
+      "message": "The selected worker is not an ESPHome Fleet build worker."
     }
   }
 }

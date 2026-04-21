@@ -40,6 +40,14 @@ from .coordinator import EsphomeFleetCoordinator
 from .device import hub_device_info, target_device_info, worker_device_info
 
 
+
+# Silver quality-scale: parallel-updates rule. Coordinator-driven
+# local-polling integration — the single EsphomeFleetCoordinator
+# owns polling and hands all entities the same snapshot, so HA's
+# per-platform serializer just adds startup latency. Setting to 0
+# tells HA this platform does its own concurrency control.
+PARALLEL_UPDATES = 0
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,

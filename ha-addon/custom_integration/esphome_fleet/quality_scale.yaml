@@ -1,0 +1,371 @@
+# Integration quality-scale declaration per
+# https://developers.home-assistant.io/docs/core/integration-quality-scale/
+#
+# manifest.json's `quality_scale: silver` is the *claim*; this file is
+# the *audit* that hassfest reads to verify the claim rule-by-rule. If
+# a rule here says `status: done` but the code doesn't satisfy it,
+# hassfest fails the build. If a rule should be exempt, spell out why
+# — a missing reason reads as "we forgot."
+#
+# Bronze / silver / gold rule catalogue lives in the HA core repo at
+# `script/hassfest/quality_scale.py`. Keep this file in sync with
+# whatever that catalogue advertises when the HA minimum is bumped.
+
+rules:
+
+  # ---- Bronze ----------------------------------------------------------
+
+  action-setup:
+    status: exempt
+    comment: >
+      Integration exposes three services (`compile`, `cancel`,
+      `validate`) but they're registered from `services.py` via
+      `async_register_services` during `async_setup` — they don't need
+      `async_setup`-time action registration helpers.
+
+  appropriate-polling:
+    status: done
+    comment: >
+      `EsphomeFleetCoordinator.update_interval = 30s` (set in
+      `coordinator.py`). Entities bind to the coordinator via
+      `CoordinatorEntity`; HA's per-platform polling is disabled via
+      `PARALLEL_UPDATES = 0` on each platform.
+
+  brands:
+    status: todo
+    comment: >
+      Artwork staged under `docs/brands-submission/` at 256×256 /
+      512×512 / landscape sizes; submission to `home-assistant/brands`
+      is tracked as PR.5 in WORKITEMS-1.6.1.md. Until that PR merges,
+      HA renders the integration with the bundled local icon/logo.
+
+  common-modules:
+    status: done
+    comment: >
+      Shared helpers live in `_discovery.py` (entity-already-registered
+      check), `device.py` (DeviceInfo builders for hub/target/worker),
+      and `services.py` (HA service handlers). No duplicated logic
+      across platforms.
+
+  config-flow-test-coverage:
+    status: done
+    comment: >
+      `tests/test_integration_config_flow_logic.py` covers the user /
+      discovery / reauth / reconfigure paths against mocked hass.
+
+  config-flow:
+    status: done
+    comment: >
+      `config_flow.py` implements user, zeroconf, hassio (Supervisor
+      discovery), reauth, and reconfigure steps.
+
+  dependency-transparency:
+    status: exempt
+    comment: >
+      `manifest.json.requirements` is empty — the integration talks to
+      the add-on's HTTP API via `aiohttp` (already an HA dep) and uses
+      no third-party Python packages.
+
+  docs-actions:
+    status: done
+    comment: >
+      `services.yaml` carries `name:` + `description:` on every service
+      and field; HA Developer Tools → Actions shows the full docs.
+
+  docs-high-level-description:
+    status: done
+    comment: The add-on's `DOCS.md` + repo `README.md` cover this.
+
+  docs-installation-instructions:
+    status: done
+    comment: Covered by `DOCS.md` → Getting Started.
+
+  docs-removal-instructions:
+    status: done
+    comment: >
+      `DOCS.md` covers uninstallation via Supervisor; the custom
+      integration auto-removes itself from `/config/custom_components/`
+      via `integration_installer.py` when the add-on is uninstalled.
+
+  entity-event-setup:
+    status: exempt
+    comment: >
+      No event listeners set up by entities — coordinator is the sole
+      source of truth; entities render from coordinator data.
+
+  entity-unique-id:
+    status: done
+    comment: >
+      Every entity in `sensor.py`, `binary_sensor.py`, `button.py`,
+      `number.py`, `update.py` constructs a stable `unique_id` from
+      domain + target/worker identifier.
+
+  has-entity-name:
+    status: done
+    comment: >
+      Every entity class sets `_attr_has_entity_name = True` and
+      surfaces `_attr_name` so HA composes `DeviceName Entity-label`.
+
+  runtime-data:
+    status: done
+    comment: >
+      Coordinator is stored as `hass.data[DOMAIN][entry.entry_id]`;
+      platforms read it back by entry_id. Migration to
+      `entry.runtime_data` is planned when the HA minimum is bumped
+      past 2024.11.
+
+  test-before-configure:
+    status: done
+    comment: >
+      `async_step_user` and `async_step_reconfigure_confirm` both call
+      `_probe_server()` before creating/updating the entry so an
+      unreachable URL surfaces in the form, not after commit.
+
+  test-before-setup:
+    status: done
+    comment: >
+      `coordinator._async_update_data` is the first call during setup;
+      a 401 raises `ConfigEntryAuthFailed` (→ reauth flow) and a
+      non-200 raises `UpdateFailed` (→ red "setup failed" banner with
+      a retryable error message).
+
+  unique-config-entry:
+    status: done
+    comment: >
+      `manifest.json` declares `"single_config_entry": true`; flow
+      uses `async_set_unique_id(base_url)` + `_abort_if_unique_id_configured`.
+
+  # ---- Silver ----------------------------------------------------------
+
+  action-exceptions:
+    status: done
+    comment: >
+      QS.7 (1.6.1) — every `HomeAssistantError` raise in `services.py`
+      uses `translation_domain=DOMAIN` + `translation_key=…`.
+      Translation strings in `strings.json` + `translations/en.json`
+      under `exceptions.*`.
+
+  config-entry-unloading:
+    status: done
+    comment: >
+      `async_unload_entry` in `__init__.py` unloads platforms, pops
+      coordinator data from `hass.data[DOMAIN]`, and cleans up the
+      `_discovery` hooks. Listeners registered via `async_on_unload`.
+
+  docs-configuration-parameters:
+    status: exempt
+    comment: >
+      All user-facing configuration lives in the add-on's Settings
+      drawer; the integration itself has no runtime configurable
+      parameters beyond URL + token captured in the config flow.
+
+  docs-installation-parameters:
+    status: done
+    comment: Covered by `DOCS.md` → Getting Started → First steps.
+
+  entity-unavailable:
+    status: done
+    comment: >
+      `CoordinatorEntity.available` derives from
+      `coordinator.last_update_success`; entities go unavailable when
+      the add-on drops.
+
+  integration-owner:
+    status: done
+    comment: >
+      `manifest.json.codeowners = ["@weirded"]`; repo's
+      `.github/CODEOWNERS` also carries the catch-all.
+
+  log-when-unavailable:
+    status: done
+    comment: >
+      `_async_update_data` raises `UpdateFailed(f"Couldn't reach
+      add-on at {url}: {err}")` which HA logs at WARNING once per
+      state change (not per poll).
+
+  parallel-updates:
+    status: done
+    comment: >
+      `PARALLEL_UPDATES = 0` declared at the top of every platform
+      module (`sensor.py`, `binary_sensor.py`, `button.py`,
+      `number.py`, `update.py`). The single coordinator owns polling;
+      HA's per-platform serializer is bypassed.
+
+  reauthentication-flow:
+    status: done
+    comment: >
+      `async_step_reauth` + `async_step_reauth_confirm` in
+      `config_flow.py`. Triggered by `ConfigEntryAuthFailed` on 401
+      from the coordinator.
+
+  test-coverage:
+    status: todo
+    comment: >
+      Silver's bar is ≥95% real line-coverage. We have 17 mock-based
+      logic tests across `tests/test_integration_*_logic.py` (setup,
+      services, coordinator auth + events, device_info, installer,
+      config flow, diagnostics, system health, stale devices,
+      reconfigure, worker-selection reason) but no real-hass
+      lifecycle tests — `tests/test_integration_setup.py` has the
+      scaffolding but the first tests are `@pytest.mark.skip`-ed
+      pending `async_mock_integration` wiring (TODO(QS.8)). Honest
+      coverage is bronze-plus, not silver. Tracked in
+      `WORKITEMS-future.md` → Integration Quality Scale as QS.8; the
+      silver claim flips back on once real-hass coverage passes 95%.
+
+  # ---- Gold (blocks for now; promoted to `status: done` when each lands) ----
+
+  diagnostics:
+    status: done
+    comment: >
+      `diagnostics.py` exposes `async_get_config_entry_diagnostics`
+      with `async_redact_data` scrubbing CONF_TOKEN, MAC addresses,
+      HA device_ids, worker client_id, and system_info. (QS.1 in 1.6.1.)
+
+  discovery-update-info:
+    status: done
+    comment: >
+      Zeroconf + hassio discovery both reach `async_step_discovery_confirm`
+      which updates the entry via `_abort_if_unique_id_configured(updates=…,
+      reload_on_update=True)` when Supervisor advertises a new base URL /
+      token.
+
+  discovery:
+    status: done
+    comment: >
+      `manifest.json` declares `zeroconf: [_esphome-fleet._tcp.local.]`
+      and `async_step_hassio` handles Supervisor-delivered discovery.
+
+  docs-data-update:
+    status: todo
+    comment: >
+      Add to `DOCS.md` → Integration — explain that the coordinator
+      polls every 30s and that clicking *Reload* on the integration
+      card triggers an immediate refresh.
+
+  docs-examples:
+    status: todo
+    comment: >
+      Automation examples covered in `DOCS.md` → Integration but not
+      formalised per the gold-rule shape. Low priority.
+
+  docs-known-limitations:
+    status: todo
+    comment: >
+      Known limitations (HA restart after integration upgrade,
+      Supervisor-digest pinning gap) are covered but not under a
+      single "Known limitations" heading in `DOCS.md`.
+
+  docs-supported-devices:
+    status: exempt
+    comment: >
+      Integration manages ESPHome YAML configs — "supported devices"
+      is every ESPHome-compatible microcontroller. Enumerating them
+      here would duplicate ESPHome's own docs and drift.
+
+  docs-supported-functions:
+    status: done
+    comment: >
+      Supported functions (compile, cancel, validate; per-device
+      status, worker status, queue depth) are listed in `DOCS.md` →
+      What's on the Web UI.
+
+  docs-troubleshooting:
+    status: todo
+    comment: >
+      Common issues (add-on URL mismatch, token rotation, Supervisor
+      discovery stuck) are covered in the add-on's DOCS but not under
+      a dedicated troubleshooting section in the integration docs.
+
+  docs-use-cases:
+    status: done
+    comment: >
+      Covered in the repo README under "Why use this instead of the
+      ESPHome builder?".
+
+  dynamic-devices:
+    status: done
+    comment: >
+      QS.6 (1.6.1) — coordinator's `_prune_stale_devices` removes HA
+      device-registry entries for targets/workers that have
+      disappeared from the server snapshot. New devices are created
+      via the per-platform `async_setup_entry` when the coordinator
+      first reports them.
+
+  entity-category:
+    status: done
+    comment: >
+      Config entities (worker parallel-jobs, clean-cache button)
+      declare `_attr_entity_category = EntityCategory.CONFIG` /
+      `DIAGNOSTIC` as appropriate.
+
+  entity-device-class:
+    status: done
+    comment: >
+      Connectivity binary sensors set
+      `device_class = BinarySensorDeviceClass.CONNECTIVITY`; update
+      entities use the stock UpdateEntity device class.
+
+  entity-disabled-by-default:
+    status: exempt
+    comment: >
+      No entities are disabled by default; every surface is
+      operationally useful out of the box.
+
+  entity-translations:
+    status: todo
+    comment: >
+      Entity names use `_attr_has_entity_name = True` but haven't
+      been moved to `translations/en.json` → `entity.*.*.name`.
+      Planned follow-up.
+
+  exception-translations:
+    status: done
+    comment: >
+      QS.7 (1.6.1) — exceptions carry translation_key. See
+      action-exceptions above.
+
+  icon-translations:
+    status: exempt
+    comment: >
+      Entity icons are hard-coded via `_attr_icon` (Lucide-equivalent
+      MDI names) — no conditional icon state that would benefit from
+      `icons.json`.
+
+  reconfiguration-flow:
+    status: done
+    comment: >
+      QS.5 (1.6.1) — `async_step_reconfigure` +
+      `async_step_reconfigure_confirm` in `config_flow.py`.
+
+  repair-issues:
+    status: done
+    comment: >
+      QS.2 (1.6.1) — `ConfigEntryAuthFailed` auto-creates a repair
+      issue wired to the reauth flow. Custom `issues.config_entry_reauth`
+      translation block in `strings.json` replaces the generic message.
+
+  stale-devices:
+    status: done
+    comment: Same as dynamic-devices above.
+
+  # ---- Platinum (aspirational; not claimed) ----
+
+  async-dependency:
+    status: done
+    comment: >
+      Only external I/O is via `aiohttp` (async) to the add-on's
+      HTTP API. No blocking dependencies.
+
+  inject-websession:
+    status: done
+    comment: >
+      `coordinator.py` uses `async_get_clientsession(hass)` instead
+      of instantiating its own ClientSession.
+
+  strict-typing:
+    status: todo
+    comment: >
+      `mypy --strict` would flag the `Any` on coordinator dict reads
+      and a handful of `# type: ignore` in the platform modules.
+      Tracked for a future cycle.

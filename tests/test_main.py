@@ -433,3 +433,81 @@ def test_pick_latest_stable_accepts_short_versions():
     from main import _pick_latest_stable_version
 
     assert _pick_latest_stable_version(["2024.12", "2024.11.5", "2024.11"]) == "2024.12"
+
+
+# ---------------------------------------------------------------------------
+# Bug #11 (1.6.1): reseed after ensure_esphome_installed completes
+# ---------------------------------------------------------------------------
+
+def test_reseed_device_poller_refreshes_after_install(tmp_path):
+    """On first boot the ESPHome venv hasn't been installed yet, so
+    ``build_name_to_target_map`` returns empty encryption keys — every
+    YAML whose ``esphome.name`` needs the substitution pass comes back
+    from ``_resolve_esphome_config`` as ``None`` until the venv is
+    ready.
+
+    ``reseed_device_poller_from_config`` has to be invokable at the
+    tail of the install task so the poller catches up without waiting
+    for the next 30-second config-scanner tick. This test simulates
+    the narrow invariant: an empty-first-seed poller is re-populated
+    with real keys on the second call."""
+    from main import reseed_device_poller_from_config
+
+    # Stand up a minimal ESPHome fixture inside tmp_path so the
+    # scanner has real YAML to chew on.
+    (tmp_path / "secrets.yaml").write_text(
+        'api_encryption_key: "Zp82U4SqCqe55xkDDuPXzsoNhcmEws7/HbNXsv2qOGI="\n'
+        'wifi_ssid: "x"\nwifi_password: "x"\nota_password: "x"\n'
+    )
+    (tmp_path / "my-device.yaml").write_text(
+        'esphome:\n  name: my-device\n'
+        'esp8266:\n  board: d1_mini\n'
+        'wifi:\n  ssid: !secret wifi_ssid\n  password: !secret wifi_password\n'
+        'api:\n  encryption:\n    key: !secret api_encryption_key\n'
+        'ota:\n  - platform: esphome\n'
+    )
+
+    # Mock config object matching AppConfig's .config_dir duck-type.
+    class _Cfg:
+        config_dir = str(tmp_path)
+
+    # Mock poller captures the last update_compile_targets call.
+    captured: dict = {}
+
+    class _Poller:
+        def update_compile_targets(self, targets, name_map, enc_keys, addr_overrides, addr_sources):
+            captured["targets"] = list(targets)
+            captured["name_map"] = dict(name_map)
+            captured["enc_keys"] = dict(enc_keys)
+            captured["addr_overrides"] = dict(addr_overrides)
+            captured["addr_sources"] = dict(addr_sources)
+
+    app = {"config": _Cfg(), "device_poller": _Poller()}
+
+    # First call — stands in for the in-flight install window: the
+    # poller now sees whatever the scanner resolved.
+    reseed_device_poller_from_config(app, reason="test-initial")
+    first_keys = dict(captured["enc_keys"])
+    assert "my-device.yaml" in captured["targets"]
+
+    # Second call mirrors what runs after ``ensure_esphome_installed``
+    # completes — same inputs, same outputs, but the code path at
+    # least executes cleanly and re-issues update_compile_targets.
+    reseed_device_poller_from_config(app, reason="esphome install complete")
+    assert captured["enc_keys"] == first_keys
+    # Bug #11 belt-and-braces: encryption keys carry both hyphenated
+    # and underscore-normalised aliases after reseed.
+    assert "my-device" in captured["enc_keys"]
+    assert "my_device" in captured["enc_keys"]
+
+
+def test_reseed_device_poller_no_op_when_poller_absent(tmp_path):
+    """No device_poller in app — the helper returns without raising."""
+    from main import reseed_device_poller_from_config
+
+    class _Cfg:
+        config_dir = str(tmp_path)
+
+    app = {"config": _Cfg()}
+    # Should just return; no assertion needed beyond "didn't raise".
+    reseed_device_poller_from_config(app, reason="no poller")

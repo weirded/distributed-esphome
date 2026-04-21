@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Calendar, Clock, Download, History as HistoryIcon, Pin } from 'lucide-react';
+import { Calendar, Clock, History as HistoryIcon, Pin } from 'lucide-react';
 import { classifyTrigger, getTriggerBadge } from '@/utils/trigger';
 import {
   useReactTable,
@@ -15,6 +15,8 @@ import type { Job, Target, Worker } from '../types';
 import { Button } from './ui/button';
 import { SortHeader, getAriaSort } from './ui/sort-header';
 import { fmtDateTime, fmtDuration, fmtTimeOfDay, formatCronHuman, getJobBadge, stripYaml, timeAgo, isJobSuccessful, isJobInProgress, isJobFailed, isJobFinished, isJobRetryable, usePersistedState } from '../utils';
+import { useVersioningEnabled } from '../hooks/useVersioning';
+import { formatSelectionReason } from '../utils/selectionReason';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -23,6 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from './ui/dropdown-menu';
+import { FirmwareDownloadMenu } from './FirmwareDownloadMenu';
 import { QueueHistoryDialog } from './QueueHistoryDialog';
 
 interface Props {
@@ -65,18 +68,6 @@ const stateSort: SortingFn<Job> = (rowA, rowB) => {
 
 // Inline sort header — mirrors the pattern used in DevicesTab
 
-// #69: display labels for the firmware variants served by the
-// Download dropdown. Maps server-side variant names (stable wire
-// identifiers) to user-facing strings.
-const variantLabel = (variant: string): string => {
-  switch (variant) {
-    case 'factory': return 'Factory image';
-    case 'ota':     return 'OTA image';
-    case 'firmware': return 'Firmware';  // legacy pre-#69 blob
-    default:        return variant;
-  }
-};
-
 const columnHelper = createColumnHelper<Job>();
 
 export function QueueTab({
@@ -110,6 +101,11 @@ export function QueueTab({
   // is open at a time. Same pattern we used for the Devices-tab
   // hamburger in #2 (1.4.1-dev.3) — see Design Judgment in CLAUDE.md.
   const [downloadMenuOpenJobId, setDownloadMenuOpenJobId] = useState<string | null>(null);
+  // Bug #112: hide the "Commit" column entirely when versioning is off.
+  // The column renders short git hashes that are clickable links into the
+  // History drawer — both are meaningless when there's no history to link
+  // to, so drop the whole column rather than show a full column of dashes.
+  const versioningEnabled = useVersioningEnabled();
 
   // Build target → display name map so queue shows friendly names
   const targetNameMap = useMemo(() => {
@@ -289,12 +285,34 @@ export function QueueTab({
       },
       sortingFn: 'alphanumeric',
     }),
+    // Bug #8 (1.6.1): surface the worker-selection reason so a user
+    // can answer "why did THIS worker get the job" without reading
+    // the server log. Short label with hover-explanation; dash for
+    // jobs that predate the column.
+    columnHelper.accessor(row => row.selection_reason || '', {
+      id: 'selection_reason',
+      header: ({ column }) => <SortHeader label="Worker selection" column={column} />,
+      cell: ({ row: { original: job } }) => {
+        const display = formatSelectionReason(job.selection_reason);
+        if (!display) return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
+        return (
+          <span
+            className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
+            title={display.title}
+          >
+            {display.label}
+          </span>
+        );
+      },
+      sortingFn: 'alphanumeric',
+    }),
     // Bug 18: surface the git hash the config was at when this job
     // was enqueued (AV.7's config_hash). Short hash rendered in a
     // muted mono font; hover shows the full SHA. Dash for jobs
     // that predate AV.7 or were enqueued while /config/esphome/
     // wasn't a git repo.
-    columnHelper.accessor(row => row.config_hash || '', {
+    // Bug #112: omitted entirely when versioning is off.
+    ...(versioningEnabled ? [columnHelper.accessor(row => row.config_hash || '', {
       id: 'config_hash',
       header: ({ column }) => <SortHeader label="Commit" column={column} />,
       cell: ({ row: { original: job } }) => {
@@ -315,7 +333,7 @@ export function QueueTab({
         );
       },
       sortingFn: 'alphanumeric',
-    }),
+    })] : []),
     // #21/#92 + UX.5: triggered-by column — recurring schedule, one-time, or
     // manual. Recurring/once rows look up the parent target's cron / one-time
     // timestamp and render an inline "@ HH:MM" or "@ YYYY-MM-DD HH:MM" affix.
@@ -427,7 +445,11 @@ export function QueueTab({
         // variant (factory for ESP32 first-flash; ota for OTA / ESP8266)
         // plus a gzip toggle. Fallback to a single-item variants=["firmware"]
         // list for pre-#69 blobs still on disk after an upgrade.
-        const canDownload = job.state === 'success' && !!job.download_only && !!job.has_firmware;
+        // Bug #9 (1.6.1): the worker now archives every successful
+        // compile on the server, so the Download button is no longer
+        // gated on ``download_only`` — any successful compile with a
+        // stored binary can offer Download in the live Queue too.
+        const canDownload = job.state === 'success' && !!job.has_firmware;
         const variants = (job.firmware_variants && job.firmware_variants.length > 0)
           ? job.firmware_variants
           : (canDownload ? ['firmware'] : []);
@@ -446,54 +468,12 @@ export function QueueTab({
                 : <Button variant="warn" size="sm" onClick={() => onRetry([job.id])}>Retry</Button>
             )}
             {canDownload && variants.length > 0 && (
-              <DropdownMenu
+              <FirmwareDownloadMenu
+                jobId={job.id}
+                variants={variants}
                 open={downloadMenuOpenJobId === job.id}
                 onOpenChange={(open) => setDownloadMenuOpenJobId(open ? job.id : null)}
-              >
-                <DropdownMenuTrigger
-                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer"
-                  title="Download compiled firmware"
-                  aria-label="Download firmware"
-                >
-                  <Download className="size-3.5" aria-hidden="true" />
-                  Download
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuGroup>
-                    {variants.map((variant) => (
-                      <DropdownMenuItem
-                        key={`${variant}-raw`}
-                        render={(props) => (
-                          <a
-                            {...props}
-                            href={`./ui/api/jobs/${job.id}/firmware?variant=${variant}`}
-                            download
-                          >
-                            {variantLabel(variant)} (.bin)
-                          </a>
-                        )}
-                      />
-                    ))}
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    {variants.map((variant) => (
-                      <DropdownMenuItem
-                        key={`${variant}-gz`}
-                        render={(props) => (
-                          <a
-                            {...props}
-                            href={`./ui/api/jobs/${job.id}/firmware?variant=${variant}&gz=1`}
-                            download
-                          >
-                            {variantLabel(variant)} (.bin.gz)
-                          </a>
-                        )}
-                      />
-                    ))}
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              />
             )}
             {hasLog && (
               <Button variant="secondary" size="sm" onClick={() => onOpenLog(job.id)}>Log</Button>
@@ -507,7 +487,7 @@ export function QueueTab({
       },
     }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, onOpenHistoryDiff, targetNameMap, downloadMenuOpenJobId]);
+  ], [workers, onCancel, onRetry, onClear, onOpenLog, onEdit, onOpenHistoryDiff, targetNameMap, downloadMenuOpenJobId, versioningEnabled]);
 
   const table = useReactTable({
     data: filteredQueue,

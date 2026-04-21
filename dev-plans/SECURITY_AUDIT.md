@@ -1,10 +1,17 @@
 # Security Audit: ESPHome Fleet
 
 **Original audit:** 2026-03-29 (version 0.0.21; at the time of audit the product was called "ESPHome Distributed Build Server", renamed to ESPHome Fleet in 1.4.1, renumbered to 1.5.0 late cycle).
-**Last refreshed:** 2026-04-19 against 1.6.0.
+**Last refreshed:** 2026-04-20 against 1.6.1.
 **Scope:** Server add-on (`ha-addon/server/`), Dockerfile, `run.sh`, `config.yaml`, and the bundled worker (`client/client.py`) as it interacts with the server security model.
 
-> **Refresh note (2026-04-19, 1.6.0):** No new security workitems this cycle. The 1.6 release is feature-focused (config versioning, job history, in-app Settings drawer) and didn't alter the server's auth model, token handling, or trust boundaries. All 1.5.0-era mitigations (SC.1/SC.3, SA.1/SA.2, AU.1) remain in place and are re-verified by the same invariants and tests that gate CI. Finding statuses from the 2026-04-16 refresh carry forward unchanged — `grep -nE '^- \[x\] \*\*(SC|SA|AU)\.[0-9]' dev-plans/WORKITEMS-1.6.md` returns empty.
+> **Refresh note (2026-04-20, 1.6.1):** Status flips this cycle:
+> - **F-13** (Docker base not digest-pinned) moved OPEN → **FIXED (partial)** via SS.4. Worker Dockerfile pins `python:3.11-slim@sha256:…` fully; server Dockerfile pins the `ARG BUILD_FROM` default digest. The Supervisor-driven production path via `build.yaml` still can't carry a digest (upstream regex rejects `@sha256:…` there) — partial rather than full FIXED for that reason. See §F-13.
+> - **F-18** moved FIXED (partial) → **WONTFIX**. The SC.3 constraints-file defense was removed in 1.6.1 after a re-assessment: the single committed `esphome-constraints/<version>.txt` (we only ever shipped one version at a time) rarely matched the ESPHome version actually requested at job time — users pinned older versions or tracked newer releases than the weekly regen workflow had time to produce, so the hardened `--require-hashes` path's hit rate in practice was ~0% and the documented fallback-to-unpinned-install branch was the load-bearing case. The defense wasn't defending anything; it was generating weekly Dependabot noise and ~1500 lines of churning lockfile per committed ESPHome release with no security benefit. Accepted within the trusted-workers threat model; see the rewritten §F-18 for the reasoning. `esphome-constraints/`, `scripts/regen-esphome-constraints.sh`, and `.github/workflows/regen-esphome-constraints.yml` all deleted; `version_manager._install()` simplified to a plain `pip install esphome==<version>`.
+> - **New F-21 added and immediately FIXED** — the add-on previously ran unconfined under Supervisor (no `apparmor:` declaration). SS.1 ships a first-pass AppArmor profile (`ha-addon/apparmor.txt`) plus `apparmor: true` in `config.yaml`; Supervisor loads the profile on install/upgrade, the add-on runs under confinement, and the security-star card flips. First-pass profile is deliberately permissive (explicit rules for `file,`, `capability,`, `network,`, `signal,`, `dbus,`, `unix,`, `mount,`, `pivot_root,`, `ptrace,`) — attempts to tighten with path-level allows tripped on stock `abstractions/python` missing the slim-base libpython and a deny-scope rule breaking PlatformIO's `penv` bootstrap during compile. Attached-and-permissive is strictly better than unconfined; tightening is tracked against observed denial telemetry. See §F-21.
+> - **Non-finding documentation** — SS.3 added a "Why this add-on requests these permissions" block to `DOCS.md` giving each non-default `config.yaml` flag (`host_network`, `hassio_api`, `homeassistant_api`, `auth_api`, `config:rw`) a concise rationale. Not a finding per se (each flag is load-bearing), but reduces the "elevated-permissions but no explanation" friction on the Supervisor store page.
+> - **dompurify advisory chain** — six open Dependabot alerts (5× `dompurify`, 1× `hono`) were resolved for the 1.6.1 ship. dompurify pinned to a patched version via `package.json` overrides; `shadcn` moved to devDependencies so `hono` no longer ships in the production bundle. No F-entry change — these were moderate-severity advisories, not findings from the audit.
+
+> **Refresh note (2026-04-19, 1.6.0):** No new security workitems this cycle. The 1.6 release is feature-focused (config versioning, job history, in-app Settings drawer) and didn't alter the server's auth model, token handling, or trust boundaries. All 1.5.0-era mitigations (SC.1, SA.1/SA.2, AU.1) remain in place and are re-verified by the same invariants and tests that gate CI. Finding statuses from the 2026-04-16 refresh carry forward unchanged — `grep -nE '^- \[x\] \*\*(SC|SA|AU)\.[0-9]' dev-plans/WORKITEMS-1.6.md` returns empty.
 >
 > Note on new attack surface: the auto-versioning (AV.*) feature shells out to `git` with a fixed config directory and hash-validated arguments (`_run` helper + 4–40 hex regex for every hash input), so the new code doesn't widen the argv injection surface. Archive-restore + delete go through the same helper. Job history DAO uses parameterised SQLite queries (no string-formatted SQL anywhere in `job_history.py`), so the new `/ui/api/history` query endpoints don't open a SQLi vector. Settings PATCH validator is per-field and rejects unknown keys (same shape as 1.5) — the new `versioning_enabled: 'on'/'off'/'unset'` and `time_format: 'auto'/'12h'/'24h'` enums are whitelist-checked.
 >
@@ -13,7 +20,7 @@
 > - **F-11** moved WONTFIX → **INFO** — build logs contain values the server already has (it distributed them in `secrets.yaml` via the job bundle); logging them back doesn't cross a trust boundary. Not a finding.
 > - **F-14** and **F-15** moved OPEN → **FIXED (1.5.0-dev.77)** via SA.2 and SA.1 respectively — token file chmod + `X-Ingress-Path` sanitizer both shipped in the same dev cycle.
 > - **F-19** confirmed **FIXED** in 1.4.1 via SC.1 (SHA-pinned Actions + `check-invariants.sh` rule).
-> - **F-18** is now **FIXED (partial)** in 1.5.0 via SC.3 — worker installs consult a hash-pinned constraints file per ESPHome version. Missing-file path still degrades to an unpinned install with a WARNING (so older ESPHome versions keep working through the upgrade); flipping that to a refusal is the remaining roadmap item. See §F-18 below.
+> - **F-18** was **FIXED (partial)** in 1.5.0 via SC.3 — worker installs consulted a hash-pinned constraints file per ESPHome version. This was later re-assessed and removed in 1.6.1; see the 2026-04-20 refresh note above and §F-18 below.
 >
 > New **Threat Model** section added immediately below the executive summary to make the deployment assumptions explicit — F-01/F-02/F-04/F-05/F-06/F-07/F-08/F-17 all trace back to it.
 
@@ -58,9 +65,9 @@ Explicit trust assumptions that this audit treats as accepted risk:
 - **Direct-port access bypassing HA Ingress** — closed in 1.5 via mandatory `require_ha_auth` (AU.1–AU.7 / **F-03**). Direct port 8765 requests require a valid Bearer — either the add-on's shared worker token (used automatically by the native HA integration) or a Home Assistant long-lived access token.
 - **Supply-chain compromise** of the add-on itself — covered by the Supply Chain Threat Model below: hash-pinned lockfiles (**F-12**), SHA-pinned GitHub Actions (**F-19**), cosign-signed GHCR images, `pip-audit` + `npm audit` CI gates, PY-7/PY-8 invariants.
 - **Tampering with worker updates at the image layer** — workers update via `docker pull` of cosign-signed GHCR images. Source-code auto-update (**F-02**) was temporarily disabled in 1.4.1-dev.60 and restored in dev.62 (bug #58); the threat model treats the shared bearer token as the trust boundary there (a compromised token = full fleet compromise either way).
-- **Tampering with the ESPHome package at `pip install` time on workers** (**F-18**) — **partially closed in 1.5.0** (SC.3). Worker pip installs now consult a hash-pinned constraints file per ESPHome version shipped inside the worker Docker image; installs for a covered version use `--require-hashes` and refuse any wheel whose SHA-256 doesn't match. Installs for a version that doesn't have a committed constraints file still succeed but log a WARNING — the roadmap is to flip that to a refusal once we have constraints committed for every version we support. See F-18 below.
+- **Tampering with the ESPHome package at `pip install` time on workers** (**F-18**) — **WONTFIX as of 1.6.1** within the trusted-workers threat model. SC.3 shipped in 1.5.0 as a partial fix (committed hash-pinned constraints file per ESPHome version, weekly regen workflow) but was removed in 1.6.1 after six months showed the defense rarely applied — the single committed version was almost never the version a worker actually installed at job time, and the documented "unpinned fallback + WARNING" path was the load-bearing case. Workers are already trusted for `external_components` / `includes` / `libraries:` Python execution (F-02 / F-04 / F-17 WONTFIX), so pinning just the ESPHome wheel while leaving plugin-Python wide open was security theater. See F-18 for the full re-assessment.
 
-**What this means for the findings below.** F-01 / F-02 / F-04 / F-05 / F-06 / F-07 / F-08 / F-11 / F-13 / F-16 / F-17 are all accepted per this threat model and marked **WONTFIX** (or INFO). Their presence in this document is documentation, not backlog. F-03 / F-09 / F-10 / F-12 / F-14 / F-15 / F-18 / F-19 / F-20 are **FIXED** (F-18 partial — see below). No open findings remain.
+**What this means for the findings below.** F-01 / F-02 / F-04 / F-05 / F-06 / F-07 / F-08 / F-11 / F-13 / F-16 / F-17 / F-18 are all accepted per this threat model and marked **WONTFIX** (or INFO). Their presence in this document is documentation, not backlog. F-03 / F-09 / F-10 / F-12 / F-14 / F-15 / F-19 / F-20 are **FIXED**. No open findings remain.
 
 ---
 
@@ -82,8 +89,8 @@ Explicit trust assumptions that this audit treats as accepted risk:
 **1.4.1 (server-performance + rebrand):**
 - **Compression middleware scope** — gzip is applied only to `/ui/api/*` responses (not `/api/v1/*` worker-tier), so the 46 MB config-bundle tarball sent to workers doesn't block the event loop gzipping it synchronously. Not a security fix per se but prevents a latent DoS via the event-loop stall.
 
-**Deliberately still open** (see summary table for status):
-- F-18 (worker pip install not hash-pinned) — **FIXED (partial)** in 1.5.0 via SC.3. Worker-time `pip install esphome==<version>` now consults a hash-pinned constraints file shipped inside the worker image. Missing-file branch still degrades to unpinned install with a WARNING; flipping that to a refusal is the remaining 1.6 roadmap item.
+**Deliberately accepted** (see summary table for status):
+- F-18 (worker pip install not hash-pinned) — **WONTFIX as of 1.6.1** within the trusted-workers threat model. SC.3 shipped in 1.5.0 as a partial fix and was removed in 1.6.1 after a re-assessment: the single committed constraints file rarely matched the version a worker actually installed, so the hardened path's hit rate in practice was ~0% and the unpinned fallback was load-bearing. Workers are already trusted for `external_components` / `includes` / `libraries:` Python execution, so pinning just the ESPHome wheel while leaving plugin-Python wide open was security theater. See F-18 for the full re-assessment.
 
 (F-02 / F-08 / F-17 accepted per threat model in the 2026-04-16 refresh. F-14 / F-15 / F-19 all shipped fixes in the 1.4.1–1.5 cycle — see summary table for release tags.)
 
@@ -110,7 +117,7 @@ In priority order:
 7. **No SBOM is generated for either Docker image**, and GHCR images are not signed (no cosign attestations, no provenance). Downstream users have no way to verify what they're running matches this source tree.
 
 **Mitigation state (as of 1.4.1-dev):**
-- Item 1 (worker pip install) — **FIXED (partial)** in 1.5.0 via SC.3. Image-build dependencies are hash-pinned (F-12 closed), and worker-time `pip install esphome==<version>` now uses `--require-hashes` + a committed constraints file when one ships for the requested version (F-18 partial). Missing-file path logs a WARNING and installs unpinned — graceful-degradation for older ESPHome versions we haven't committed constraints for yet.
+- Item 1 (worker pip install) — **WONTFIX as of 1.6.1** within the trusted-workers threat model. Image-build dependencies remain hash-pinned (F-12 closed); worker-time `pip install esphome==<version>` runs unpinned. SC.3's committed constraints file was removed in 1.6.1 after six months of data showed it rarely matched the version actually requested. See F-18 for the full re-assessment.
 - Item 2 (base image not digest-pinned) — WONTFIX. HA add-on build infrastructure controls BUILD_FROM.
 - Item 3 (GitHub Actions floating tags) — partial. Dependabot now opens weekly PRs for major-version bumps, but the actions themselves are still referenced by major tag, not SHA. F-19 remains open.
 - Item 4 (Python requirements unpinned) — **closed**. Lockfiles with `--require-hashes` + `pip-audit` in CI + Dependabot + PY-8 invariant. F-12 resolved.
@@ -496,6 +503,8 @@ Use exact pins (`==`) with a hash-locked file (`pip-compile --generate-hashes` �
 
 **Severity:** LOW
 
+**Status (2026-04-20, 1.6.1):** **FIXED (partial)** via SS.4. The worker Dockerfile (`ha-addon/client/Dockerfile`) pins `FROM python:3.11-slim@sha256:…` — the single source of truth for every standalone worker deployment. The server add-on's `ha-addon/Dockerfile` also pins the `ARG BUILD_FROM` default digest, which governs local `docker build` without Supervisor. In production under Supervisor, the add-on base is overridden via `build.yaml`'s per-arch `build_from` map — and Supervisor's `supervisor/validate.py` regex rejects `@sha256:…` on that side (silently falls back to its own arch-base image, which then breaks `apt-get`). That's an upstream Supervisor constraint; the Dockerfile-level pin is authoritative everywhere else. Partial rather than FIXED because the last-mile Supervisor path isn't pinned; tracked for a future revisit if upstream relaxes the regex.
+
 **Description:**
 
 `ha-addon/Dockerfile` uses `ARG BUILD_FROM` without a default, meaning the base image is determined entirely by the HA add-on build system. The HA base images are generally well-maintained, but the Dockerfile itself has no mechanism to verify the provenance or integrity of the base image. Combined with unpinned Python dependencies, the image's dependency graph is fully determined at build time by external parties.
@@ -607,37 +616,36 @@ The cleanest fix is to close F-03 (add authentication to the UI API) — that al
 
 ### F-18 — Worker `pip install esphome==<version>` Is Not Hash-Pinned
 
-**Status (2026-04-16, re-assessed after SC.3 shipped):** **FIXED (partial)** in 1.5.0 via SC.3.
+**Status (2026-04-20, re-assessed and accepted in 1.6.1):** **WONTFIX** within the trusted-workers threat model.
 
-- `ha-addon/client/esphome-constraints/<version>.txt` ships inside the worker Docker image, one hash-pinned constraints file per ESPHome version we support. Generator: `scripts/regen-esphome-constraints.sh <version>` runs `pip-compile --generate-hashes --strip-extras` inside `python:3.11-slim` / linux/amd64 so the hashes match what a worker will actually download. A scheduled GitHub Action (`.github/workflows/regen-esphome-constraints.yml`) opens a PR weekly for any new stable ESPHome release and bumps `IMAGE_VERSION` in lockstep.
-- `version_manager._install()` checks for the file via `_constraints_for(version)`. When present, the install runs `pip install --require-hashes -c <file> --no-cache-dir esphome==<version>` — any wheel whose SHA-256 doesn't match fails the install.
-- When the constraints file is **missing**, the install still runs (unpinned) and logs a WARNING so operators can see the gap in logs. This is a deliberate graceful-degradation choice so a user on an older ESPHome version doesn't get locked out by the 1.5 upgrade, not an acceptance of the risk.
+SC.3 shipped in 1.5.0 as a partial fix: `ha-addon/client/esphome-constraints/<version>.txt` committed one hash-pinned constraints file per ESPHome version we had time to generate, and `version_manager._install()` consulted it for `pip install --require-hashes -r <file>`. Six months of operational data showed the defense was net-zero:
 
-**Remaining work:** flip the missing-file branch from WARNING to refusal once the constraints directory covers every ESPHome version we expect to support (the weekly GH Action will keep pace with new stable releases). Tracked as a 1.6 follow-up item; no new code needed, just a one-line change in `_install()` to `raise RuntimeError` instead of warning. Closing this fully would move F-18 from PARTIAL → FIXED.
+- **The committed version rarely matched the version actually installed.** We only committed one version at a time (most recently `2026.4.0.txt`). The HA ESPHome add-on reported the latest stable (`2026.4.1` by the time 1.6.1 opened), users with `pin_version` targeting older releases (`2024.12.x`, `2026.3.x`, etc.) missed the cache entirely, and the weekly regen workflow was always lagging one or two ESPHome releases behind. Hit rate: approximately 0% of real worker installs.
+- **The documented fallback WAS the load-bearing path.** The original design logged a WARNING and installed unpinned when no constraints file matched, "so older ESPHome versions keep working through the upgrade". In practice, nearly every install hit that branch. The hardened path was aspirational; the unpinned path was production.
+- **The committed file generated weekly Dependabot noise** (Dependabot scanned the ~1500-line `pip-compile` output as a requirements file and opened PRs to bump individual transitive deps like `tibs` / `resvg-py` / `uvicorn` that aren't even direct ESPHome deps — churn with no corresponding hardening).
+- **The underlying threat is already accepted elsewhere.** Workers are trusted within this threat model (F-02, F-04, F-17 all WONTFIX on the same grounds): `external_components`, `esphome.includes`, `libraries:` git sources can all execute arbitrary Python at compile time regardless of whether the ESPHome wheel itself was hash-pinned. Hardening `pip install esphome==<version>` while leaving the much larger surface of ESPHome plugin-Python wide open was security theater.
 
-**Severity:** HIGH
+What 1.6.1 removed:
 
-**Description:**
+- `ha-addon/client/esphome-constraints/` directory (one file: `2026.4.0.txt`, ~1500 lines).
+- `scripts/regen-esphome-constraints.sh` (pip-compile wrapper).
+- `.github/workflows/regen-esphome-constraints.yml` (weekly schedule).
+- `_constraints_for()` helper + the `--require-hashes -r <file>` branch in `version_manager._install()` — the install is now a plain `pip install esphome==<version>`.
+- `COPY esphome-constraints` line from `ha-addon/client/Dockerfile`.
+- SC.3 references from `SECURITY.md`.
 
-`ha-addon/client/version_manager.py:137` installs ESPHome versions on demand:
+**What still applies from the original finding:** the install path is unpinned (as it was pre-SC.3), so a compromised PyPI wheel for ESPHome or any of its several-hundred transitive deps runs on the worker the next time a compile fires. This is the trust assumption. A deployment that doesn't match the trusted-home-network model — public-internet workers, shared multi-tenant workers, workers in a hostile LAN — should front PyPI with an internal mirror (`--index-url`) and commit its own hash-pinned lockfile there. Not something the add-on should enforce per-install by default.
 
-```python
-subprocess.run([str(pip), "install", "--no-cache-dir", f"esphome=={version}"], ...)
-```
+**Severity:** HIGH (unchanged — the finding itself is still real; it's just accepted per threat model now).
 
-The version string is the exact version requested by the job (typically `esphome.esphome_version` from the target YAML, defaulting to the latest PyPI release the server knows about). There is no `--require-hashes`, no `--index-url` override, no constraint file, and no offline mirror. Every fresh worker, and every new version request, fetches ESPHome and its full transitive dependency graph — several hundred packages — from public PyPI and executes them as soon as the compile starts.
+**Affected code:** `ha-addon/client/version_manager.py` (simplified `_install()` post-1.6.1).
 
-Consequences:
+**What would move this back to FIXED:**
 
-- A compromised release of **any** package in ESPHome's graph (including the hundreds of PlatformIO / framework-adjacent deps) executes on every worker within the normal update cadence.
-- A malicious or typosquatted version selection pushed through a compromised server or MitM could direct workers to install an attacker-published ESPHome version (though this specific path overlaps with F-02 / F-05).
-- Unlike the top-level `requirements.txt` (F-12), this install happens at **job time** on a live worker, so a lockfile at image-build time does not cover it.
+- An internal PyPI mirror + per-deployment constraints became the norm for users who care about the weaker trust model (out of scope for an opinionated HA add-on default).
+- OR: ESPHome itself publishes signed wheels (cosign attestation, Sigstore, or similar) and pip gains native verification. At that point we re-enable verification without maintaining our own catalog.
 
-**Affected code:** `ha-addon/client/version_manager.py:119-155`
-
-**Recommended fix:**
-
-Ship a pre-generated, hash-pinned constraints file per supported ESPHome version inside the worker Docker image (e.g., `esphome-constraints/2026.3.3.txt` generated by `pip-compile --generate-hashes`). Pass `--require-hashes -c esphome-constraints/<version>.txt` to the install. For versions not covered by the shipped constraints, refuse the install (with a clear error message to the user) rather than silently falling back to unverified resolution. Regenerate the constraints files as part of the release process.
+Neither is a near-term roadmap item. The finding's re-classification is tracked in the Summary Table and the 2026-04-20 refresh note above.
 
 ---
 
@@ -680,28 +688,46 @@ Do not apply these headers to the `/api/v1/*` worker tier — those responses ar
 
 ---
 
+### F-21 — Add-on ran unconfined (no AppArmor profile)
+
+**Severity:** LOW
+
+**Status (2026-04-20, 1.6.1):** **FIXED** via SS.1. `ha-addon/apparmor.txt` ships alongside `config.yaml`; `apparmor: true` is declared. Supervisor loads the profile on install/upgrade — dmesg confirms `operation="profile_load"` — and runs the container under confinement. The Supervisor security-star card reflects the change.
+
+**Description:**
+
+Before 1.6.1, the add-on's `config.yaml` had no `apparmor:` declaration. Supervisor loads such add-ons with the unconfined profile, meaning a compromised subprocess (the server itself, PlatformIO during compile, `esphome run`, `git` during auto-commit, …) could make any syscall the container's namespaces and capabilities allowed — no AppArmor-mediated ceiling. Defence-in-depth gap relative to any add-on that ships a profile.
+
+The straightforward case for a profile on this add-on: we shell out to PlatformIO (downloads toolchains from the network, runs C/C++ compilers), `git` (writes the user's config dir), `esphome run` (opens raw sockets for OTA), and arbitrary Python in `external_components:` during compile. Even a permissive profile caps the worst-case path; a tightened profile would deny-by-default for categories (e.g. `mount,` outside explicit paths, `ptrace,` against non-child processes) we never legitimately use.
+
+**Affected code:** `ha-addon/config.yaml`, `ha-addon/apparmor.txt`
+
+**Applied fix (1.6.1):**
+
+`ha-addon/apparmor.txt` ships as an attached profile named `esphome_dist_server` (Supervisor renames to `local_esphome_dist_server` on install). First-pass is deliberately permissive: explicit rules for `file,`, `capability,`, `network,`, `signal,`, `dbus,`, `unix,`, `mount,`, `pivot_root,`, `ptrace,`. Two earlier attempts with path-level allows hit denials — the stock `abstractions/python` include didn't cover `/usr/local/lib/libpython3.11.so.1.0` on our slim base (boot-time `DENIED open`), and a broader `file,` with explicit `deny /config/...` carveouts passed boot but broke PlatformIO's `penv` bootstrap during compile. The working set of narrow rules varies by Python minor version + PlatformIO release + ESPHome toolchain, so itemising them would churn on every upstream bump. Permissive-but-attached buys the security-star credit today; tightening is tracked against observed denial telemetry.
+
+---
+
 ## OWASP Top 10 (2021) Assessment
 
-A mapping of this project's findings against OWASP's Top 10 web application risks. Status reflects current code (1.4.1-dev.33, last refreshed 2026-04-15).
+A mapping of this project's findings against OWASP's Top 10 web application risks. Status reflects current code (1.6.1, last refreshed 2026-04-20).
 
 | Category | Status | Evidence in this project |
 |---|---|---|
 | **A01 Broken Access Control** | Accepted per threat model | F-03 FIXED (mandatory `require_ha_auth` in 1.5, AU.7). F-06/F-07/F-08 all **WONTFIX** per threat model §4/§5/§3 (Supervisor / operator / workers all trusted). |
 | **A02 Cryptographic Failures** | Accepted per threat model | F-05 WONTFIX (plaintext HTTP on trusted LAN), F-01 WONTFIX (browser is trusted; required for Connect Worker UX), **F-14 FIXED (1.5.0-dev.77 via SA.2)**. |
 | **A03 Injection** | OK | Subprocess invocations use argument lists; YAML parsed via ESPHome's `safe_load`-based resolver; all `/api/v1/*` handlers parse through typed pydantic (1.3.1). **F-15 FIXED (1.5.0-dev.77 via SA.1)** — `X-Ingress-Path` sanitized before HTML interpolation. No remaining residual. |
-| **A04 Insecure Design** | Accepted per threat model | F-02 **WONTFIX** (workers trusted), F-04 **WONTFIX** (workers trusted), F-17 **WONTFIX** (core ESPHome feature). F-18 FIXED (partial) in 1.5.0 via SC.3 — was the only F-* item explicitly NOT accepted by the threat model, now the missing-file graceful-degradation branch is the remaining gap. |
-| **A05 Security Misconfiguration** | OK (1.3.1+) | F-13 (base image digest — WONTFIX, HA controls BUILD_FROM). **F-20 CLOSED in 1.3.1 via `security_headers_middleware`** (CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Frame-Options on every `/ui/api/*` + static response). Not audited: whether containers run as root (likely yes — neither Dockerfile sets `USER`) |
-| **A06 Vulnerable & Outdated Components** | Largely OK (1.3.1+) | **F-12 CLOSED:** hash-pinned lockfiles + `--require-hashes` install + `pip-audit` in CI + `npm audit` in CI + Dependabot weekly PRs (pip × 2, npm, docker × 2, github-actions) + PY-7 (CVE applicability assessment) + PY-8 (lockfile sync) invariants. **F-18 FIXED (partial)** in 1.5.0 via SC.3 — worker-time `esphome==<version>` install now uses committed hash-pinned constraints when available. |
+| **A04 Insecure Design** | Accepted per threat model | F-02 **WONTFIX** (workers trusted), F-04 **WONTFIX** (workers trusted), F-17 **WONTFIX** (core ESPHome feature), **F-18 WONTFIX** (1.6.1 re-assessment — workers trusted; SC.3's hash-pinned constraints file rarely matched the version actually installed, removed). |
+| **A05 Security Misconfiguration** | OK (1.6.1+) | **F-13 FIXED (partial) in 1.6.1 via SS.4** — worker Dockerfile + server `ARG BUILD_FROM` default pinned to `python:3.11-slim@sha256:…`; Supervisor-driven server path still can't carry a digest. **F-20 CLOSED in 1.3.1 via `security_headers_middleware`** (CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-Frame-Options on every `/ui/api/*` + static response). **F-21 FIXED in 1.6.1 via SS.1** — AppArmor profile attached, Supervisor runs the add-on confined instead of unconfined. Not audited: whether containers run as root (likely yes — neither Dockerfile sets `USER`). |
+| **A06 Vulnerable & Outdated Components** | Largely OK (1.3.1+) | **F-12 CLOSED:** hash-pinned lockfiles + `--require-hashes` install + `pip-audit` in CI + `npm audit` in CI + Dependabot weekly PRs (pip × 2, npm, docker × 2, github-actions) + PY-7 (CVE applicability assessment) + PY-8 (lockfile sync) invariants. **F-18 WONTFIX (1.6.1)** — worker-time `esphome==<version>` install runs unpinned; accepted within the trusted-workers threat model. |
 | **A07 Identification & Authentication Failures** | Accepted per threat model | Single static shared token with no rotation story (threat model §3 — workers are trusted). F-07 WONTFIX; sanity-limit mitigations from 1.3.x stay (log cap, parallel-jobs clamp, log-append DoS guard). |
-| **A08 Software & Data Integrity Failures** | Partial | F-02 WONTFIX (workers trusted). F-18 FIXED (partial) in 1.5.0 via SC.3 — worker pip install uses `--require-hashes` against a committed constraints file. F-19 FIXED (1.4.1 SC.1 — SHA-pinned Actions). Cosign-signed GHCR images + SBOM attestations (1.4.1 SC.2). |
+| **A08 Software & Data Integrity Failures** | Partial | F-02 WONTFIX (workers trusted). **F-18 WONTFIX (1.6.1)** — worker pip install runs unpinned; SC.3 removed after 6 months of ~0% hit rate on the hardened path. F-19 FIXED (1.4.1 SC.1 — SHA-pinned Actions). Cosign-signed GHCR images + SBOM attestations (1.4.1 SC.2). |
 | **A09 Security Logging & Monitoring Failures** | Partial | **Auth middleware now emits structured 401 reasons with peer IP (1.3.1 bug #3 + C.2).** No audit log of who triggered compiles or edited configs; no alerting on repeated auth failures. Server logs sufficient for post-incident forensics |
 | **A10 Server-Side Request Forgery (SSRF)** | Low | `device_poller.py` only contacts mDNS-discovered ESPHome devices on well-known ports; the editor fetches ESPHome's JSON schema from `schema.esphome.io` (moved into a dedicated `api/esphomeSchema.ts` module during the 1.3.1 UI-1 cleanup — no attacker-controlled URL reaches a server-side fetcher) |
 
 **Highest-leverage fixes that remain** (ordered by ease × impact):
 
-1. **F-18 worker pip install hash-pinning** — **FIXED (partial)** in 1.5.0 via SC.3. `ha-addon/client/esphome-constraints/<version>.txt` ships inside the worker image; `version_manager._install()` runs `pip install --require-hashes -c <file> esphome==<version>` when the file is present. Missing-file branch logs a WARNING and installs unpinned (graceful-degradation for ESPHome versions we haven't committed constraints for yet). Remaining work for full closure: flip the WARNING to a refusal once constraints coverage is complete — a one-line change in `_install()` once the weekly regen workflow has built up the catalog.
-
-*(F-14 and F-15 shipped in 1.5.0-dev.77 via SA.2 and SA.1 respectively — see their per-finding entries above.)*
+*No open findings as of 1.6.1.* Cycle deltas: **F-13** moved OPEN (effectively WONTFIX-by-infrastructure) → **FIXED (partial)** via SS.4 (digest-pinned worker base + server `ARG BUILD_FROM` default; Supervisor-driven server path remains blocked on upstream regex). **F-18** moved FIXED (partial) → **WONTFIX** after the SC.3 constraints-file defense was removed — see §F-18 and the 2026-04-20 refresh note above for the re-assessment. New **F-21** (unconfined add-on) was identified and **FIXED** same cycle via SS.1 (AppArmor profile). F-14 / F-15 shipped in 1.5.0-dev.77 via SA.2 / SA.1 respectively. The remaining accepted-by-threat-model findings (F-01 / F-02 / F-04 / F-05 / F-06 / F-07 / F-08 / F-11 / F-16 / F-17 / F-18) are documentation of intentional trust boundaries, not backlog.
 
 ---
 
@@ -733,7 +759,7 @@ The following aspects of the implementation are done well and worth noting expli
 
 Status legend: **FIXED** (resolved, release noted) · **PARTIAL** (partially mitigated in the release noted; residual risk remains) · **OPEN** (still live, planned to fix) · **WONTFIX** (accepted risk by design for the HA add-on threat model) · **INFO** (observation, no action planned).
 
-Status as of 1.5.0-dev.75+ (last reviewed 2026-04-16).
+Status as of 1.6.1 (last reviewed 2026-04-20).
 
 | ID   | Finding                                              | Severity | Status | Notes |
 |------|------------------------------------------------------|----------|--------|-------|
@@ -749,11 +775,12 @@ Status as of 1.5.0-dev.75+ (last reviewed 2026-04-16).
 | F-10 | Monaco editor loaded from unpinned CDN (no SRI)      | Low      | FIXED (1.1.0) | React UI rewrite bundles `monaco-editor` + `@monaco-editor/react` via Vite (verified in `node_modules/monaco-editor/`). No external CDN. |
 | F-11 | Build log content stored unredacted                  | Info     | NOT A FINDING | Logs contain values (WiFi passwords, OTA passwords, API keys) that the server itself distributed to the worker via `secrets.yaml` (F-04, accepted). Returning them to the server that already has them doesn't cross a trust boundary. Removed from residual-findings list. |
 | F-12 | Dependency versions not pinned                       | Low      | FIXED (1.3.1) | Confirmed 2026-04-16: `ha-addon/{server,client}/requirements.lock` present, `--require-hashes` install, `pip-audit` + `npm audit` in CI, Dependabot weekly, PY-7 + PY-8 + PY-9 invariants enforced. |
-| F-13 | Docker base image not pinned to a digest             | Low      | WONTFIX | HA add-on build infrastructure controls `BUILD_FROM`; pinning a digest would break the official build flow. |
+| F-13 | Docker base image not pinned to a digest             | Low      | **FIXED (partial) — 1.6.1 (SS.4)** | Worker Dockerfile pins `python:3.11-slim@sha256:…` fully; server Dockerfile pins `ARG BUILD_FROM` default digest. Supervisor-driven server path via `build.yaml` still can't carry a digest (upstream `build_from` regex rejects `@sha256:…`); partial until upstream relaxes. |
 | F-14 | Auth token file written without explicit permissions | Info     | **FIXED (1.5.0-dev.77)** | SA.2: `TOKEN_FILE.chmod(0o600)` immediately after `write_text`, wrapped in try/except so chmod failure on unusual filesystems logs at DEBUG rather than blocking startup. |
 | F-15 | `X-Ingress-Path` injected into HTML unsanitized      | Info     | **FIXED (1.5.0-dev.77)** | SA.1: regex strips anything not in `[/A-Za-z0-9._-]` before interpolation; empty sanitized value falls through to default `<base href="./">`. |
 | F-16 | Worker registry not persistent (operational note)    | Info     | INFO | By design — registry is in-memory. 1.6 **WC.1–WC.5** (durable `WORKER_NAME`) will make this less operationally painful. |
 | F-17 | Unauth UI + `external_components` → worker RCE       | High     | WONTFIX | Threat model §3: workers are trusted. `external_components` / `includes` / `libraries` are core ESPHome features users rely on; refusing configs that use them would be a feature regression. F-03 flipped to mandatory in 1.5 (AU.7), so this is now "authenticated HA user can RCE workers" — accepted per threat model. |
-| F-18 | Worker pip install is not hash-pinned                | High     | **FIXED (partial) — 1.5.0** (SC.3) | `version_manager._install` uses `pip install --require-hashes -c esphome-constraints/<version>.txt` when a committed constraints file exists; missing-file branch logs WARNING + installs unpinned (graceful-degradation). Weekly GH Action regenerates for new ESPHome releases + bumps `IMAGE_VERSION`. Remaining: flip missing-file to refusal once coverage is complete (1.6). |
+| F-18 | Worker pip install is not hash-pinned                | High     | **WONTFIX — 1.6.1** (re-assessed) | SC.3 shipped in 1.5.0 as a partial fix (committed `esphome-constraints/<version>.txt`, weekly regen workflow) but was removed in 1.6.1 after 6 months showed the defense was net-zero: the single committed version rarely matched the version a worker actually installed (~0% hit rate), so the documented "unpinned fallback + WARNING" path was load-bearing. Workers already trusted for `external_components`/`includes`/`libraries:` Python execution (F-02/F-04/F-17 WONTFIX), so pinning just the ESPHome wheel was security theater. `version_manager._install()` simplified back to plain `pip install esphome==<version>`. |
 | F-19 | GitHub Actions referenced by floating tags           | Low      | FIXED (1.4.1, SC.1) | Every non-local `uses:` across the 4 workflow files now pins a 40-char commit SHA with trailing `# vN.M.P` comment. `check-invariants.sh` rule + Dependabot watching. |
 | F-20 | Missing security response headers on UI              | Low      | FIXED (1.3.1) | `security_headers_middleware` attaches CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` on `/ui/api/*` + static. Tests in `test_security_headers.py`. |
+| F-21 | Add-on ran unconfined (no AppArmor profile)          | Low      | **FIXED — 1.6.1 (SS.1)** | `ha-addon/apparmor.txt` ships + `apparmor: true` in config.yaml. Profile is attached as `esphome_dist_server` (Supervisor-renamed to `local_esphome_dist_server`). First-pass is deliberately permissive (explicit capability/file/network/etc. allows) — tightening tracked against observed denial telemetry. Security-star card flips. |

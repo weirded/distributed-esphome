@@ -117,11 +117,20 @@ async def _enqueue_job(
 
 async def _register(ta: _App, hostname: str = "build-box", platform: str = "linux/amd64",
                     system_info: dict | None = None,
-                    image_version: str | None = "5") -> str:
-    # Defaults to image_version="5" (current MIN_IMAGE_VERSION since SC.3
-    # bumped from 4→5 to push the hash-pinned esphome-constraints/ tree
-    # to workers). Tests that want to simulate a stale-image worker
-    # explicitly pass image_version=None or an older number.
+                    image_version: str | None = None) -> str:
+    # Bug #21 (1.6.1): default to the live ``MIN_IMAGE_VERSION`` so a
+    # future bump doesn't regress every test that uses this helper by
+    # silently dropping workers into the stale-image branch. Pre-#21
+    # the default was a hardcoded ``"5"`` which broke the moment #6
+    # bumped the floor to 7 — ``test_heartbeat_updates_last_seen`` +
+    # ``test_heartbeat_returns_server_version`` went red because the
+    # heartbeat correctly suppressed ``server_client_version`` for
+    # the "fake stale" worker they'd registered without knowing. Tests
+    # that want to simulate an actually-stale worker still pass
+    # ``image_version=None`` or a literal older number explicitly.
+    if image_version is None:
+        from constants import MIN_IMAGE_VERSION  # noqa: PLC0415
+        image_version = MIN_IMAGE_VERSION
     body: dict = {"hostname": hostname, "platform": platform}
     if system_info is not None:
         body["system_info"] = system_info
@@ -1042,19 +1051,27 @@ async def test_get_client_code_allows_fresh_image(tmp_path):
 # heartbeat response (image_upgrade_required=True), not accepted as valid.
 # ---------------------------------------------------------------------------
 
+def _image_version_params() -> list[tuple[str | None, bool]]:
+    """Bug #21 (1.6.1): parametrize against the live ``MIN_IMAGE_VERSION``
+    constant instead of hardcoding a specific number. The invariant the
+    test pins is *'below-min → upgrade_required; at-or-above → fresh'*,
+    not a specific version floor — so a bump from 5 → 7 (e.g. the #6
+    iputils-ping ship) doesn't regress this suite.
+    """
+    from constants import MIN_IMAGE_VERSION  # noqa: PLC0415
+    min_int = int(MIN_IMAGE_VERSION)
+    stale = [(None, True), ("", True), ("garbage", True)]
+    stale.extend((str(v), True) for v in range(1, min_int))
+    fresh = [
+        (str(min_int), False),      # exactly at min
+        (str(min_int + 1), False),  # one above
+    ]
+    return stale + fresh
+
+
 @pytest.mark.parametrize(
     "image_version,expected_upgrade_required",
-    [
-        (None, True),        # pre-LIB.0 worker — no field at all
-        ("", True),          # empty string — falsy, cannot parse as int
-        ("1", True),         # integer but below MIN_IMAGE_VERSION=5
-        ("2", True),         # still stale — pydantic added in v3, deps locked in v4
-        ("3", True),         # still stale — hash-pinned server deps were added in v4
-        ("4", True),         # still stale — esphome-constraints/ shipped in v5 (SC.3)
-        ("5", False),        # exactly MIN_IMAGE_VERSION — fresh
-        ("6", False),        # above MIN_IMAGE_VERSION — fresh
-        ("garbage", True),   # non-numeric — int() raises, treated as stale
-    ],
+    _image_version_params(),
 )
 async def test_heartbeat_image_version_full_parametrization(
     tmp_path, image_version, expected_upgrade_required,
@@ -1142,7 +1159,15 @@ async def test_firmware_upload_stores_bin_and_flips_has_firmware(tmp_path, monke
         await ta.close()
 
 
-async def test_firmware_upload_rejects_non_download_only_job(tmp_path, monkeypatch):
+async def test_firmware_upload_accepts_non_download_only_job(tmp_path, monkeypatch):
+    """Bug #9 (1.6.1): firmware archival covers OTA jobs too.
+
+    Pre-1.6.1 the server refused uploads for ``download_only=False``
+    jobs (the previous version of this test asserted the 400). After
+    #9 the worker archives every successful compile, so the endpoint
+    accepts the upload as long as the job is still WORKING and the
+    caller identity matches the assigned worker.
+    """
     import firmware_storage
     monkeypatch.setattr(firmware_storage, "DEFAULT_FIRMWARE_DIR", tmp_path / "firmware")
 
@@ -1159,7 +1184,7 @@ async def test_firmware_upload_rejects_non_download_only_job(tmp_path, monkeypat
             data=b"fw",
             headers={**AUTH_HEADERS, "Content-Type": "application/octet-stream"},
         )
-        assert resp.status == 400
+        assert resp.status == 200
     finally:
         await ta.close()
 

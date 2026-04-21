@@ -108,6 +108,15 @@ class Job:
     # compile" view pairs it with the current working tree to capture
     # both committed AND uncommitted changes since the compile.
     config_hash: Optional[str] = None
+    # Bug #8 (1.6.1): human-readable reason this worker was chosen for
+    # the job, captured the moment :meth:`claim_next` hands the job off.
+    # One of "pinned_to_worker" / "only_online_worker" /
+    # "fewer_jobs_than_others" / "higher_perf_score" / "first_available".
+    # Surfaced in the Queue + Compile-history tables so an operator can
+    # answer "why did this worker pick up this compile" without diffing
+    # the scheduler log. ``None`` on jobs from pre-1.6.1 that predated
+    # the field.
+    selection_reason: Optional[str] = None
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -140,6 +149,7 @@ class Job:
             "ha_action": self.ha_action,
             "api_triggered": self.api_triggered,
             "config_hash": self.config_hash,
+            "selection_reason": self.selection_reason,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -178,6 +188,7 @@ class Job:
             ha_action=d.get("ha_action", False),
             api_triggered=d.get("api_triggered", False),
             config_hash=d.get("config_hash"),
+            selection_reason=d.get("selection_reason"),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -190,16 +201,21 @@ class Job:
 def _purge_firmware(jobs: Iterable["Job"]) -> None:
     """Remove .bin files for removed jobs (FD.7).
 
-    Bug #38: download-only firmware is now retained past the job's
-    queue lifetime — the user wanted those binaries to survive
-    coalescing + explicit clears and only evict on disk budget
-    pressure. This helper now filters ``download_only`` jobs out of
-    the purge set; their binaries live on disk until the
-    ``firmware_budget_enforcer`` task in ``main.py`` evicts them (or
-    the user explicitly deletes the job-history row). OTA firmware
-    retains its original eager-delete semantics.
+    Bug #38: download-only firmware is retained past the job's
+    queue lifetime so users can download it long after the queue row
+    is cleared; eviction happens under disk-budget pressure rather
+    than eager deletion.
 
-    Imported lazily so unit tests that replace `DEFAULT_FIRMWARE_DIR`
+    Bug #9 (1.6.1): the worker now archives every successful compile
+    (not just download-only), so this protection extends to any job
+    whose firmware was actually stored. A job with ``has_firmware``
+    set — regardless of ``download_only`` — is preserved until the
+    ``firmware_budget_enforcer`` task evicts it or the user deletes
+    the history row explicitly. Jobs that failed before producing a
+    binary still hit :func:`delete_firmware` defensively to clean up
+    any partial writes.
+
+    Imported lazily so unit tests that replace ``DEFAULT_FIRMWARE_DIR``
     via monkeypatch see the patched value.
     """
     try:
@@ -207,7 +223,7 @@ def _purge_firmware(jobs: Iterable["Job"]) -> None:
     except Exception:
         return
     for job in jobs:
-        if getattr(job, "download_only", False) and getattr(job, "has_firmware", False):
+        if getattr(job, "has_firmware", False):
             # Preserve — budget enforcer will evict on disk pressure.
             continue
         try:
@@ -330,22 +346,33 @@ class JobQueue:
             logger.warning("Skipped %d unparseable job entries on startup", skipped)
         logger.info("Loaded %d jobs from %s (persisted across restarts)", len(self._jobs), self._queue_file)
         # FD.7: sweep orphan firmware binaries whose job no longer
-        # exists (add-on crashed mid-cleanup, etc.). Bug #38: the
-        # "active" set is expanded to include download-only history
-        # rows — their binaries survive queue coalescing/clears until
-        # the firmware_budget_enforcer evicts them.
+        # exists (add-on crashed mid-cleanup, etc.). Bug #38 / Bug #9:
+        # the protected set spans every history row whose binary is
+        # still on disk — download-only and OTA alike, since 1.6.1
+        # archives the binary for every successful compile.
+        # PR #64 review: paginate the history query so a fleet with
+        # hundreds of successes doesn't silently lose protection on
+        # the older half.
         try:
             from firmware_storage import reconcile_orphans  # noqa: PLC0415
             protected: set[str] = set()
             if self._history is not None:
                 try:
-                    rows = self._history.query(state="success", limit=500, offset=0)
-                    for r in rows:
-                        if r.get("download_only") and r.get("has_firmware"):
-                            protected.add(str(r["id"]))
+                    offset = 0
+                    page = 1000
+                    while True:
+                        rows = self._history.query(state="success", limit=page, offset=offset)
+                        if not rows:
+                            break
+                        for r in rows:
+                            if r.get("has_firmware"):
+                                protected.add(str(r["id"]))
+                        if len(rows) < page:
+                            break
+                        offset += page
                 except Exception:
                     logger.debug(
-                        "Couldn't pull protected download-only IDs from history",
+                        "Couldn't pull protected firmware IDs from history",
                         exc_info=True,
                     )
             reconcile_orphans(
@@ -495,12 +522,23 @@ class JobQueue:
         worker_id: int = 1,
         hostname: Optional[str] = None,
         faster_idle_worker_exists: bool = False,
+        selection_reason_hint: Optional[str] = None,
     ) -> Optional[Job]:
         """
         Atomically claim the next pending job for *client_id*.
 
         If *faster_idle_worker_exists* is True, returns None so the
         faster worker can claim on its next poll cycle.
+
+        Bug #8 (1.6.1): *selection_reason_hint* is the upstream
+        scheduler's explanation for picking *client_id* — the API
+        endpoint computes it from the registry snapshot (fewest jobs,
+        higher perf score, only idle worker, etc.). ``claim_next``
+        overrides the hint to ``"pinned_to_worker"`` when the job has
+        a matching ``pinned_client_id`` — a pinned job's winning
+        worker was determined at enqueue time, not at claim time. The
+        final reason is persisted on the Job so the Queue + history
+        tables can surface it.
 
         Returns the claimed Job or None if the queue is empty.
         """
@@ -534,12 +572,24 @@ class JobQueue:
                 job.assigned_hostname = hostname
                 job.assigned_at = now
                 job.worker_id = worker_id
+                # Bug #8: pinning trumps any upstream hint — the user
+                # pinned this worker at enqueue time, the scheduler's
+                # competitive logic never ran.
+                if job.pinned_client_id == client_id:
+                    job.selection_reason = "pinned_to_worker"
+                elif selection_reason_hint:
+                    job.selection_reason = selection_reason_hint
+                else:
+                    job.selection_reason = "first_available"
                 self._persist()
                 # #94: include target + hostname so the log line is useful at a
                 # glance without correlating IDs back to the registry/queue.
+                # Bug #8: log the selection reason too so operators can debug
+                # scheduling without digging through the code.
                 logger.info(
-                    "Job %s (%s) claimed by %s [%s] worker %d",
+                    "Job %s (%s) claimed by %s [%s] worker %d — reason=%s",
                     job.id, job.target, hostname or "?", client_id, worker_id,
+                    job.selection_reason,
                 )
                 return job
             return None
@@ -729,7 +779,17 @@ class JobQueue:
                     # JH.2: record the permanent failure. Non-permanent
                     # retries (the else branch) go back to PENDING and
                     # aren't terminal yet — don't record those.
-                    self._record_history(job)
+                    # PR #64 review: history write MUST happen after
+                    # the queue-side persist, not before. An SIGKILL
+                    # between history-write and persist leaves history
+                    # with a FAILED row but queue.json still WORKING;
+                    # load()'s WORKING → PENDING reset then re-enqueues
+                    # the job, producing a second terminal row (maybe
+                    # SUCCESS) for the same id. Other terminal sites
+                    # (submit_result, cancel) already persist-then-record;
+                    # this one was inverted. Defer the record to after
+                    # the `if affected: self._persist()` below so the
+                    # ordering invariant holds.
                 else:
                     # CR.4: dropped the `job.state = JobState.TIMED_OUT`
                     # write that used to sit here — the very next line
@@ -745,6 +805,13 @@ class JobQueue:
 
             if affected:
                 self._persist()
+                # Record history for permanently-failed rows *after*
+                # the persist has landed (see PR #64 comment inside
+                # the loop above). Non-terminal (PENDING-requeued)
+                # rows are filtered out by state.
+                for j in affected:
+                    if j.state == JobState.FAILED:
+                        self._record_history(j)
             return affected
 
     async def retry(
@@ -946,6 +1013,13 @@ class JobQueue:
 
         Returns True when the flag was flipped. Called by the worker
         firmware-upload endpoint (FD.5).
+
+        Bug #9 (1.6.1): accepts uploads for OTA jobs as well as
+        download-only — the worker now archives every successful compile
+        on the server. The WORKING-state check remains the real gate; a
+        stale worker uploading after requeue or coalesce can't race the
+        flag because the API handler already re-runs state + identity
+        checks before reaching this method.
         """
         async with self._lock:
             job = self._jobs.get(job_id)
@@ -955,11 +1029,6 @@ class JobQueue:
                 logger.warning(
                     "Refusing firmware upload for job %s in state %s (not WORKING)",
                     job_id, job.state.value,
-                )
-                return False
-            if not job.download_only:
-                logger.warning(
-                    "Refusing firmware upload for non-download-only job %s", job_id,
                 )
                 return False
             job.has_firmware = True

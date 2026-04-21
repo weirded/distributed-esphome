@@ -15,11 +15,13 @@ compile:
   description: >
     Compile and OTA-flash firmware for one or more ESPHome devices
     managed by the Fleet add-on.
-  target:
-    device:
-      filter:
-        - integration: esphome_fleet
-          manufacturer: "ESPHome"
+  # Hassfest rule: ``target:`` must not carry device/entity filter
+  # constraints (no ``integration:`` / ``manufacturer:`` keys allowed
+  # here). The filtering is still enforced at runtime by
+  # ``_resolve_device_ids_to_targets`` which only accepts devices
+  # whose identifiers match our DOMAIN. Keep the bare ``target: { }``
+  # so the HA service-call UI still shows the Target selector.
+  target: {}
   fields:
     worker:
       name: Worker (optional)
@@ -64,11 +66,7 @@ cancel:
 validate:
   name: Validate
   description: Run ESPHome config validation against a single target YAML.
-  target:
-    device:
-      filter:
-        - integration: esphome_fleet
-          manufacturer: "ESPHome"
+  target: {}
   fields:
     target:
       name: Target (alternative)

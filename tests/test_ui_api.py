@@ -124,8 +124,13 @@ async def test_server_info_returns_version_and_token(tmp_path):
         data = await resp.json()
         assert data["token"] == "ui-test-token"
         assert "addon_version" in data
+        # Bug #21 (1.6.1): read from the constant instead of hardcoding a
+        # version so a future ``MIN_IMAGE_VERSION`` bump (like #6's 5→7)
+        # doesn't regress this test. The /server-info endpoint must echo
+        # whatever the live constant says, period.
+        from constants import MIN_IMAGE_VERSION  # noqa: PLC0415
         assert "min_image_version" in data
-        assert data["min_image_version"] == "5"
+        assert data["min_image_version"] == MIN_IMAGE_VERSION
     finally:
         await ta.close()
 

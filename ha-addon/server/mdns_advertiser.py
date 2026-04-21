@@ -58,8 +58,23 @@ class FleetAdvertiser:
     async def start(self) -> None:
         version = _read_version()
         ip = _primary_ipv4()
-        addresses = [socket.inet_aton(ip)] if ip else []
-        base_url = f"http://{ip}:{self._port}" if ip else f"http://:{self._port}"
+        # PR #80 review: skip advertising entirely when we don't have a
+        # primary IPv4. Prior code shipped ``http://:<port>`` in the
+        # ``base_url`` property when ``ip is None`` — the integration's
+        # config flow would then try to connect to an empty-host URL
+        # and surface a confusing error. If we have no IP, the
+        # integration can't reach us; better to not advertise at all
+        # than advertise a malformed URL. Logged at WARNING so an
+        # operator on an IPv6-only stack or mid-boot sees the signal.
+        if ip is None:
+            logger.warning(
+                "mDNS advertise skipped — no primary IPv4 available yet. "
+                "The integration's zeroconf discovery won't find this "
+                "add-on until a restart picks up a routable IP.",
+            )
+            return
+        addresses = [socket.inet_aton(ip)]
+        base_url = f"http://{ip}:{self._port}"
 
         # Sanitize service name — mDNS instance names can't contain
         # dots or be longer than 63 bytes. Keep it short and stable.
@@ -74,13 +89,26 @@ class FleetAdvertiser:
             "protocol": "1",
         }
 
+        # PR #80 review: ``socket.gethostname()`` is POSIX-guaranteed
+        # to return a non-empty string, so the old ``if gethostname()
+        # else None`` guard was dead — the else branch was unreachable.
+        # The failure mode the old guard probably meant to cover is
+        # ``localhost`` (can't be resolved by peers), which needs an
+        # explicit check.
+        hostname = socket.gethostname()
+        server = (
+            f"{hostname}.local."
+            if hostname and hostname.lower() != "localhost"
+            else None
+        )
+
         self._info = ServiceInfo(
             type_=SERVICE_TYPE,
             name=full_name,
             addresses=addresses,
             port=self._port,
             properties=properties,
-            server=(f"{socket.gethostname()}.local." if socket.gethostname() else None),
+            server=server,
         )
 
         try:

@@ -43,9 +43,14 @@ test('column visibility writes to localStorage under device-columns', async ({ p
 
   // Re-read localStorage from the page and assert the key exists with HA
   // missing from the visible-columns list.
+  // Bug #7 (1.6.1): storage format now records both `known` (every
+  // column id that existed at save time) and `visible` (ids the user
+  // wanted on). Still backward-compatible with the pre-1.6.1 flat
+  // array, so this test accepts either shape.
   const stored = await page.evaluate(() => localStorage.getItem('device-columns'));
   expect(stored, 'device-columns localStorage entry should exist').toBeTruthy();
-  const visible = JSON.parse(stored!) as string[];
+  const parsed = JSON.parse(stored!);
+  const visible: string[] = Array.isArray(parsed) ? parsed : parsed.visible;
   expect(visible).not.toContain('ha');
 });
 

@@ -76,6 +76,9 @@ const SORTABLE: Record<string, SortColumn> = {
 // the Queue's renderer (plain text "HA" / "User" / "Scheduled·1x"
 // vs Queue's rich icon+label badges); unifying them kills the drift.
 import { getTriggerBadge, isScheduledCancelBeforeStart } from '@/utils/trigger';
+import { useVersioningEnabled } from '@/hooks/useVersioning';
+import { FirmwareDownloadMenu } from './FirmwareDownloadMenu';
+import { formatSelectionReason } from '@/utils/selectionReason';
 
 function friendlyFor(targets: Target[], filename: string): string {
   const t = targets.find((x) => x.target === filename);
@@ -93,6 +96,12 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
     return { since: Math.floor(Date.now() / 1000) - 30 * 86_400, until: null };
   });
   const [presetLabel, setPresetLabel] = useState<string | null>('Last 30 days');
+  // Bug #112: drop the Commit column entirely when versioning is off.
+  const versioningEnabled = useVersioningEnabled();
+  // Bug #1: per-row Download-menu open state, lifted to the dialog so
+  // SWR doesn't tear it down on re-render. Keyed by job id; null = no
+  // menu open.
+  const [downloadMenuOpenId, setDownloadMenuOpenId] = useState<string | null>(null);
 
   const [stateFilter, setStateFilter] = useState<StateFilter>('');
   const [q, setQ] = useState('');
@@ -233,7 +242,9 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
         header: ({ column }) => <SortHeader label="ESPHome" column={column} />,
         cell: ({ row: { original: r } }) => r.esphome_version || '—',
       }),
-      ch.display({
+      // Bug #112: Commit column only included when versioning is on —
+      // otherwise every row would be a dash.
+      ...(versioningEnabled ? [ch.display({
         id: 'commit',
         header: 'Commit',
         cell: ({ row: { original: r } }) => {
@@ -252,7 +263,7 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
             </button>
           );
         },
-      }),
+      })] : []),
       ch.accessor((r) => r.duration_seconds ?? 0, {
         id: 'duration_seconds',
         header: ({ column }) => <SortHeader label="Duration" column={column} />,
@@ -344,8 +355,50 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
           );
         },
       }),
+      // Bug #8 (1.6.1): selection-reason column — explains why a row's
+      // Worker was the one that picked up the compile. Sits next to
+      // the Worker column on purpose; a reader scans left→right and
+      // gets "worker X, because Y" in one glance.
+      ch.accessor((r) => r.selection_reason ?? '', {
+        id: 'selection_reason',
+        header: ({ column }) => <SortHeader label="Worker selection" column={column} />,
+        cell: ({ row: { original: r } }) => {
+          const display = formatSelectionReason(r.selection_reason);
+          if (!display) return <span className="text-[var(--text-muted)]">—</span>;
+          return (
+            <span
+              className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
+              title={display.title}
+            >
+              {display.label}
+            </span>
+          );
+        },
+      }),
+      // Bug #1 (1.6.1): firmware download dropdown on rows whose binary
+      // is still on disk. Column is always present (no header text, just
+      // a narrow icon-sized cell) so row heights stay consistent as
+      // firmwares age out under the retention budget.
+      ch.display({
+        id: 'download',
+        header: '',
+        cell: ({ row: { original: r } }) => {
+          const variants = r.firmware_variants ?? [];
+          if (variants.length === 0) return null;
+          return (
+            <FirmwareDownloadMenu
+              jobId={r.id}
+              variants={variants}
+              open={downloadMenuOpenId === r.id}
+              onOpenChange={(o) => setDownloadMenuOpenId(o ? r.id : null)}
+              size="icon"
+              label="Download firmware"
+            />
+          );
+        },
+      }),
     ];
-  }, [targets, onOpenHistoryDiff, expandedId]);
+  }, [targets, onOpenHistoryDiff, expandedId, versioningEnabled, downloadMenuOpenId]);
 
   const table = useReactTable({
     data: flatRows,

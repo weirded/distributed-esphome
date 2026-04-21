@@ -460,18 +460,46 @@ def duplicate_device(config_dir: str, source: str, new_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Per-device metadata stored as a YAML comment block at the top of each file.
 # Format:
-#   # distributed-esphome:
+#   # esphome-fleet:
 #   #   pin_version: 2026.3.3
 #   #   schedule: 0 2 * * 0
 #   #   schedule_enabled: true
 # The block is invisible to ESPHome's parser and travels with the file.
+#
+# 1.6.1 bug #4: marker renamed from ``# distributed-esphome:`` to
+# ``# esphome-fleet:`` so the comment matches the user-facing product
+# name. Reader accepts BOTH markers (old files keep working without a
+# migration step); writer always emits the new marker, so files
+# migrate lazily the next time any metadata-changing operation
+# touches them.
 # ---------------------------------------------------------------------------
 
-_META_MARKER = "# distributed-esphome:"
+_META_MARKER = "# esphome-fleet:"
+_LEGACY_META_MARKER = "# distributed-esphome:"
+_META_MARKERS: tuple[str, ...] = (_META_MARKER, _LEGACY_META_MARKER)
+
+# 1.6.1 bug #4: one-line user-facing header we prepend above the marker so
+# the comment block isn't mysterious. The reader treats any of these as the
+# "skip me" prelude so rewrites don't accumulate duplicates. Add new lines
+# to this set if the phrasing evolves; never remove old ones (they'll exist
+# in real user files).
+_EXPLANATORY_HEADER_DEFAULT = "# Read by the ESPHome Fleet add-on. Do not remove."
+_EXPLANATORY_HEADERS: frozenset[str] = frozenset(
+    {
+        _EXPLANATORY_HEADER_DEFAULT,
+        # Prior phrasings would go here if the text ever changes.
+    }
+)
+
+
+def _is_meta_marker(stripped: str) -> bool:
+    """True if *stripped* is one of our meta-marker variants."""
+    return stripped in (m.strip() for m in _META_MARKERS)
 
 
 def read_device_meta(config_dir: str, target: str) -> dict:
-    """Read the ``# distributed-esphome:`` comment block from the top of a YAML file.
+    """Read the ``# esphome-fleet:`` (or legacy ``# distributed-esphome:``)
+    comment block from the top of a YAML file.
 
     The block must appear at the very top of the file (before any non-comment,
     non-blank line) to avoid matching user comments deeper in the file.
@@ -492,7 +520,7 @@ def read_device_meta(config_dir: str, target: str) -> dict:
         stripped = line.strip()
         if not stripped:
             continue  # skip blank lines at the top
-        if stripped == _META_MARKER.strip():
+        if _is_meta_marker(stripped):
             marker_idx = i
             break
         if not stripped.startswith("#"):
@@ -527,11 +555,17 @@ def read_device_meta(config_dir: str, target: str) -> dict:
 
 
 def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
-    """Write, replace, or remove the ``# distributed-esphome:`` comment block.
+    """Write, replace, or remove the ``# esphome-fleet:`` comment block.
 
     - Non-empty ``meta``: serializes to YAML, prefixes with ``# ``, inserts
       at the top of the file (before the first non-comment non-blank line).
     - Empty ``meta`` (``{}``): removes any existing block entirely.
+
+    1.6.1 bug #4: recognises the legacy ``# distributed-esphome:`` marker
+    when stripping so old files migrate cleanly. Also prepends an
+    explanatory comment above the block telling users what it is and
+    not to remove it — absent that, the section reads as mysterious
+    metadata and gets deleted in editor cleanups.
 
     Preserves all other content in the file. Invalidates ``_config_cache``.
     """
@@ -541,14 +575,40 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
     content = path.read_text(encoding="utf-8")
     lines = content.splitlines(keepends=True)
 
-    # 1. Remove any existing block (marker + continuations).
+    # 1. Remove any existing block (legacy or current marker +
+    #    continuations). Also strips the leading "managed by ESPHome
+    #    Fleet" explanatory comment if we previously wrote one, so a
+    #    rewrite doesn't stack up multiple copies.
     new_lines: list[str] = []
     in_block = False
+    # Buffered explanatory-header line we've tentatively skipped. Kept so
+    # that if the *next* non-blank line turns out NOT to be the marker,
+    # we can re-emit it instead of silently dropping a user-authored
+    # comment that happens to match our header text.
+    pending_header: str | None = None
     for line in lines:
         stripped = line.strip()
-        if not in_block and stripped == _META_MARKER.strip():
-            in_block = True
-            continue  # skip the marker line
+        if not in_block:
+            if stripped in _EXPLANATORY_HEADERS:
+                # Tentatively skip — we'll commit to dropping it only if
+                # the very next line is the marker.
+                if pending_header is not None:
+                    # Two headers in a row? Keep the first, re-evaluate
+                    # the second with the same buffering rule.
+                    new_lines.append(pending_header)
+                pending_header = line
+                continue
+            if _is_meta_marker(stripped):
+                in_block = True
+                pending_header = None  # commit: header belonged to us
+                continue  # skip the marker line
+            if pending_header is not None:
+                # Header wasn't immediately followed by the marker —
+                # it's user content that coincidentally matched our
+                # header text. Put it back before processing the
+                # current line.
+                new_lines.append(pending_header)
+                pending_header = None
         if in_block:
             # Continuation: "# " + 2+ spaces indent
             raw = line.rstrip("\n").rstrip("\r")
@@ -560,12 +620,23 @@ def write_device_meta(config_dir: str, target: str, meta: dict) -> None:
             in_block = False
         new_lines.append(line)
 
+    # File ended mid-tentative-skip (header was the last line with no
+    # marker after it) — it's user content, put it back.
+    if pending_header is not None:
+        new_lines.append(pending_header)
+
     # 2. If meta is non-empty, build the new block and prepend.
     if meta:
         # Serialize the dict as YAML (no document markers, default flow off)
         yaml_text = yaml.dump(meta, default_flow_style=False, sort_keys=False)
-        # Prefix each line with "#   " (2-space indent under the marker)
-        comment_lines = [_META_MARKER + "\n"]
+        # Prefix each line with "#   " (2-space indent under the marker).
+        # The explanatory line above tells users what this is — without it
+        # the block reads as opaque metadata and gets scrubbed in editor
+        # tidy passes. Marker + explanation + content + blank separator.
+        comment_lines = [
+            _EXPLANATORY_HEADER_DEFAULT + "\n",
+            _META_MARKER + "\n",
+        ]
         for yaml_line in yaml_text.splitlines():
             comment_lines.append(f"#   {yaml_line}\n")
         comment_lines.append("\n")  # blank line separator
@@ -716,7 +787,7 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         "network_ipv6": False,       # top-level network.enable_ipv6 is true
         "network_ap_fallback": False,  # wifi.ap block configured
         "network_matter": False,     # matter: block present OR openthread: present
-        # Per-device metadata from the # distributed-esphome: comment block.
+        # Per-device metadata from the # esphome-fleet: comment block.
         "pinned_version": None,      # pin_version from comment block
         "schedule": None,            # cron expression (5-field)
         "schedule_enabled": False,   # whether the schedule is active
@@ -1039,6 +1110,15 @@ def build_name_to_target_map(
                 key = enc_block.get("key")
                 if key:
                     encryption_keys[key_name] = str(key)
+                    # Bug #11 (1.6.1): mirror the name-map's hyphen/underscore
+                    # normalization so mDNS-normalized lookups (aioesphomeapi
+                    # often surfaces the device as ``foo_bar`` when the
+                    # YAML says ``foo-bar``) still find the key. Without
+                    # this, live logs silently fell back to an unencrypted
+                    # handshake and the device rejected the connection.
+                    normalized_key_name = key_name.replace("-", "_")
+                    if normalized_key_name != key_name:
+                        encryption_keys[normalized_key_name] = str(key)
 
         # Always register an address override — get_device_address handles
         # wifi/ethernet/openthread with use_address, manual_ip.static_ip, and

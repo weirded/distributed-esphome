@@ -43,7 +43,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.6.0"
+CLIENT_VERSION = "1.6.1"
 
 
 def _read_image_version() -> Optional[str]:
@@ -608,7 +608,9 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
         except Exception as exc:
             lines.append(f"TCP {device_addr}:{port} — ERROR: {exc}")
 
-    # Ping check (ICMP)
+    # Ping check (ICMP). Bug #6 (1.6.1): iputils-ping is installed in
+    # the worker image; if a third-party image strips it out we still
+    # want a legible diagnostic line rather than a raw errno-2 traceback.
     try:
         ping_result = subprocess.run(
             ["ping", "-c", "3", "-W", "2", device_addr],
@@ -619,6 +621,8 @@ def _ota_network_diagnostics(target_path: str, cwd: str, env: dict) -> str:
             lines.append(f"Ping: {line.strip()}")
         if ping_result.returncode != 0 and not ping_summary:
             lines.append(f"Ping: {device_addr} — UNREACHABLE")
+    except FileNotFoundError:
+        lines.append("Ping: skipped (no `ping` binary in this image)")
     except Exception as exc:
         lines.append(f"Ping: {exc}")
 
@@ -910,56 +914,18 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             # Compile succeeded — warm the shared cache.
             _sync_slot_into_cache(target_stem, build_dir)
 
-            # #69: collect EVERY variant present in the build tree
-            # (factory + ota on ESP32; ota only on ESP8266) and upload
-            # each one. Server stores them under
-            # `/data/firmware/{job_id}.{variant}.bin` and the Queue-tab
-            # Download dropdown offers whichever ones made it through.
-            variants = _collect_firmware_variants(build_dir, target_stem)
-            if not variants:
-                _flush_log_text(
-                    job_id,
-                    "\n\033[31mERROR: Compile succeeded but no firmware binary was "
-                    "found under .pioenvs/ — nothing to upload.\033[0m\n",
-                )
+            # #69 + Bug #9: collect every variant (factory + ota on ESP32;
+            # ota only on ESP8266) and archive it on the server. For a
+            # download-only job the upload is the whole point — a failure
+            # fails the job. The shared helper is also used by the OTA
+            # path below (best-effort) so both shapes write to the same
+            # /data/firmware/ directory on the server.
+            if not _archive_firmware_to_server(
+                job_id, build_dir, target_stem,
+                client_id=client_id, required=True,
+            ):
                 _submit_result(job_id, "failed", log=None, ota_result=None)
                 return
-
-            _report_status(job_id, "Uploading firmware")
-            uploaded_any = False
-            for variant_name, variant_path in variants.items():
-                if _upload_firmware(
-                    job_id, variant_path,
-                    variant=variant_name, client_id=client_id,
-                ):
-                    uploaded_any = True
-                else:
-                    _flush_log_text(
-                        job_id,
-                        f"\n\033[33mWARNING: Failed to upload variant "
-                        f"{variant_name!r} — other variants (if any) will "
-                        f"continue.\033[0m\n",
-                    )
-            if not uploaded_any:
-                _flush_log_text(
-                    job_id,
-                    "\n\033[31mERROR: All firmware-variant uploads to server failed.\033[0m\n",
-                )
-                _submit_result(job_id, "failed", log=None, ota_result=None)
-                return
-
-            # #69: log the total size across every successfully uploaded
-            # variant so the user sees e.g. "1.8 MB + 0.6 MB" in the log
-            # when ESP32 produced both factory and ota binaries.
-            size_summary = ", ".join(
-                f"{name}={variants[name].stat().st_size} B"
-                for name in variants if name  # keep ordering from dict
-            )
-            _flush_log_text(
-                job_id,
-                f"\nFirmware uploaded to server ({size_summary}). "
-                "Download from the Queue tab.\n",
-            )
             _submit_result(job_id, "success", log=None, ota_result=None)
             return
 
@@ -1004,6 +970,16 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             # #45: compile succeeded — sync the slot's .pio/.esphome back to
             # the shared cache so other slots can start warm next time.
             _sync_slot_into_cache(target_stem, build_dir)
+            # Bug #9 (1.6.1): archive the binary on the server as a
+            # best-effort side-effect. The OTA has already completed
+            # successfully, so an archive failure is a warning, not a
+            # fatal error. Must run BEFORE _submit_result — the server
+            # rejects firmware uploads for jobs whose state has left
+            # WORKING.
+            _archive_firmware_to_server(
+                job_id, build_dir, target_stem,
+                client_id=client_id, required=False,
+            )
             _submit_result(job_id, "success", log=None, ota_result="success")
         else:
             log_lower = run_log.lower()
@@ -1040,6 +1016,14 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                     env=subprocess_env,
                     job_id=job_id,
                 )
+                # Bug #9 (1.6.1): compile succeeded — regardless of the
+                # OTA-retry outcome, archive the firmware on the server
+                # so the user can still flash it by hand (or re-OTA
+                # later) if the device is unreachable.
+                _archive_firmware_to_server(
+                    job_id, build_dir, target_stem,
+                    client_id=client_id, required=False,
+                )
                 if retry_ok:
                     _submit_result(job_id, "success", log=None, ota_result="success")
                 else:
@@ -1048,7 +1032,12 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
                     if diag:
                         _flush_log_text(job_id, "\n--- Network Diagnostics ---\n" + diag)
             else:
-                # Compile succeeded but something else failed
+                # Compile succeeded but something else failed — archive the
+                # binary anyway so the user has a fallback.
+                _archive_firmware_to_server(
+                    job_id, build_dir, target_stem,
+                    client_id=client_id, required=False,
+                )
                 _submit_result(job_id, "success", log=None, ota_result="failed")
 
     finally:
@@ -1284,6 +1273,72 @@ def _collect_firmware_variants(build_dir: str, target_stem: str) -> dict[str, Pa
     if not variants:
         logger.warning("No firmware binary found under %s", esphome_build)
     return variants
+
+
+def _archive_firmware_to_server(
+    job_id: str,
+    build_dir: str,
+    target_stem: str,
+    *,
+    client_id: Optional[str] = None,
+    required: bool,
+) -> bool:
+    """Bug #9 (1.6.1): collect + upload every firmware variant to the server.
+
+    Used by BOTH the download-only path (``required=True`` — the whole
+    point of the job is the upload, so a failure fails the job) and the
+    compile+OTA path (``required=False`` — the OTA is authoritative,
+    the archive is a bonus). Returns True when at least one variant was
+    uploaded successfully, False otherwise.
+
+    Failures are surfaced into the job log via ``_flush_log_text`` so the
+    user can diagnose from the Queue-tab Log modal. In best-effort mode
+    the log line is a WARNING instead of an ERROR so it reads as a
+    non-fatal archive failure rather than a real problem.
+    """
+    variants = _collect_firmware_variants(build_dir, target_stem)
+    if not variants:
+        tone = "\033[31mERROR" if required else "\033[33mWARNING"
+        _flush_log_text(
+            job_id,
+            f"\n{tone}: Compile succeeded but no firmware binary was found "
+            f"under .pioenvs/ — nothing to archive.\033[0m\n",
+        )
+        return False
+
+    _report_status(job_id, "Archiving firmware")
+    uploaded_any = False
+    for variant_name, variant_path in variants.items():
+        if _upload_firmware(
+            job_id, variant_path,
+            variant=variant_name, client_id=client_id,
+        ):
+            uploaded_any = True
+        else:
+            _flush_log_text(
+                job_id,
+                f"\n\033[33mWARNING: Failed to upload variant "
+                f"{variant_name!r} — other variants (if any) will "
+                f"continue.\033[0m\n",
+            )
+    if not uploaded_any:
+        tone = "\033[31mERROR" if required else "\033[33mWARNING"
+        _flush_log_text(
+            job_id,
+            f"\n{tone}: All firmware-variant uploads to server failed.\033[0m\n",
+        )
+        return False
+
+    size_summary = ", ".join(
+        f"{name}={variants[name].stat().st_size} B"
+        for name in variants if name in variants
+    )
+    _flush_log_text(
+        job_id,
+        f"\nFirmware archived on server ({size_summary}). "
+        "Download from the Queue or Compile-history panels.\n",
+    )
+    return True
 
 
 def _upload_firmware(

@@ -1,7 +1,7 @@
 name: "ESPHome Fleet"
-version: "1.6.0"
+version: "1.6.1"
 slug: "esphome_dist_server"
-description: "Manage fleets of ESPHome devices: distributed compilation, per-device version pinning, scheduled OTA upgrades, and a unified web UI"
+description: "A modern Home Assistant UI for ESPHome — git-backed config history with rollback, live compile queue, per-device version pinning, scheduled OTA, optional distributed compilation. Works whether you have 3 or 300 devices."
 url: "https://github.com/weirded/distributed-esphome"
 # #10: dropped armhf, armv7, i386 — Supervisor flags them as deprecated, and
 # ESPHome compilation is a 64-bit-only game in practice. No real users on
@@ -10,8 +10,18 @@ arch: [aarch64, amd64]
 startup: application
 boot: auto
 init: true
-stage: experimental
-homeassistant: "2024.1.0"
+# Bug #5 (1.6.1): `stage: experimental` removed. The add-on has
+# shipped stable releases through 1.6 with full test coverage,
+# cosign + SBOM supply-chain hardening, an AppArmor profile, and
+# a real threat model (dev-plans/SECURITY_AUDIT.md). No `stage:`
+# key defaults to stable in Supervisor.
+# PR #80 review (1.6.1): bumped from 2024.1.0 → 2024.11.0 to match
+# the assumptions baked into `custom_integration/esphome_fleet/config_flow.py`.
+# async_step_reconfigure is only dispatched by HA 2024.11+, and the
+# flow uses async_update_reload_and_abort (also 2024.11+). Bumping
+# makes the declared minimum match reality — the pre-2024.11 fallback
+# path was dead code in that window anyway.
+homeassistant: "2024.11.0"
 codeowners:
   - "@weirded"
 
@@ -43,6 +53,15 @@ homeassistant_api: true
 # and direct-port access can be locked down via the `require_ha_auth`
 # add-on option (AU.3).
 auth_api: true
+
+# SS.1 (1.6.1): AppArmor profile `apparmor.txt` ships alongside this
+# file. Supervisor loads the profile automatically when this key is
+# true and re-loads it on each upgrade. If a legitimate operation
+# starts failing after an upgrade and the add-on log shows
+# `apparmor="DENIED"` lines, widen `apparmor.txt` rather than
+# disabling this flag — losing the profile drops one Supervisor
+# security star and the deny-by-default protection.
+apparmor: true
 
 # #26: declare that we POST to Supervisor's /discovery with service
 # "esphome_fleet". Without this, Supervisor rejects the POST with 403

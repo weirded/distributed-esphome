@@ -319,10 +319,15 @@ async def firmware_budget_enforcer(app: web.Application) -> None:
     ``firmware_cache_max_gb`` Settings budget.
 
     First tick 90 s after startup (lets reconcile_orphans run first
-    and the queue settle), then every 30 min. Live-queue binaries
-    with ``has_firmware`` are protected from eviction; everything
-    else is fair game, oldest-mtime first. No-op when the budget
-    Setting resolves to ``<= 0`` (unlimited).
+    and the queue settle), then every 30 min. Protected set unions
+    the live-queue IDs with the download-only successes still in
+    history — #38's contract is that download-only binaries survive
+    queue coalescing + user Clear, so by the first budget tick the
+    live queue no longer contains them. PR #64 review: pre-fix we
+    only protected ``queue.get_all()``, which silently evicted
+    downloads older than 30 minutes.
+
+    No-op when the budget Setting resolves to ``<= 0`` (unlimited).
     """
     queue = app.get("queue")
     if queue is None:
@@ -338,10 +343,35 @@ async def firmware_budget_enforcer(app: web.Application) -> None:
             max_bytes = int(gb * 1024 * 1024 * 1024)
             if max_bytes <= 0:
                 continue
-            protected = {
+            protected: set[str] = {
                 job.id for job in queue.get_all()
                 if getattr(job, "has_firmware", False)
             }
+            # Union with history rows whose binary is still on disk.
+            # Bug #9 (1.6.1): every successful compile now has an
+            # archived binary, so the protection isn't limited to
+            # ``download_only`` rows anymore. The budget enforcer itself
+            # drives LRU eviction when disk pressure exceeds the limit.
+            history = app.get("job_history")
+            if history is not None:
+                try:
+                    offset = 0
+                    page = 1000
+                    while True:
+                        rows = history.query(state="success", limit=page, offset=offset)
+                        if not rows:
+                            break
+                        for r in rows:
+                            if r.get("has_firmware"):
+                                protected.add(str(r["id"]))
+                        if len(rows) < page:
+                            break
+                        offset += page
+                except Exception:
+                    logger.debug(
+                        "Couldn't pull protected firmware IDs from history",
+                        exc_info=True,
+                    )
             deleted = enforce_budget(max_bytes=max_bytes, protected_job_ids=protected)
             if deleted:
                 logger.info(
@@ -680,6 +710,44 @@ async def ha_entity_poller(app: web.Application) -> None:
             first_poll = False
 
 
+def reseed_device_poller_from_config(app: web.Application, *, reason: str) -> None:
+    """Bug #11 (1.6.1): re-run ``build_name_to_target_map`` and re-seed
+    the device poller's name_map, encryption_keys, and address overrides.
+
+    The startup sequence calls ``build_name_to_target_map`` before the
+    ESPHome venv has finished lazy-installing; ``_resolve_esphome_config``
+    returns ``None`` during that window, which means
+    ``api.encryption.key`` (and ``esphome.name`` substitutions) never
+    make it into the poller. This helper is invoked when a meaningful
+    event makes the resolver likely to succeed — the ESPHome install
+    completes, the Supervisor-reported version changes — so the poller
+    catches up without waiting for a config-file change to trigger the
+    normal 30-second config-scanner re-run.
+
+    *reason* is a short string logged alongside the reseed so operators
+    can trace which trigger fired.
+    """
+    from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
+    cfg: AppConfig = app["config"]
+    device_poller = app.get("device_poller")
+    if device_poller is None:
+        return
+    try:
+        targets = scan_configs(cfg.config_dir)
+        name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(
+            cfg.config_dir, targets,
+        )
+        device_poller.update_compile_targets(
+            targets, name_map, enc_keys, addr_overrides, addr_sources,
+        )
+        logger.info(
+            "Device poller reseeded from config (%s): %d targets, %d encryption keys",
+            reason, len(targets), len(enc_keys),
+        )
+    except Exception:
+        logger.exception("Failed to reseed device poller from config (%s)", reason)
+
+
 async def config_scanner(app: web.Application) -> None:
     """Background task: re-scan config dir every 30s and update device poller targets."""
     from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
@@ -750,12 +818,18 @@ async def _old_schedule_checker(app: web.Application) -> None:
     app["_rt"]["schedule_checker_last_error"] = None
 
     def _get_ota_address(target: str) -> str | None:
+        # Bug #18 (1.6.1): route through ``resolve_ota_address`` so the
+        # static_ip vs. mDNS vs. ``.local`` precedence stays consistent
+        # with scheduler + ui_api. The old inline expression preferred
+        # the override over the real IP even when the override was a
+        # stale ``.local`` fallback; the helper picks the best IP
+        # literal available.
         device_poller = app.get("device_poller")
         if not device_poller:
             return None
         for dev in device_poller.get_devices():
             if dev.compile_target == target and dev.ip_address:
-                return device_poller._address_overrides.get(dev.name) or dev.ip_address
+                return device_poller.resolve_ota_address(dev.name)
         return None
 
     next_sleep = 5.0  # first tick after 5s
@@ -1081,10 +1155,29 @@ async def pypi_version_refresher(app: web.Application) -> None:
                     # SE.4: lazy-install the newly-detected version in the
                     # background so the server's venv tracks whatever the HA
                     # ESPHome add-on is on. VersionManager is a fast cache
-                    # hit if the version is already installed. run_in_executor
-                    # returns an already-scheduled Future — fire-and-forget.
-                    loop = asyncio.get_running_loop()
-                    loop.run_in_executor(None, ensure_esphome_installed, new_detected)
+                    # hit if the version is already installed.
+                    # Bug #11 (1.6.1): schedule a task that awaits the
+                    # install and then reseeds the device poller — the
+                    # old fire-and-forget never came back, so a version
+                    # bump right after boot would leave encryption keys
+                    # unpopulated until a config-file change triggered a
+                    # rescan.
+                    async def _install_and_reseed(ver: str) -> None:
+                        loop_inner = asyncio.get_running_loop()
+                        try:
+                            await loop_inner.run_in_executor(
+                                None, ensure_esphome_installed, ver,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "SE.4: ensure_esphome_installed(%s) raised", ver,
+                            )
+                            return
+                        reseed_device_poller_from_config(
+                            app, reason=f"esphome version change → {ver}",
+                        )
+
+                    asyncio.create_task(_install_and_reseed(new_detected))
 
                 # Refresh PyPI list periodically
                 pypi_countdown -= check_interval
@@ -1175,6 +1268,31 @@ def create_app() -> web.Application:
     # for any fields that have migrated. See ha-addon/server/settings.py.
     from settings import clear_supervisor_options_if_needed, init_settings  # noqa: PLC0415
     init_settings(fresh_repo_init=fresh_repo)
+    # Bug #22 (1.6.1): the init_repo call above runs BEFORE
+    # init_settings loads the persisted settings, so get_settings()
+    # returns the default ``versioning_enabled="unset"`` and init_repo
+    # silently skips. If the user had previously opted in
+    # (settings.json carries ``versioning_enabled: "on"``) but the
+    # .git/ directory is missing (container rebuild, fresh /config
+    # mount on a restored backup, accidental delete), no rescue
+    # happened until the user edited a file AND flipped the setting
+    # to trigger the PATCH-handler's init_repo hook from #19. Re-try
+    # the init now that the real setting is visible so a boot-time
+    # recovery is automatic.
+    try:
+        from settings import get_settings  # noqa: PLC0415
+        if get_settings().versioning_enabled == "on":
+            from git_versioning import _is_git_repo, init_repo  # noqa: PLC0415
+            if not _is_git_repo(Path(cfg.config_dir)):
+                logger.info(
+                    "Bug #22: versioning_enabled=on but %s has no .git/ — "
+                    "running init_repo", cfg.config_dir,
+                )
+                init_repo(Path(cfg.config_dir))
+    except Exception:
+        logger.exception(
+            "Bug #22: post-settings init_repo guard raised",
+        )
     # Bug #9: after the settings have been safely imported, tell
     # Supervisor to drop its stale options cache so it stops spamming
     # "Option X does not exist in the schema" warnings on every read.
@@ -1363,6 +1481,12 @@ def create_app() -> web.Application:
                 set_esphome_version(target)
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, ensure_esphome_installed, target)
+            # Bug #11 (1.6.1): encryption keys / address overrides got
+            # built during the install window and every target whose
+            # YAML needs substitution-pass resolution returned None.
+            # Now that the venv is ready, reseed the poller so live
+            # logs + OTA can actually reach encrypted devices.
+            reseed_device_poller_from_config(app, reason="esphome install complete")
         app["esphome_install_task"] = asyncio.create_task(_install_esphome_background())
 
         # Update device poller with known targets

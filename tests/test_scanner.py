@@ -347,6 +347,22 @@ def test_name_map_resolves_despite_unresolved_substitution():
     assert "un-sub-device" in overrides
 
 
+def test_name_map_encryption_keys_include_underscore_variant():
+    """Bug #11 (1.6.1): aioesphomeapi / mDNS often normalise hyphenated
+    device names to underscores (``un-sub-device`` → ``un_sub_device``),
+    so the encryption-key map must carry BOTH forms. Pre-1.6.1 only the
+    name_map did this mirroring; the key map didn't, and live logs for
+    an encrypted ``my-device`` silently fell through to an unencrypted
+    handshake that the device rejects."""
+    _, keys, _, _ = build_name_to_target_map(
+        str(FIXTURES), ["unresolved_subs_device.yaml"],
+    )
+    assert "un-sub-device" in keys
+    assert "un_sub_device" in keys
+    # Both aliases must point at the same key (not accidentally distinct).
+    assert keys["un-sub-device"] == keys["un_sub_device"]
+
+
 def test_get_device_metadata_uses_friendly_name_for_unresolved_subs():
     """Bug #22 follow-up: get_device_metadata must still extract
     device_name for a YAML that contains an unresolved substitution.
@@ -500,10 +516,10 @@ def test_read_device_meta_empty_file(tmp_path):
 
 
 def test_read_device_meta_basic(tmp_path):
-    """Reads a well-formed block with pin_version and schedule."""
+    """Reads a well-formed block with pin_version and schedule (new marker)."""
     f = tmp_path / "device.yaml"
     f.write_text(
-        "# distributed-esphome:\n"
+        "# esphome-fleet:\n"
         "#   pin_version: 2026.3.3\n"
         "#   schedule: 0 2 * * 0\n"
         "#   schedule_enabled: true\n"
@@ -515,6 +531,20 @@ def test_read_device_meta_basic(tmp_path):
     assert meta["pin_version"] == "2026.3.3"
     assert meta["schedule"] == "0 2 * * 0"
     assert meta["schedule_enabled"] is True
+
+
+def test_read_device_meta_legacy_marker(tmp_path):
+    """Legacy `# distributed-esphome:` marker is still readable (backward compat)."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# distributed-esphome:\n"
+        "#   pin_version: 2026.3.3\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+    meta = read_device_meta(str(tmp_path), "device.yaml")
+    assert meta["pin_version"] == "2026.3.3"
 
 
 def test_read_device_meta_with_tags(tmp_path):
@@ -568,7 +598,9 @@ def test_write_device_meta_adds_block(tmp_path):
     write_device_meta(str(tmp_path), "device.yaml", {"pin_version": "2026.3.3"})
 
     content = f.read_text()
-    assert "# distributed-esphome:" in content
+    assert "# esphome-fleet:" in content
+    # Writer should emit the explanatory header so users know not to remove it.
+    assert "ESPHome Fleet" in content
     assert "#   pin_version: 2026.3.3" in content
     # Original content is preserved
     assert "esphome:" in content
@@ -579,7 +611,7 @@ def test_write_device_meta_replaces_block(tmp_path):
     """Replaces an existing block with new values."""
     f = tmp_path / "device.yaml"
     f.write_text(
-        "# distributed-esphome:\n"
+        "# esphome-fleet:\n"
         "#   pin_version: old\n"
         "\n"
         "esphome:\n"
@@ -590,12 +622,33 @@ def test_write_device_meta_replaces_block(tmp_path):
 
     content = f.read_text()
     assert "old" not in content
+    assert "# esphome-fleet:" in content
     assert "#   pin_version: new" in content
     assert "#   schedule: 0 2 * * *" in content
 
 
+def test_write_device_meta_migrates_legacy_marker(tmp_path):
+    """Writer migrates a legacy `# distributed-esphome:` block to the new marker."""
+    f = tmp_path / "device.yaml"
+    f.write_text(
+        "# distributed-esphome:\n"
+        "#   pin_version: old\n"
+        "\n"
+        "esphome:\n"
+        "  name: test\n"
+    )
+
+    write_device_meta(str(tmp_path), "device.yaml", {"pin_version": "new"})
+
+    content = f.read_text()
+    # Old marker gone, new marker present.
+    assert "distributed-esphome" not in content
+    assert "# esphome-fleet:" in content
+    assert "#   pin_version: new" in content
+
+
 def test_write_device_meta_removes_block_when_empty(tmp_path):
-    """Empty dict removes the block entirely."""
+    """Empty dict removes the block entirely (including legacy marker + header)."""
     f = tmp_path / "device.yaml"
     f.write_text(
         "# distributed-esphome:\n"
@@ -609,6 +662,7 @@ def test_write_device_meta_removes_block_when_empty(tmp_path):
 
     content = f.read_text()
     assert "distributed-esphome" not in content
+    assert "esphome-fleet" not in content
     assert "esphome:" in content
 
 
@@ -627,7 +681,7 @@ def test_write_device_meta_preserves_other_comments(tmp_path):
     content = f.read_text()
     assert "# My device config" in content
     assert "# End of file" in content
-    assert "# distributed-esphome:" in content
+    assert "# esphome-fleet:" in content
 
 
 def test_write_device_meta_invalidates_cache(tmp_path):

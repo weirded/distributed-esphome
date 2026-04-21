@@ -1,66 +1,82 @@
 # Changelog
 
+## 1.6.1
+
+A bug-fix + polish release on top of 1.6.
+
+**Bug fixes.**
+
+- Static-IP devices OTA correctly again — workers were shipping the `.local` mDNS hostname to `esphome upload` when the YAML declared a static IP.
+- Live logs and OTA to encrypted devices work on fresh first-boot — the scanner used to race the ESPHome install and miss the `api.encryption.key`.
+- Turning config versioning on from the Settings drawer now initialises the git repo immediately (no add-on restart needed). If `.git/` goes missing on a later boot (restored backup, container rebuild), it's recreated automatically.
+- The noisy `aioesphomeapi.connection: disconnect request failed` traceback that fired after every OTA is gone — the expected disconnect-during-reboot case now logs at DEBUG instead of ERROR.
+- OTA failure diagnostics now report real ping RTT / packet-loss instead of `Ping: [Errno 2] No such file or directory: 'ping'`.
+- When config versioning is off, every UI surface that led to an empty History drawer (hamburger *Config history…*, editor **History** button, *Diff since compile*, commit-hash columns) is now hidden or disabled with a tooltip.
+- Devices tab IP column is visible again for users upgrading from before it existed.
+
+**Small additions.**
+
+- Every successful compile's firmware is archived on the server, not just "Download Now" jobs. A **Download** button shows up on every row in Queue, per-device Compile history, and fleet-wide Queue history.
+- Optional **MAC** column on the Devices tab (toggle via the column picker). The IP column gets an ARP-table fallback when mDNS doesn't know the address.
+- New **Worker selection** column in Queue + Compile history explaining why a given worker picked up a compile (*Pinned to worker*, *Only worker online*, *Least busy*, *Fastest available*, *First to poll*).
+- The integration now supports HA **Download diagnostics** (redacted), shows up on the **System Health** panel, and the **Configure** button lets you edit the add-on URL + token in place. Deleted devices are removed from HA's device registry automatically.
+
+**Housekeeping.**
+
+- AppArmor profile added; the add-on runs under confinement now and the Supervisor security-star card reflects it. `stage: experimental` dropped.
+- All open Dependabot alerts resolved (dompurify + hono).
+- Integration now ships a hassfest-validated quality-scale declaration (stays at `bronze`) and runs hassfest in CI.
+- Add-on icon swapped for the one the official ESPHome add-on ships, so the store card renders at the same visual size as ESPHome Device Builder.
+- YAML config comment marker renamed from `# distributed-esphome:` to `# esphome-fleet:` (both are still read; the new one is written on save).
+
+**Note for standalone worker users.** The worker Docker image bumped from version 6 to 7 (adds `iputils-ping`). Old-image workers are flagged in the Workers tab — run `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` to refresh.
+
 ## 1.6.0
 
-**Per-file config history with diff + rollback.** Every save to `/config/esphome/` now becomes a local git commit automatically. Click the new **Config history…** item in any device's hamburger menu to see the full history of that file — a side-by-side diff viewer (Monaco, syntax-highlighted YAML) on the right, a commit list on the left. Pick any earlier version and click **Restore** to roll back. The Queue tab also gets a **Diff since compile** button on each job that opens the history panel pre-set to "what's changed since this compile started." Works for Pat-without-git *and* Pat-with-git: fresh installs get a Fleet-owned repo; existing repos are left completely intact (no `.gitignore` mutations, no identity override, no auto-commits unless you opt in). Commit messages are human-readable (`"Automatically saved after editing in UI"`, `"Pinned ESPHome version"`, etc.) so `git log` reads like an activity feed.
+**An in-app Settings drawer.** Fleet now has a proper Settings surface — click the gear icon in the header. Every knob that used to live on the Supervisor Configuration tab (server token, timeouts, worker-offline threshold, require-HA-auth) has moved here, and several new fields sit alongside them (history retention, firmware cache size, job-log retention, time-of-day format, config-versioning toggle + author). Edits apply immediately without restarting the add-on. The drawer is split into **Basic** and **Advanced** tabs — Basic holds what you'll touch most (versioning, authentication, display), Advanced holds the plumbing knobs (retention, cache, timeouts, polling). Values from your previous Supervisor configuration are imported on first boot so nothing you set before is lost.
 
-**Onboarding modal for versioning.** The first time you open the Fleet UI after upgrading, a dialog explains what config versioning does and asks whether to turn it on. Either choice sticks — you can always flip it later in Settings. Already running a git repo in `/config/esphome/`? Versioning auto-enables (you've clearly opted in), but auto-commit-on-save stays off so Fleet won't write to your curated log without you asking.
+**Per-file config history with diff + rollback.** Every save to `/config/esphome/` becomes a local git commit. Click **Config history…** in any device's hamburger menu to browse that file's full history — Monaco side-by-side diff viewer on the right, commit list on the left — and roll back to any earlier version in one click. The Queue tab grows a **Diff since compile** button that opens the history panel pre-set to "what's changed since this compile started." Works both for users without git experience (fresh installs get a Fleet-owned repo) and users who already run git in `/config/esphome/` (your existing repo is left completely untouched — no `.gitignore` mutations, no identity override, no auto-commits unless you opt in). Commit messages are human-readable (`"Automatically saved after editing in UI"`, `"Pinned ESPHome version"`, etc.) so `git log` reads like an activity feed.
 
-**Archive is tracked in git.** Deleted devices land in `.archive/` as before, but now the move uses `git mv` so blame + `log --follow` thread cleanly through the delete → restore cycle. Permanent-delete runs through `git rm` + commit, so even that's recoverable by a git operator. UI copy updated to match.
+**Archive is tracked in git.** Deleted devices land in `.archive/` as before, but the move now uses `git mv` so blame + `log --follow` thread cleanly through the delete → restore cycle. Permanent-delete runs through `git rm` + commit, so even that's recoverable by a git operator.
 
-**Compile history that sticks around.** The Queue tab only ever shows the latest compile per device (by design — one row per device, not an ever-growing list). New in 1.6: a persistent history DB at `/data/job-history.db` captures every terminal state (`success`, `failed`, `cancelled`, `timed_out`) and survives queue coalescing *and* explicit Clear. Reach it from:
+**Compile history that sticks around.** The Queue tab only ever shows the latest compile per device (by design — one row per device, not an ever-growing list). 1.6 adds a persistent history that survives queue coalescing *and* explicit Clear, reachable three ways:
 
-- A **History** button on the Queue toolbar (rightmost) opens a fleet-wide modal with filters for device, state, time window, and a universal search that spans friendly name, filename, state, ESPHome version, commit hash, worker, trigger, OTA result, and log excerpt.
-- A **Compile history…** entry in each Device row's hamburger, scoped to that one device, with a stats strip (total / ok / failed / avg / window) at the top.
-- An optional **Last compiled** column on the Devices tab (off by default — right-most column-picker button) shows `Xago` plus the same pill-style state badge the Queue uses.
+- **History** button on the Queue toolbar — fleet-wide modal with filters for device, state, and time window, plus a universal search.
+- **Compile history…** in each Device row's hamburger — scoped to that one device, with a stats strip (total / ok / failed / avg) at the top.
+- An optional **Last compiled** column on the Devices tab (off by default, enable via the column picker).
 
-Every row is expandable to show the last ~8 KB of the compile log inline, with ANSI colour codes honoured and progress bars collapsed the way they'd display in a real terminal. Retention is 365 days by default (adjustable in Settings; `0 = unlimited`).
+Every row expands to show the last bit of the build log inline.
 
-**Grafana-style time range picker.** The Queue-History modal's time filter is now a proper popover with quick ranges (`Last 5m / 15m / 1h / 6h / 24h / 7d / 30d / 90d / 1y / All time`) on the left and a calendar-based custom range on the right. Calendar's first day of the week follows your browser locale (Monday in most of Europe, Sunday in the US / JP / KR).
+**Local worker starts active.** Fresh installs boot the built-in `local-worker` with 1 slot instead of 0 (paused). The first compile just works; raise the slot count in Workers if you want parallelism, set to 0 to pause.
 
-**Everything except port + add-on deployment is now in Settings.** The Supervisor Configuration tab has just two fields — the HTTP port and the direct-port auth requirement — everything else moved into an in-app **Settings** drawer that takes effect immediately, no add-on restart. The drawer has two tabs:
+**Smaller fleet-management wins.**
 
-- **Basic** — Config versioning toggle + author, Authentication (server token, require-HA-auth), Display (time format: auto / 12 h / 24 h).
-- **Advanced** — Job history retention, Firmware cache size, Job-log retention, Job & OTA timeouts, Worker offline threshold, Device poll interval. Every numeric field shows its `(default N, min M, max K)` bounds inline.
-
-Settings migrate from the prior Supervisor schema on first boot so upgrading installs carry their existing values over (token stays, timeouts stay, worker threshold stays).
-
-**Local worker starts active.** Fresh installs boot the built-in `local-worker` with 1 slot instead of 0 (paused). The first compile just works; raise the slot count if you want parallelism, set to 0 to pause.
-
-**Secrets.yaml no longer fails validation.** The Validate button on a `secrets.yaml` file would previously light up red because `esphome config` can't validate a `!secret` dictionary. Fleet now mirrors the ESPHome Dashboard's behavior and returns a success + "skipped" note instead.
-
-**Manage the fleet more efficiently.**
-
-- Devices tab: **+ New Device** and **Archive…** buttons collapsed into a single **Add device ▾** dropdown with three options — New, Duplicate existing (pick any target to clone), Restore from archive.
-- Devices tab: optional columns now appear in the column-picker in the order they render in the table (used to be alphabetical).
-- Devices tab: hamburger items that would no-op (Restart with no `restart_button`, Copy API Key with no encryption) are disabled with a tooltip explaining how to enable them.
-- Queue / History: "Triggered" column is consistent across both surfaces with the same icons and labels (User, HA action, API, Recurring, Once). API-triggered compiles (direct Bearer token, not the HA integration) now render distinctly from HA-action triggers.
-- Queue History: server-side sortable Device / State / ESPHome / Duration / Started / Finished / Trigger / Worker columns; infinite-scroll pagination.
-- Settings: ephemeral "Setting saved" toast on every PATCH so you can tell the change took.
+- Devices tab: **+ New Device** and **Archive…** buttons collapsed into one **Add device ▾** dropdown — New device, Duplicate existing (clone any target), or Restore from archive.
+- Devices tab: hamburger items that would no-op on a given device (Restart with no `restart_button` in YAML, Copy API Key with no encryption) are disabled with a tooltip explaining what YAML to add to enable them.
+- Queue + History "Triggered" column is now consistent — same icons, same labels across both surfaces, with compiles initiated via the direct API rendering distinctly from HA-action triggers.
+- Queue History is sortable on every column (Device, State, ESPHome, Duration, Started, Finished, Trigger, Worker) with infinite-scroll pagination.
+- `secrets.yaml` no longer trips the Validate button — the `esphome config` schema doesn't apply to a `!secret` dictionary, so Fleet now mirrors the ESPHome Dashboard and skips validation on that file.
 
 **UX polish pass.**
 
-- Time format in the Queue and History is now configurable (auto-follow-browser / 12-hour / 24-hour).
-- The History drawer's Monaco diff editor now follows the app's light/dark theme.
-- Drawers (History, Compile history) darken the underlying tab so the still-updating rows don't distract.
-- Restore button on the head-most history row is disabled with "Already at this version" when the working tree is clean.
+- The History drawer's Monaco diff editor follows the app's light/dark theme.
+- Drawers (History, Compile history) darken the underlying tab so still-updating rows don't distract.
+- Restore button on the HEAD row is disabled with "Already at this version" when the working tree is clean.
+- Every greyed-out dropdown item (`Retry All Failed`, `Clear Succeeded`, bulk actions, etc.) explains *why* it's disabled in a hover tooltip.
+- Every numeric Settings field shows its `(default N, min M, max K)` bounds inline.
 - Authentication field's Show / Copy icon buttons are properly labeled for screen readers.
-- Every greyed-out dropdown item (`Retry All Failed`, `Clear Succeeded`, bulk actions, etc.) now explains *why* it's disabled in a hover tooltip.
 
 **Bug fixes users will notice.**
 
-- Scheduled compiles that get cancelled before a worker picks them up now render `Scheduled (once) — cancelled before start` in history instead of a row full of `—` dashes.
-- Restore-confirmation dialog no longer hard-codes "No new commit will be created" — it now reads the live `auto_commit_on_save` setting and tells the truth.
+- Scheduled compiles cancelled before a worker picks them up now render `Scheduled (once) — cancelled before start` in history instead of a row full of `—` dashes.
+- Restore-confirmation dialog no longer hard-codes "No new commit will be created" — it now reads the live auto-commit setting and tells the truth.
 - Manual-commit message field's placeholder is the curated default (`"Manually committed from UI"`) instead of the old raw `save: foo.yaml (manual)` form.
-- `Last compiled` column success badge is the same pill shape the Queue tab uses (was a tiny `·`).
 - Queue tab's Commit column is a clickable short-hash button that opens the History panel preset to "what's changed since this compile."
-- Queue / History / Schedules tabs show absolute timestamps stacked below relative ones (was tooltip-only) so you don't have to hover.
+- Queue / History / Schedules tabs show absolute timestamps stacked below relative ones so you don't have to hover to see when something happened.
 - Config-history diff editor is the full visible drawer height instead of a cramped 330 px panel.
-- When you toggle auto-commit on with uncommitted changes in the tree, a confirmation dialog offers to **Commit N files and turn on**, **Turn on anyway**, or Cancel.
-- When auto-commit is off and you save in the editor, the save toast carries a **Commit now** action so you can flush that specific save in one click.
-- Every optional numeric Settings field shows its `(default N, min M, max K)` bounds inline.
+- Toggling auto-commit on with uncommitted changes offers to commit them first instead of silently leaving them dirty.
 
-**Under the hood.** SP.8 migrated the last of the Supervisor options into in-app Settings (server token, timeouts, worker threshold, require-HA-auth); the Supervisor Configuration tab is now effectively empty by design. Settings writes are atomic (tempfile + `fsync` + `os.replace`), validated per-field, and immediately observable via `get_settings()`. Worker offline / device poll / job timeout / OTA timeout are read fresh on every tick, so a drawer edit takes effect within one cycle with no restart. Auto-commit write path is 2-second debounced + async so the editor's Save never blocks on `git`. Job history DAO uses SQLite WAL mode for read-while-write concurrency; writes are sub-millisecond. See `dev-plans/WORKITEMS-1.6.md` for the full list of checked work items + 30+ numbered bug fixes.
+**Under the hood.** Settings writes are atomic and validated per-field; downstream consumers re-read them on every tick so a drawer edit takes effect within one cycle with no restart. The auto-commit write path is debounced + async so the editor's Save never blocks on `git`. The job-history DAO uses SQLite WAL mode for read-while-write concurrency; writes are sub-millisecond.
 
 ## 1.5.0
 

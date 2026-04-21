@@ -195,8 +195,10 @@ The bar for landing new code on `develop`. Most are automated; the rest are deve
 When adding features or changing user-visible behavior, keep in sync:
 
 - `README.md` — public project overview.
-- `ha-addon/DOCS.md` — user-facing docs shown in the HA add-on panel.
+- `ha-addon/DOCS.md` — docs shown in the HA add-on panel.
 - `ha-addon/CHANGELOG.md` — **written for users, not developers.** ~90% of the entry should cover things users see and experience (new UI features, UX improvements, bug fixes with user-visible symptoms, configuration changes). ~10% at most for internal/behind-the-scenes work (tests, CI, protocol types, code cleanup) — collapse into a brief "Under the hood" section, not detailed workstream breakdowns. Group by what the user experiences, not by internal workstream labels. Never say "no new features" when there are user-visible features — scan the WORKITEMS bug list for UI/UX work. **Only mention changes relative to the last public release** — if a bug was introduced during the dev cycle and fixed before release, it never existed from the user's perspective and doesn't belong in the changelog. Same for regressions, intermediate refactors, or test-only fixes that shipped and un-shipped within the same cycle. The changelog describes what changed *for the user upgrading from the previous stable*, not the full internal git history.
+
+**User-facing docs must not reference internal development docs.** `README.md`, `ha-addon/DOCS.md`, and `ha-addon/CHANGELOG.md` are read by end users who don't have access to (or interest in) the repo's `dev-plans/` directory, work-item IDs (SP.8, AV.7, JH.5, UX_REVIEW §N.M), numbered bug IDs, or internal file paths (`settings.py`, `check-invariants.sh`). Describe behavior in plain terms. If a changelog entry needs to point somewhere for detail, point at the add-on UI ("see Settings → Authentication") or an externally-reachable GitHub file, never at `dev-plans/*` or internal source paths. This also means no "See WORKITEMS-X.Y.md for the full list" at the bottom of a changelog — the entry itself IS the full list as far as users are concerned.
 
 ## Project Tracking
 
@@ -204,7 +206,7 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.6.md` — current release (power-user fleet management: git versioning, job history, archive viewer, device tags, disk management, worker constraints).
+- `dev-plans/WORKITEMS-1.7.md` — current release (LLM assistance — multi-provider in-editor YAML assistant, fleet-wide tool-calling chat, release breaking-change analyzer).
 - `dev-plans/WORKITEMS-future.md` — unscheduled items. Things we may do someday but haven't picked a release for yet.
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
@@ -212,6 +214,8 @@ Everything lives in `dev-plans/`:
 - `dev-plans/USER_PERSONA.md` — the target user "Pat." Scope / UX / copywriting tiebreaker when we're not sure something's worth the effort.
 
 **Release cadence is scope-driven, not time-boxed.** Ship a release when it delivers a meaningful chunk of functionality — never pad scope to fit a calendar and never compress it to meet one. Pull items forward from `WORKITEMS-future.md` or push them back into it based on whether they move the needle for Pat, not on how close to "done" they happen to be. The current `WORKITEMS-X.Y.md` is a commitment to a *coherent* release, not a deadline.
+
+**Never reshuffle workitems between releases without an explicit ask.** Don't move action items in or out of the current `WORKITEMS-X.Y.md`, between release files, to/from `WORKITEMS-future.md`, or to/from `dev-plans/archive/` unless the user explicitly asks for that move. This includes "helpful" consolidation like deferring an unchecked item to the next release, promoting a future item because it seems timely, or rescoping a release that looks too big. Scope decisions are the user's call — surface a concern if you have one, but wait for an explicit instruction before touching the file structure. The only edits to WORKITEMS files you make unprompted are: checking off an item you just completed (with the `(X.Y.Z-dev.N)` tag), adding a newly-discovered bug under the appropriate Open Bugs section of the current release, and updating bug status in place.
 
 **Turn** = one user prompt → one assistant response cycle. At the end of every turn:
 1. Run `bash scripts/bump-dev.sh` — auto-increments `-dev.N`. Never skip.
@@ -222,6 +226,55 @@ Everything lives in `dev-plans/`:
 **Work item / bug checkbox format:** `- [x] **#NNN** *(X.Y.Z-dev.N)* — description` (the `#NNN` only applies to bugs). Use the exact dev.N, not a generic `dev`. For wontfix/duplicate/stale entries, use `~~**#NNN**~~ WONTFIX —` (strike-through bold ID + label).
 
 **Next release file:** Create `dev-plans/WORKITEMS-X.Y+1.md` immediately after tagging `vX.Y.Z` (part of the post-release checklist). The current file moves to `dev-plans/archive/` at the same time, and this file's "Project Tracking" section is updated to point at the new current release.
+
+**In-code TODOs must reference a workitem.** Every `TODO` / `FIXME` / `HACK` / `XXX` comment in source (`ha-addon/`, `scripts/`, `tests/`, `.github/`) is shaped as `TODO(<ID>): <body>` where `<ID>` is an identifier greppable in `dev-plans/` — a bug number (`#NNN`), a workstream code (`IT.2`, `SS.1`, `QS.1`, `PH.1`, …), or equivalent. A TODO with no pointer silently rots: the next reader has no way to tell whether it's still relevant, already fixed, deliberately parked, or never going to happen. Concrete rules:
+- If the underlying work is worth doing someday → file it in the current `WORKITEMS-X.Y.md`, a successor file, or `WORKITEMS-future.md`, and use that ID in the TODO.
+- If the work isn't worth filing → the TODO isn't worth keeping. Either fix the code or delete the comment.
+- PR numbers, reviewer names, and commit SHAs are NOT valid pointers — PRs close, context evaporates. Always point at a dev-plans entry.
+
+`dev-plans/RELEASE_CHECKLIST.md` has a grep step that fails the release if any in-source TODO points at an ID not found under `dev-plans/` — so stale pointers get caught before tag.
+
+## Branching Strategy
+
+Two long-lived branches: `develop` and `main`.
+
+- **`develop` is the integration branch.** All dev work lands here — every turn ends with a commit + push to `develop`. The `-dev.N` versions live on this branch and are what `./push-to-hass-4.sh` deploys. Default branch for day-to-day work.
+- **`main` is the release branch.** Tagged stable versions (`vX.Y.Z`) live here. Never commit directly.
+- **Releases happen via pull request.** When `develop` is ready to cut a stable release, open a PR from `develop` → `main`, merge it, then tag. One PR per release; no long-running release branches for now. See `dev-plans/RELEASE_CHECKLIST.md` for the full flow.
+
+This is deliberately simple for a single-developer project. If parallel lines of work ever need isolation, introduce short-lived feature branches off `develop` — don't complicate the trunk model preemptively.
+
+## PR Review Loop
+
+When a PR has review comments (Copilot bot, human reviewer, or both), the working pattern is:
+
+1. **Address every comment in the same push.** Fix the code, update tests, land a workitem entry if the reviewer is pointing at future work. Don't leave comments hanging across pushes — a later reader can't tell which comment drove which commit.
+2. **Resolve the review thread on GitHub.** After the fix lands, mark the comment conversation as **Resolved** in the PR UI (or via the GraphQL `resolveReviewThread` mutation below). An unresolved thread looks like an open concern even when the underlying code is already fixed, and it clutters the PR sidebar until merge. This is as important as the fix itself.
+3. **Exception — intentionally-deferred items.** If the comment points at work that's legitimately out of scope for this PR, file it in `dev-plans/WORKITEMS-*.md` first, reply to the comment with a pointer to the new workitem ID, *then* resolve the thread. The workitem is the record of the deferral; the thread should close because the next step (fix in a future PR) is now tracked elsewhere.
+
+Resolve threads with:
+
+```bash
+# List unresolved threads on a PR:
+gh api graphql -f query='
+  query($owner:String!,$repo:String!,$pr:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$pr) {
+        reviewThreads(first:50) {
+          nodes { id isResolved comments(first:1) { nodes { body } } }
+        }
+      }
+    }
+  }' -F owner=weirded -F repo=distributed-esphome -F pr=64
+
+# Resolve one by its thread id (from the query above):
+gh api graphql -f query='
+  mutation($id:ID!) {
+    resolveReviewThread(input:{threadId:$id}) { thread { isResolved } }
+  }' -F id=PRT_kwDO...
+```
+
+End-of-turn rule when a PR has review feedback: **before the commit + push, enumerate every thread that was touched and resolve it.** "Fix and leave the thread open" is not finished work.
 
 ## Deployment
 

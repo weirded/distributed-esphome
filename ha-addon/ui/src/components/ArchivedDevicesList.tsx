@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { fmtEpochRelative } from '@/utils/format';
 
 
 export function ArchivedDevicesList() {
@@ -96,11 +97,11 @@ export function ArchivedDevicesList() {
       </p>
       <ul className="flex flex-col gap-2 text-xs">
         {data.map((a) => {
-          const ago = Math.floor((Date.now() / 1000 - a.archived_at));
-          const when = ago < 60 ? `${ago}s ago`
-            : ago < 3600 ? `${Math.floor(ago / 60)}m ago`
-              : ago < 86_400 ? `${Math.floor(ago / 3600)}h ago`
-                : `${Math.floor(ago / 86_400)}d ago`;
+          // 1.6.1 bug #2: use the shared ``fmtEpochRelative`` so this
+          // column can't drift from Queue / History / Last-compiled.
+          // The helper owns the pluralisation + rounding + negative-
+          // delta handling; the inline math below did three of those.
+          const when = fmtEpochRelative(a.archived_at);
           const kb = (a.size / 1024).toFixed(1);
           return (
             <li key={a.filename} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-2 py-1.5">
