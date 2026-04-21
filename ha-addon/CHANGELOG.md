@@ -25,8 +25,8 @@ A bug-fix + polish release on top of 1.6.
 
 - AppArmor profile added; the add-on runs under confinement now and the Supervisor security-star card reflects it. `stage: experimental` dropped.
 - All open Dependabot alerts resolved (dompurify + hono).
-- Integration quality scale bumped from bronze to silver.
-- Add-on icon now 128×128 (was 64×64) and the store logo is a proper landscape lockup.
+- Integration now ships a hassfest-validated quality-scale declaration (stays at `bronze`) and runs hassfest in CI.
+- Add-on icon swapped for the one the official ESPHome add-on ships, so the store card renders at the same visual size as ESPHome Device Builder.
 - YAML config comment marker renamed from `# distributed-esphome:` to `# esphome-fleet:` (both are still read; the new one is written on save).
 
 **Note for standalone worker users.** The worker Docker image bumped from version 6 to 7 (adds `iputils-ping`). Old-image workers are flagged in the Workers tab — run `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` to refresh.

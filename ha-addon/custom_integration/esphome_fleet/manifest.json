@@ -8,7 +8,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/weirded/distributed-esphome/issues",
   "loggers": ["esphome_fleet"],
-  "quality_scale": "silver",
+  "quality_scale": "bronze",
   "requirements": [],
   "single_config_entry": true,
   "version": "0.1.0",

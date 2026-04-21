@@ -3,7 +3,7 @@
 **Review type:** Patch-release walkthrough — spot-check of new/changed surfaces, not a full re-review.
 **Method:** Live hass-4 (`1.6.1` final dev), dark mode, production fleet (67 devices, 7 workers, real history). Supervisor add-on card checked in a browser against hass-4.
 **Persona reference:** `dev-plans/USER_PERSONA.md` ("Pat").
-**Scope:** only surfaces that changed since 1.6.0 — the bulk of `UX_REVIEW_1.6.md`'s walk still applies verbatim. For 1.6.1 that's:
+**Scope:** only surfaces that changed since 1.6.0 — the bulk of `UX_REVIEW_1.6.md`'s walk still applies verbatim. Note: the bronze → silver flip was retracted at release close-out (silver's test-coverage rule ≥95% isn't honestly met — see `quality_scale.yaml`), so `manifest.json` stays at `bronze`. For 1.6.1 that's:
 - Devices tab IP + MAC columns (#7, #12)
 - Queue / QueueHistory "Worker selection" column (#8, #13)
 - Firmware download menu refactor (#1)
