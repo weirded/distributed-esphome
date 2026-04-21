@@ -50,20 +50,22 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
     magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 128x128 ha-addon/icon.png
     cp ha-addon/ui/src/assets/esphome-logo.svg ha-addon/icon.svg
 
-    # Wordmark-only logo. PR #80 lesson: don't embed the icon inside
-    # logo.png — Supervisor / HA's Integrations card render icon.png
-    # separately, so a logo.png with its own icon duplicates it and
-    # squashes the wordmark. Pure wordmark, 64pt Helvetica-Bold in
-    # ESPHome's accent-blue, tight transparent padding.
+    # Add-on + integration logo.png: 192×192 shield from the SVG source.
+    # Supervisor and HA's Integrations card both render a compact square,
+    # and a wordmark at that size ends up illegible. 1.6.1 PR #80 tried
+    # a landscape wordmark here and it rendered cramped — reverted to
+    # the 1.6.0 shape (same glyph as icon.png but 192×192).
+    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 192x192 ha-addon/logo.png
+    cp ha-addon/logo.png ha-addon/custom_integration/esphome_fleet/logo.png
+
+    # home-assistant/brands submission. Icons are the square glyph; the
+    # logo slot is a landscape wordmark per brands convention (rendered
+    # on the Integrations picker where there's horizontal room).
+    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 256x256 docs/brands-submission/custom_integrations/esphome_fleet/icon.png
+    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 512x512 docs/brands-submission/custom_integrations/esphome_fleet/icon@2x.png
     WORDMARK() { magick -background none -fill "#18BCF2" -font "Helvetica-Bold" \
       -pointsize "$1" label:"ESPHome Fleet" \
       -bordercolor none -border "$2" "$3"; }
-    WORDMARK 64  20x16  ha-addon/logo.png
-    cp ha-addon/logo.png ha-addon/custom_integration/esphome_fleet/logo.png
-
-    # home-assistant/brands submission (1× + 2× per convention).
-    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 256x256 docs/brands-submission/custom_integrations/esphome_fleet/icon.png
-    magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 512x512 docs/brands-submission/custom_integrations/esphome_fleet/icon@2x.png
     WORDMARK 64   20x16  docs/brands-submission/custom_integrations/esphome_fleet/logo.png
     WORDMARK 128  40x32  docs/brands-submission/custom_integrations/esphome_fleet/logo@2x.png
     ```
