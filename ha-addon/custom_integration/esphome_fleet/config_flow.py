@@ -154,14 +154,21 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         them edit the base URL + token in place instead of removing
         and re-adding the integration (the only pre-QS.5 workflow).
 
-        HA 2024.11+ routes the Configure button here automatically
-        when this step exists on the flow. Older HA versions never
-        call this method — they fall back to the reauth flow or the
-        options flow, neither of which the integration exposes.
+        HA routes the Configure button here automatically when this
+        step exists on the flow (available since 2024.11; the add-on's
+        declared minimum was bumped to match in 1.6.1 so this is always
+        live in the add-on context).
+
+        PR #80 review: ``.get()`` + explicit abort instead of bracket-
+        access (which would ``KeyError`` if HA ever dispatches without
+        ``entry_id`` in the context — defensive shape every core flow
+        uses).
         """
-        self._reconfigure_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
+        entry_id = self.context.get("entry_id", "")
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return self.async_abort(reason="reconfigure_unknown_entry")
+        self._reconfigure_entry = entry
         return await self.async_step_reconfigure_confirm()
 
     async def async_step_reconfigure_confirm(
@@ -169,7 +176,11 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Edit an existing entry's base URL + token."""
         errors: dict[str, str] = {}
-        assert self._reconfigure_entry is not None
+        # Defensive: same abort shape as async_step_reconfigure — if a
+        # caller reached this step without going through the entry
+        # lookup above, bail cleanly instead of raising AssertionError.
+        if self._reconfigure_entry is None:
+            return self.async_abort(reason="reconfigure_unknown_entry")
 
         if user_input is not None:
             candidate = user_input.get(CONF_BASE_URL, "")
@@ -184,32 +195,20 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 elif not await _probe_server(self.hass, base_url):
                     errors["base"] = "cannot_connect"
                 else:
-                    # Preserve unique_id when the URL didn't change;
-                    # update it when it did so the flow's uniqueness
-                    # invariant stays intact. ``async_update_reload_and_abort``
-                    # does the reload+abort dance HA expects from
-                    # reconfigure — on HA versions before it existed,
-                    # fall back to update_entry + reload + async_abort.
+                    # PR #80 review: the async_update_reload_and_abort
+                    # helper has been in HA since 2024.11, which is
+                    # the integration's declared minimum as of 1.6.1
+                    # (``config.yaml.homeassistant: "2024.11.0"``). No
+                    # fallback to `update_entry + reload + abort` —
+                    # that path was dead code because HA versions
+                    # without the helper also never dispatch to
+                    # ``async_step_reconfigure`` in the first place.
                     update = {CONF_BASE_URL: base_url, CONF_TOKEN: token}
-                    updater = getattr(
-                        self, "async_update_reload_and_abort", None,
-                    )
-                    if updater is not None:
-                        return await updater(
-                            self._reconfigure_entry,
-                            data={**self._reconfigure_entry.data, **update},
-                            reason="reconfigure_successful",
-                        )
-                    # HA <2024.11 fallback — safe on the integration's
-                    # declared `homeassistant: "2024.1.0"` minimum.
-                    self.hass.config_entries.async_update_entry(
+                    return await self.async_update_reload_and_abort(
                         self._reconfigure_entry,
                         data={**self._reconfigure_entry.data, **update},
+                        reason="reconfigure_successful",
                     )
-                    await self.hass.config_entries.async_reload(
-                        self._reconfigure_entry.entry_id,
-                    )
-                    return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure_confirm",

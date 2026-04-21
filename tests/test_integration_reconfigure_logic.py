@@ -115,26 +115,22 @@ async def test_reconfigure_commits_and_reloads_on_success() -> None:
     assert kwargs["data"][CONF_TOKEN] == "new-token"
 
 
-async def test_reconfigure_fallback_for_older_ha() -> None:
-    """HA <2024.11 has no async_update_reload_and_abort — the flow
-    must fall back to update_entry + async_reload + async_abort."""
-    from esphome_fleet.const import CONF_BASE_URL, CONF_TOKEN
+async def test_reconfigure_aborts_on_missing_entry() -> None:
+    """PR #80 review: defensive abort when the flow reaches
+    ``async_step_reconfigure_confirm`` without a cached entry (e.g.
+    HA dispatches ``reconfigure_confirm`` directly without going
+    through ``async_step_reconfigure`` first). Previously this raised
+    ``AssertionError``; now it returns a clean abort keyed
+    ``reconfigure_unknown_entry`` so HA renders the translated error.
+    """
+    from esphome_fleet.config_flow import EsphomeFleetConfigFlow
 
-    flow, entry, hass = _make_flow()
-    flow.async_update_reload_and_abort = None  # simulate old HA
+    flow = EsphomeFleetConfigFlow.__new__(EsphomeFleetConfigFlow)
+    flow._reconfigure_entry = None
+    flow.async_abort = lambda *, reason: {"type": "abort", "reason": reason}
 
-    with patch(
-        "esphome_fleet.config_flow._probe_server",
-        new=AsyncMock(return_value=True),
-    ):
-        result = await flow.async_step_reconfigure_confirm(
-            {CONF_BASE_URL: "http://new.local:8765", CONF_TOKEN: "new-token"},
-        )
-
-    assert result["type"] == "abort"
-    assert result["reason"] == "reconfigure_successful"
-    hass.config_entries.async_update_entry.assert_called_once()
-    hass.config_entries.async_reload.assert_awaited_once_with("entry-abc")
+    result = await flow.async_step_reconfigure_confirm(None)
+    assert result == {"type": "abort", "reason": "reconfigure_unknown_entry"}
 
 
 async def test_reconfigure_initial_render_shows_existing_url() -> None:

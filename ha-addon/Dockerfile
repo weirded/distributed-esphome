@@ -45,6 +45,22 @@ LABEL \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
 
+# PR #80 review: loud failure when Supervisor's ``build_from`` regex
+# silently falls back to ``ghcr.io/home-assistant/<arch>-base`` (Alpine/
+# musl). The existing ``apt-get install`` already fails in that case —
+# but only because apt happens to be absent on Alpine. If the Dockerfile
+# ever grows a distro-portable shim ("apt-get || apk add …"), the
+# rejection becomes invisible and we'd ship Supervisor-driven images
+# that aren't on our actual base. Turning this into an explicit guard
+# produces a single grep-able line at layer 0.
+RUN . /etc/os-release && [ "$ID" = "debian" ] || { \
+        echo "ERROR: unexpected base image (/etc/os-release ID=$ID)." >&2; \
+        echo "       Supervisor probably rejected build.yaml's BUILD_FROM and" >&2; \
+        echo "       fell back to the arch-base image. Aborting to avoid" >&2; \
+        echo "       shipping an add-on container built on the wrong base." >&2; \
+        exit 1; \
+    }
+
 # Same deps as the proven client Dockerfile — native glibc for PlatformIO toolchains.
 # Bug #6 (1.6.1): `iputils-ping` keeps the client's OTA network-diagnostics
 # probe functional when the server also hosts a local worker.

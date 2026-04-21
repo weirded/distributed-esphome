@@ -44,7 +44,8 @@
       "already_in_progress": "Setup is already in progress for this server via Supervisor discovery.",
       "invalid_discovery_info": "The Supervisor discovery record was missing host or port.",
       "reauth_successful": "The token was updated and the integration reloaded.",
-      "reconfigure_successful": "The integration was updated and reloaded."
+      "reconfigure_successful": "The integration was updated and reloaded.",
+      "reconfigure_unknown_entry": "Couldn't find the integration entry to reconfigure. Try removing and re-adding the integration."
     }
   },
   "services": {

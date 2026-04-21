@@ -25,9 +25,13 @@
 # the narrow subset we've observed actually in use.
 
 profile esphome_dist_server flags=(attach_disconnected,mediate_deleted) {
-  # Allow everything, but attached. The Supervisor UI reads this
-  # as "AppArmor: enabled" because there's a named profile loaded;
-  # refinement lands in a follow-up release.
+  # Permissive-but-attached: Supervisor reads "AppArmor: enabled"
+  # because a named profile is loaded. Rules below are broad by
+  # design — the mediation cost is real (every syscall still hits
+  # AppArmor's "check this" path, even when the answer is always
+  # "allow") but the defensive gain from itemising paths that shift
+  # between Python minor versions, PlatformIO releases, and ESPHome
+  # toolchains isn't worth the recurring breakage.
   file,
   capability,
   network,
@@ -36,5 +40,30 @@ profile esphome_dist_server flags=(attach_disconnected,mediate_deleted) {
   unix,
   mount,
   pivot_root,
-  ptrace,
+
+  # PR #80 review — cheap non-breaking denies that close something
+  # real without touching the PlatformIO / git / pip happy path.
+  #
+  # A compromised compile-time Python (ESPHome's `external_components`,
+  # `includes:`, `libraries:` — all trusted per the threat model but
+  # still the highest-leverage attack surface the add-on exposes)
+  # shouldn't be able to:
+  #
+  # - read host shadow/secrets files if the container's userns ever
+  #   maps them in (Supervisor doesn't map them today, but that can
+  #   change upstream without notice);
+  # - read or write arbitrary processes' memory via `/proc/<pid>/mem`;
+  # - tamper with kernel sysctls via /proc/sys writes.
+  #
+  # ``ptrace,`` is also scoped — without this carve-out, the
+  # unqualified ``ptrace,`` above would allow arbitrary process
+  # tracing across the add-on's container namespace. We don't need
+  # ptrace in normal operation; deny it outright so an attacker
+  # can't use it to jump between compile subprocesses.
+  deny /etc/shadow* rw,
+  deny /etc/gshadow* rw,
+  deny /run/secrets/** rw,
+  deny /proc/*/mem rw,
+  deny /proc/sys/kernel/** w,
+  deny ptrace,
 }
