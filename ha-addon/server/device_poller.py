@@ -37,12 +37,29 @@ except ImportError:
 # DEBUG; genuine errors from the same logger stay at ERROR so real
 # connection problems still surface.
 class _AioesphomeapiDisconnectFilter(logging.Filter):
-    """Downgrade the expected-on-OTA 'disconnect request failed' record."""
+    """Drop the expected-on-OTA 'disconnect request failed' record.
+
+    Bug #3 (1.6.1) — PR review follow-up: the first implementation
+    mutated ``record.levelno``/``levelname`` and returned ``True`` so
+    the record would still flow through. That was wrong: by the time
+    ``filter()`` runs, ``Logger.callHandlers`` has already selected
+    handlers based on the *original* ERROR level, so mutating the
+    level just changes the rendered tag — the ERROR handler still
+    emits the message, now with a misleading "DEBUG" label. The
+    correct behaviour is to drop it outright (``return False``). We
+    still emit the "this happened" signal via a DEBUG log on the
+    ``device_poller`` logger (a different logger, so no recursion)
+    for operators who need it.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno >= logging.ERROR and "disconnect request failed" in record.getMessage().lower():
-            record.levelno = logging.DEBUG
-            record.levelname = "DEBUG"
+            logger.debug(
+                "aioesphomeapi.connection disconnect-request failure during "
+                "OTA-reboot window (expected): %s",
+                record.getMessage(),
+            )
+            return False
         return True
 
 

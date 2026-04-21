@@ -27,10 +27,20 @@ export function fmtDuration(secs: number | null | undefined): string {
   return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
 }
 
-/** Bug #48: consolidated epoch-seconds → "Xago" relative time. */
+/** Bug #48: consolidated epoch-seconds → "Xago" relative time.
+ *
+ * PR #80 review: clamp at 0 so clock skew (client ahead of server by
+ * a few seconds; NTP correction mid-session) doesn't render absurd
+ * strings like `"-5s ago"` in the Archive dialog, Compile history,
+ * or Queue's "finished" column. A future timestamp is almost
+ * certainly a skew artefact, not a real event — render as "just
+ * now" so the UI stays readable instead of surfacing a negative
+ * number that'd distract the reader from whatever they were
+ * actually trying to check.
+ */
 export function fmtEpochRelative(epoch: number | null | undefined): string {
   if (epoch == null) return '—';
-  const diff = Math.floor(Date.now() / 1000) - epoch;
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - epoch);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`;

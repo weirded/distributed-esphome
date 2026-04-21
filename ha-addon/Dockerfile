@@ -15,8 +15,23 @@
 # required for PlatformIO toolchains that ESPHome pulls in; do NOT
 # let this fall through to Alpine/musl without a full compatibility
 # pass.
-# SS.4: digest matches ha-addon/build.yaml; worker Dockerfile also
-# pins the same digest. Refresh all three together on release.
+# SS.4: digest-pinned default for ``docker build`` without Supervisor
+# (local / CI reproducibility). The worker Dockerfile
+# (``ha-addon/client/Dockerfile``) pins the *same* digest — refresh
+# both in lockstep on release.
+#
+# PR #80 review: the previous comment claimed the digest "matches
+# ha-addon/build.yaml" — it doesn't. ``build.yaml`` carries the
+# **tag-only** image (``docker.io/library/python:3.11-slim``) because
+# Supervisor's ``supervisor/validate.py`` regex silently rejects
+# ``@sha256:…`` in the ``build_from`` map (it falls back to its own
+# arch-base image, which then breaks ``apt-get``). In production
+# under Supervisor, ``BUILD_FROM`` is overridden via ``--build-arg``
+# from ``build.yaml``, so the pin here is NOT applied and the server
+# base image is tag-resolved at build time. That's the last-mile gap
+# tracked as "partial" under F-13 / SS.4 in
+# ``dev-plans/SECURITY_AUDIT.md``. Revisit when upstream Supervisor
+# accepts digest pins.
 ARG BUILD_FROM=docker.io/library/python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99883bfe33964cf
 FROM ${BUILD_FROM}
 
