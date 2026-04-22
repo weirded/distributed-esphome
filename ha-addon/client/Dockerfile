@@ -7,8 +7,10 @@
 # bulletin:
 #   docker buildx imagetools inspect python:3.11-slim | grep '^Digest:'
 # Paste that digest here.
-# Last refreshed: 2026-04-19 (Python 3.11.15-slim-trixie).
-FROM python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99883bfe33964cf
+# Last refreshed: 2026-04-22 (IM.3 server+client digest bump, in lockstep
+# with ha-addon/Dockerfile — both must match so a stale client doesn't
+# drift onto a CVE window the server has already cleared).
+FROM python:3.11-slim@sha256:92c262cbb2e99cdc16218338d74fbe518055c13d224d942708f70f8042ff6d18
 # Bug #6 (1.6.1): `iputils-ping` is required by the OTA network-diagnostics
 # probe in client.py — without it the probe logs `Ping: [Errno 2] No such
 # file or directory: 'ping'` every time an OTA upload fails, which is

@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.6.2-dev.5"
+version: "1.6.2-dev.6"
 slug: "esphome_dist_server"
 description: "A modern Home Assistant UI for ESPHome — git-backed config history with rollback, live compile queue, per-device version pinning, scheduled OTA, optional distributed compilation. Works whether you have 3 or 300 devices."
 url: "https://github.com/weirded/distributed-esphome"
@@ -10,6 +10,21 @@ arch: [aarch64, amd64]
 startup: application
 boot: auto
 init: true
+# Bug #82 / IM.2 (1.6.2): install from a prebuilt image on GHCR
+# instead of having Supervisor build on each install host. Without
+# this, Supervisor runs ``docker buildx build`` against the
+# ``docker:<HOST_DOCKER_VER>-cli`` builder image, which fails if
+# Docker Hub is rate-limiting the host or briefly unreachable —
+# the exact symptom in #82 (``Image docker.io/library/docker:...-cli
+# does not exist``). ``{arch}`` is substituted by Supervisor at
+# install time (``amd64-addon-esphome-dist-server`` on x86-64,
+# ``aarch64-addon-esphome-dist-server`` on ARM); the version segment
+# is appended automatically from ``version:`` above. ``build.yaml``
+# stays in the repo so Supervisor can still fall back to a local
+# build when GHCR is unreachable and ``push-to-hass-4.sh`` can
+# continue rsync-deploying dev builds (see IM.5 for the sed filter
+# that strips this line on the dev loop).
+image: ghcr.io/weirded/{arch}-addon-esphome-dist-server
 # Bug #5 (1.6.1): `stage: experimental` removed. The add-on has
 # shipped stable releases through 1.6 with full test coverage,
 # cosign + SBOM supply-chain hardening, an AppArmor profile, and

@@ -25,14 +25,21 @@
 # **tag-only** image (``docker.io/library/python:3.11-slim``) because
 # Supervisor's ``supervisor/validate.py`` regex silently rejects
 # ``@sha256:…`` in the ``build_from`` map (it falls back to its own
-# arch-base image, which then breaks ``apt-get``). In production
-# under Supervisor, ``BUILD_FROM`` is overridden via ``--build-arg``
-# from ``build.yaml``, so the pin here is NOT applied and the server
-# base image is tag-resolved at build time. That's the last-mile gap
-# tracked as "partial" under F-13 / SS.4 in
-# ``dev-plans/SECURITY_AUDIT.md``. Revisit when upstream Supervisor
-# accepts digest pins.
-ARG BUILD_FROM=docker.io/library/python:3.11-slim@sha256:233de06753d30d120b1a3ce359d8d3be8bda78524cd8f520c99883bfe33964cf
+# arch-base image, which then breaks ``apt-get``).
+#
+# IM.3 (1.6.2): once ``ha-addon/config.yaml`` carries ``image:`` (IM.2),
+# Supervisor skips the local build path for production installs — it
+# pulls our prebuilt image from GHCR built by ``publish-addon.yml``.
+# Those GHCR builds do NOT receive a Supervisor ``--build-arg
+# BUILD_FROM`` override, so the digest below IS the base image for every
+# production install. The Supervisor-driven fallback path (local build
+# on air-gapped hosts, or ``push-to-hass-4.sh``'s IM.5 strip) still
+# tag-resolves via build.yaml — unchanged from 1.6.1 — which is fine
+# because that's a secondary path explicitly scoped as "used when GHCR
+# is unreachable." Refresh both server + client digests in lockstep on
+# each release (cross-check with ``docker buildx imagetools inspect
+# docker.io/library/python:3.11-slim``).
+ARG BUILD_FROM=docker.io/library/python:3.11-slim@sha256:92c262cbb2e99cdc16218338d74fbe518055c13d224d942708f70f8042ff6d18
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH

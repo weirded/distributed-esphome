@@ -196,7 +196,7 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                 />
                 <BoolRow
                   label="Require Home Assistant auth on direct port"
-                  help="When on, requests to port 8765 (outside the Home Assistant Ingress tunnel) must carry a valid HA bearer token or this server token. Leave on unless you have a specific reason to allow anonymous direct-port access."
+                  help="When on, requests to port 8765 (outside the Home Assistant Ingress tunnel) must carry a valid HA bearer token or this server token. Defaults to off so standalone Docker installs on trusted networks work without a token; turn it on if the direct port is reachable from an untrusted network."
                   value={data.require_ha_auth}
                   onChange={v => patch({ require_ha_auth: v })}
                 />

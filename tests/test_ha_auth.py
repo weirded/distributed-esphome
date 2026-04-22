@@ -31,6 +31,7 @@ async def _run_middleware(
     path: str = "/ui/api/targets",
     peer_ip: str | None = None,
     auth: str | None = None,
+    accept: str | None = None,
     user_headers: dict | None = None,
     require_ha_auth: bool = False,
     supervisor_valid: object = None,
@@ -44,6 +45,8 @@ async def _run_middleware(
     hdrs = {}
     if auth:
         hdrs["Authorization"] = auth
+    if accept:
+        hdrs["Accept"] = accept
     if user_headers:
         hdrs.update(user_headers)
 
@@ -255,6 +258,74 @@ def test_is_protected_ui_path_covers_ui_surface() -> None:
     assert not _is_protected_ui_path("")
 
 
+# --- #83: content-negotiated 401 on direct port ---
+
+
+async def test_401_returns_json_for_json_clients() -> None:
+    """#83: API clients (workers, integration, curl with Accept:
+    application/json) keep the pre-existing JSON 401 contract — we
+    don't regress the machine-readable shape."""
+    resp = await _run_middleware(
+        path="/ui/api/server-info",
+        peer_ip="10.0.0.5",
+        accept="application/json",
+        require_ha_auth=True,
+    )
+    assert resp.status == 401
+    assert resp.content_type == "application/json"
+    body = resp.body.decode() if resp.body else ""
+    assert '"error"' in body
+
+
+async def test_401_returns_json_for_no_accept_header() -> None:
+    """#83: A missing Accept header is treated as a machine client —
+    preserves the JSON body for curl-without-args and similar tools
+    that are scripting against /ui/api/*."""
+    resp = await _run_middleware(
+        path="/ui/api/server-info",
+        peer_ip="10.0.0.5",
+        require_ha_auth=True,
+    )
+    assert resp.status == 401
+    assert resp.content_type == "application/json"
+
+
+async def test_401_returns_html_for_browser_clients() -> None:
+    """#83: Browsers land on :8765 directly and get a styled HTML page
+    with two paths forward (provide a token, disable the flag via
+    Ingress) instead of a bare JSON blob that reads as a 1990s error."""
+    resp = await _run_middleware(
+        path="/",
+        peer_ip="10.0.0.5",
+        accept="text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        require_ha_auth=True,
+    )
+    assert resp.status == 401
+    assert resp.content_type == "text/html"
+    assert resp.headers.get("WWW-Authenticate", "").startswith("Bearer")
+    body = resp.body.decode() if resp.body else ""
+    assert "<!doctype html>" in body.lower()
+    assert "Authentication required" in body
+    assert "Authorization: Bearer" in body
+    # Both remediation paths present.
+    assert "Provide a token" in body
+    assert "Turn off direct-port authentication" in body
+
+
+async def test_401_returns_json_for_wildcard_accept() -> None:
+    """#83: ``Accept: */*`` (curl default) is treated as machine. Users
+    who want the HTML page can pass ``-H 'Accept: text/html'`` or just
+    load the URL in a browser."""
+    resp = await _run_middleware(
+        path="/",
+        peer_ip="10.0.0.5",
+        accept="*/*",
+        require_ha_auth=True,
+    )
+    assert resp.status == 401
+    assert resp.content_type == "application/json"
+
+
 async def test_supervisor_peer_takes_precedence_over_bearer() -> None:
     """When the request is from Supervisor, we don't hit the bearer path."""
     # supervisor_valid set to invalid would 401 the bearer path — but we
@@ -365,11 +436,15 @@ async def test_empty_server_token_does_not_accept_empty_bearer() -> None:
     assert resp.status == 401
 
 
-async def test_require_ha_auth_default_is_true() -> None:
-    """AU.7: mandatory in 1.5.0, still mandatory post-SP.8 move to Settings.
+async def test_require_ha_auth_default_is_false() -> None:
+    """#83: default flipped back from True → False in 1.6.2.
 
-    The default lives on AppSettings now — setting up the drawer without
-    any user edits must still leave direct-port access locked.
+    AU.7 (1.5.0) made direct-port auth mandatory for every install,
+    which hard-broke the standalone ``docker-compose`` path where
+    there's no Supervisor to validate against. A fresh install with
+    no settings overrides now serves :8765 without requiring a
+    bearer. Users on untrusted networks opt in via the Settings
+    drawer. The Ingress path never consults this flag.
     """
     from settings import AppSettings  # noqa: PLC0415
-    assert AppSettings().require_ha_auth is True
+    assert AppSettings().require_ha_auth is False

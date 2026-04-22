@@ -438,13 +438,15 @@ def test_init_creates_settings_file_when_absent(tmp_path: Path):
         "ota_timeout": 120,
         "worker_offline_threshold": 30,
         "device_poll_interval": 60,
-        "require_ha_auth": True,
+        "require_ha_auth": False,
         "time_format": "auto",
     }
     # Everything else matches the dataclass defaults.
     assert s.auto_commit_on_save is True
     assert s.job_timeout == 600
-    assert s.require_ha_auth is True
+    # #83: default flipped to False in 1.6.2 — standalone Docker
+    # installs must be reachable without a token out of the box.
+    assert s.require_ha_auth is False
     assert s.server_token  # auto-generated, non-empty
 
 
@@ -705,7 +707,7 @@ def test_settings_as_dict_round_trips():
         "ota_timeout": 120,
         "worker_offline_threshold": 30,
         "device_poll_interval": 60,
-        "require_ha_auth": True,
+        "require_ha_auth": False,
         "time_format": "auto",
     }
 

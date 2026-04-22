@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.2
+
+A hardening release on top of 1.6.1.
+
+**Bug fixes.**
+
+- Add-on install no longer fails with `Image docker.io/library/docker:<version>-cli does not exist` when Docker Hub is rate-limiting or briefly unreachable. The add-on now ships as a prebuilt multi-architecture image on GitHub Container Registry, so fresh installs pull in seconds instead of building locally through the Docker-in-Docker builder image that was the source of the failure.
+- Direct-port access to the web UI works out of the box again on standalone Docker Compose installs. 1.6 defaulted "Require Home Assistant auth on direct port" to on, which made sense for add-on installs (the Home Assistant tunnel always works) but trapped standalone users at a bare-JSON 401 with no way forward. The default is off for fresh installs now; turn it on in Settings → Authentication if the direct port is reachable from an untrusted network.
+- When direct-port auth is on and a browser lands on `:8765` without a token, you now see a styled Authentication required page that explains both recovery paths (provide a token, or disable the flag via the Home Assistant tunnel), instead of a raw JSON error body.
+
+**Under the hood.**
+
+- Integration config-flow hardening: the Reconfigure and Reauth flows have gained end-to-end tests against a real Home Assistant fixture. The new tests caught a latent bug where a successful reconfigure would raise `TypeError: object dict can't be used in 'await' expression` on Home Assistant 2024.11+, now fixed.
+
 ## 1.6.1
 
 A bug-fix + polish release on top of 1.6.

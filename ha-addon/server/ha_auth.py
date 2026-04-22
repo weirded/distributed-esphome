@@ -33,10 +33,16 @@ arrives from the Supervisor peer IP (path 1).
      is valid; the response body carries the user metadata.
 
   4. **Neither.** Respond with 401 + ``WWW-Authenticate: Bearer
-     realm="ESPHome Fleet"``. Since AU.7 (1.5.0) the add-on option
-     ``require_ha_auth`` defaults to ``true``, so this path always
-     rejects. The option still exists as an escape hatch for test
-     harnesses and for a user who deliberately wants pre-1.4.1 behavior.
+     realm="ESPHome Fleet"``. Gated by the add-on option
+     ``require_ha_auth``. AU.7 (1.5.0) flipped the default to ``true``;
+     bug #83 (1.6.2) flipped it back to ``false`` because the true
+     default hard-broke the standalone ``docker-compose`` path where
+     there is no Supervisor to validate against. Ingress-wrapped
+     access is unaffected in both directions — path 1 short-circuits.
+     Users on untrusted networks opt in via the Settings drawer. When
+     the request is a browser (``Accept: text/html``) we serve a styled
+     HTML remediation page instead of the bare JSON, so the user can
+     actually see how to provide a token or disable the flag.
 
 The middleware attaches ``request["ha_user"]`` on any successful
 authentication — ``{"name": ..., "id": ..., "is_admin": ...}`` — or
@@ -64,6 +70,130 @@ logger = logging.getLogger(__name__)
 
 SUPERVISOR_URL = "http://supervisor"
 _WWW_AUTHENTICATE = 'Bearer realm="ESPHome Fleet"'
+
+
+def _prefers_html(accept: str) -> bool:
+    """True when the ``Accept`` header indicates a browser client.
+
+    Browsers send ``text/html,application/xhtml+xml,...`` as the top
+    preference; API clients (workers, the HA integration, curl with
+    explicit ``-H "Accept: application/json"``) send
+    ``application/json`` or omit the header / send ``*/*``. Treat the
+    first two as "wants HTML" and everything else (including empty and
+    ``*/*``) as "wants JSON" to keep the machine-readable 401 contract
+    that workers and the integration rely on.
+    """
+    if not accept:
+        return False
+    for part in accept.split(","):
+        media = part.split(";", 1)[0].strip().lower()
+        if media in ("text/html", "application/xhtml+xml"):
+            return True
+        if media == "application/json":
+            return False
+    return False
+
+
+_HTML_401_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESPHome Fleet — authentication required</title>
+  <style>
+    :root { color-scheme: dark light; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    main {
+      max-width: 640px;
+      width: 100%;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 2rem 2.25rem;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+    }
+    h1 { margin: 0 0 0.5rem; font-size: 1.5rem; letter-spacing: -0.01em; }
+    p { margin: 0.5rem 0 1rem; line-height: 1.55; color: #cbd5e1; }
+    h2 { margin: 1.5rem 0 0.5rem; font-size: 1rem; color: #f8fafc; }
+    code, kbd, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 0.1rem 0.35rem;
+      color: #e2e8f0;
+    }
+    pre { padding: 0.75rem 1rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    ol { padding-left: 1.25rem; margin: 0.5rem 0; }
+    li { margin: 0.4rem 0; line-height: 1.5; }
+    hr { border: 0; border-top: 1px solid #334155; margin: 1.5rem 0; }
+    .muted { color: #94a3b8; font-size: 0.9rem; }
+    @media (prefers-color-scheme: light) {
+      body { background: #f8fafc; color: #0f172a; }
+      main { background: #ffffff; border-color: #e2e8f0; }
+      p { color: #334155; }
+      h2 { color: #0f172a; }
+      code, kbd, pre { background: #f1f5f9; border-color: #cbd5e1; color: #0f172a; }
+      .muted { color: #64748b; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Authentication required</h1>
+  <p>
+    You&rsquo;re reaching ESPHome Fleet on its direct port
+    (<code>:8765</code>). This install has the <code>require_ha_auth</code>
+    setting turned on, so every request from outside Home Assistant&rsquo;s
+    Ingress proxy needs to carry a bearer token.
+  </p>
+  <p>You have two ways forward:</p>
+
+  <h2>1. Provide a token</h2>
+  <p>
+    Send your request with an <code>Authorization: Bearer &lt;token&gt;</code>
+    header. The token is the add-on&rsquo;s shared server token &mdash;
+    either the value of <code>server_token</code> in
+    <code>/data/settings.json</code> inside the add-on, or the value a
+    logged-in Home Assistant user&rsquo;s long-lived access token.
+  </p>
+  <pre>curl -H &quot;Authorization: Bearer &lt;your-token&gt;&quot; http://&lt;host&gt;:8765/ui/api/server-info</pre>
+
+  <h2>2. Turn off direct-port authentication</h2>
+  <p>
+    If this server is only reachable on a trusted LAN and you&rsquo;d
+    rather not deal with bearer tokens, open the web UI via Home
+    Assistant (Settings &rarr; Add-ons &rarr; ESPHome Fleet &rarr; Open Web UI,
+    which arrives through Ingress and is always allowed), open the
+    Settings drawer, and turn off <strong>Require HA authentication on
+    direct port</strong>.
+  </p>
+  <p class="muted">
+    Running the standalone <code>docker-compose</code> image without a
+    Supervisor? Set the <code>REQUIRE_HA_AUTH</code> environment
+    variable to <code>false</code> on the container, or edit
+    <code>/data/settings.json</code> in the volume to
+    <code>"require_ha_auth": false</code> and restart.
+  </p>
+
+  <hr>
+  <p class="muted">
+    HTTP 401 &middot; <code>WWW-Authenticate: Bearer realm=&quot;ESPHome Fleet&quot;</code>
+  </p>
+</main>
+</body>
+</html>
+"""
 
 
 def _is_protected_ui_path(path: str) -> bool:
@@ -226,13 +356,27 @@ async def ha_auth_middleware(request: web.Request, handler):
             "(peer_ip=%s, has_bearer=%s)",
             path, peer_ip or "<unknown>", bool(auth_header),
         )
+        # #83: browser clients get a styled remediation page with
+        # two paths forward (supply a token, or disable the flag via
+        # Ingress); machine clients (workers, the integration, curl
+        # with an explicit JSON Accept) keep the original JSON body.
+        if _prefers_html(request.headers.get("Accept", "")):
+            return web.Response(
+                body=_HTML_401_PAGE,
+                status=401,
+                content_type="text/html",
+                charset="utf-8",
+                headers={"WWW-Authenticate": _WWW_AUTHENTICATE},
+            )
         return web.json_response(
             {"error": "Unauthorized — valid HA Bearer token required"},
             status=401,
             headers={"WWW-Authenticate": _WWW_AUTHENTICATE},
         )
 
-    # Pre-1.4.1 compatibility: unauthenticated direct-port access is allowed
-    # when require_ha_auth is off. AU.7 flipped the default to on, so this
-    # branch only matters for test harnesses / deliberate opt-out.
+    # Default since bug #83 (1.6.2): unauthenticated direct-port access
+    # is allowed when require_ha_auth is off. AU.7 had flipped the
+    # default on; #83 flipped it back off to keep standalone docker
+    # installs reachable without a bearer token. Ingress paths never
+    # land here — path 1 short-circuits on the Supervisor peer IP.
     return await handler(request)

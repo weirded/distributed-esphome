@@ -1,0 +1,143 @@
+name: Publish Add-on Image
+
+# IM.1 (1.6.2, bug #82): publish the Home Assistant add-on image to GHCR
+# so Supervisor can pull it directly instead of running ``docker buildx
+# build`` against the ``docker:<HOST_DOCKER_VER>-cli`` builder image on
+# every install. That builder-image path was the root cause of #82:
+# fresh HAOS boxes occasionally fail with ``Image
+# docker.io/library/docker:29.3.1-cli does not exist`` when Docker Hub
+# is rate-limiting or briefly unreachable, leaving the user stuck.
+#
+# HA's add-on convention is per-arch single-arch images (NOT a single
+# multi-arch manifest list) — Supervisor substitutes ``{arch}`` from
+# ``config.yaml``'s ``image:`` at install time. Matrix build is what
+# every first-party HA add-on does. ``aarch64`` is Supervisor's label;
+# the Docker-native name is ``arm64`` (used for ``--platform``).
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "ha-addon/Dockerfile"
+      - "ha-addon/server/**"
+      - "ha-addon/client/**"
+      - "ha-addon/custom_integration/**"
+      - "ha-addon/VERSION"
+      - "ha-addon/requirements.txt"
+      - "ha-addon/requirements.lock"
+      - "ha-addon/config.yaml"
+      - "ha-addon/build.yaml"
+      - "ha-addon/apparmor.txt"
+      - ".github/workflows/publish-addon.yml"
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # E.10: cosign keyless signing via OIDC
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat ha-addon/VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image name
+        id: imgname
+        run: |
+          owner_lc="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=${owner_lc}/${{ matrix.arch }}-addon-esphome-dist-server" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.imgname.outputs.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=sha,prefix=
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ha-addon
+          file: ha-addon/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          # Supervisor's add-on build passes these two args; mirror that
+          # so our GHCR image behaves identically to a local build.
+          build-args: |
+            BUILD_ARCH=${{ matrix.arch }}
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=addon-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=addon-${{ matrix.arch }}
+
+      # E.10: cosign keyless signing via GitHub OIDC. Verify locally with
+      #   cosign verify ghcr.io/<owner>/<arch>-addon-esphome-dist-server:<ver> \
+      #     --certificate-identity-regexp="https://github.com/.*" \
+      #     --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Sign published images with cosign
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "${TAGS}" | xargs -I {} cosign sign --yes "{}@${DIGEST}"
+
+      # SC.2: CycloneDX SBOM attestation, matches publish-server.yml.
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ steps.imgname.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: ${{ matrix.arch }}-addon-esphome-dist-server-${{ steps.version.outputs.version }}.sbom.json
+          artifact-name: ${{ matrix.arch }}-addon-esphome-dist-server-${{ steps.version.outputs.version }}.sbom.json
+
+      - name: Attach SBOM as cosign attestation
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.imgname.outputs.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cosign attest --yes \
+            --predicate "${ARCH}-addon-esphome-dist-server-${VERSION}.sbom.json" \
+            --type cyclonedx \
+            "${IMAGE}@${DIGEST}"

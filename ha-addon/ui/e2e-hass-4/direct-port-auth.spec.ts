@@ -3,14 +3,21 @@ import { expect, request as pwRequest, test } from '@playwright/test';
 /**
  * #82 — direct-port auth covers the static UI shell, not just /ui/api/*.
  *
- * Before the fix, `require_ha_auth=true` (mandatory since AU.7 in 1.5.0)
- * gated JSON API calls with 401 but served the React SPA HTML and Vite
- * JS bundle to anyone on the LAN — an attacker could version-fingerprint
- * the add-on and enumerate the API surface without authenticating.
+ * Before the fix, `require_ha_auth=true` gated JSON API calls with 401
+ * but served the React SPA HTML and Vite JS bundle to anyone on the
+ * LAN — an attacker could version-fingerprint the add-on and enumerate
+ * the API surface without authenticating.
  *
- * This test asserts the fix: every protected UI path on the direct port
- * returns 401 without a Bearer token, and returns 200 when we send the
- * add-on's shared system token.
+ * #83 — the default for `require_ha_auth` flipped back to `false` in
+ * 1.6.2 (see WORKITEMS-1.6.2.md bug #83), so this test now enables the
+ * flag explicitly before the 401 assertions and restores the prior
+ * value afterwards. We also assert the content-negotiated 401: browser
+ * clients get a styled HTML remediation page, API clients keep JSON.
+ *
+ * This test asserts: every protected UI path on the direct port
+ * returns 401 without a Bearer token (JSON or HTML depending on
+ * Accept), and returns 200 when we send the add-on's shared system
+ * token.
  *
  * Uses its own `APIRequestContext` created **without** the auth header
  * so `playwright.config.ts`'s `extraHTTPHeaders` Bearer (attached for
@@ -29,13 +36,41 @@ test.describe('#82 direct-port auth covers the SPA shell', () => {
   // `extraHTTPHeaders` which carries a Bearer — that would mask the
   // very bug this test file exists to catch.
   let unauth: Awaited<ReturnType<typeof pwRequest.newContext>>;
+  // An auth'd context dedicated to toggling require_ha_auth for the
+  // duration of this spec so we don't depend on the persisted value.
+  let admin: Awaited<ReturnType<typeof pwRequest.newContext>>;
+  let prevRequireHaAuth: boolean | null = null;
+
   test.beforeAll(async () => {
     unauth = await pwRequest.newContext({
       baseURL: FLEET_URL,
       extraHTTPHeaders: {},
     });
+    if (ADDON_TOKEN) {
+      admin = await pwRequest.newContext({
+        baseURL: FLEET_URL,
+        extraHTTPHeaders: { Authorization: `Bearer ${ADDON_TOKEN}` },
+      });
+      const cur = await admin.get('/ui/api/settings');
+      expect(cur.ok(), `settings probe should 2xx (got ${cur.status()})`).toBe(true);
+      const body = (await cur.json()) as { require_ha_auth?: boolean };
+      prevRequireHaAuth = body.require_ha_auth ?? false;
+      if (!prevRequireHaAuth) {
+        const patch = await admin.patch('/ui/api/settings', {
+          data: { require_ha_auth: true },
+        });
+        expect(patch.ok(), `enable require_ha_auth should 2xx (got ${patch.status()})`).toBe(true);
+      }
+    }
   });
-  test.afterAll(async () => { await unauth.dispose(); });
+
+  test.afterAll(async () => {
+    if (admin && prevRequireHaAuth === false) {
+      await admin.patch('/ui/api/settings', { data: { require_ha_auth: false } });
+    }
+    if (admin) await admin.dispose();
+    await unauth.dispose();
+  });
 
   for (const path of PROTECTED_PATHS) {
     test(`${path} without auth returns 401`, async () => {
@@ -51,10 +86,30 @@ test.describe('#82 direct-port auth covers the SPA shell', () => {
     });
   }
 
-  test('/ without auth does NOT leak HTML content', async () => {
+  test('/ without auth does NOT leak SPA content', async () => {
+    // Default Accept (*/*) → JSON 401 body. Must not contain the
+    // SPA shell's root div nor any `<!doctype` from the SPA HTML.
+    // #83's HTML 401 page is only served when Accept prefers text/html.
     const resp = await unauth.get('/');
     const body = await resp.text();
     expect(body.toLowerCase()).not.toContain('<!doctype');
+    expect(body).not.toContain('id="root"');
+  });
+
+  test('/ with Accept: text/html renders the HTML 401 page', async () => {
+    // #83: a browser landing on :8765 directly sees a styled
+    // remediation page instead of a bare-JSON blob. Must not
+    // leak the real SPA shell (`id="root"`), must explain both
+    // recovery paths.
+    const resp = await unauth.get('/', {
+      headers: { Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+    });
+    expect(resp.status()).toBe(401);
+    expect(resp.headers()['content-type'] || '').toMatch(/^text\/html/);
+    const body = await resp.text();
+    expect(body.toLowerCase()).toContain('<!doctype html>');
+    expect(body).toContain('Authentication required');
+    expect(body).toContain('Authorization: Bearer');
     expect(body).not.toContain('id="root"');
   });
 

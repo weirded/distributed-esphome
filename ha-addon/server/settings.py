@@ -135,8 +135,20 @@ class AppSettings:
     # Seconds between ESPHome-device API polls (online / running version).
     device_poll_interval: int = 60
     # When true, direct-port access on :8765 (outside Ingress) requires
-    # a valid HA Bearer or the add-on's own server token.
-    require_ha_auth: bool = True
+    # a valid HA Bearer or the add-on's own server token. Default flipped
+    # from True → False for bug #83: mandating HA auth on the direct port
+    # made sense for Ingress-wrapped installs but hard-broke the standalone
+    # `docker-compose` path (no HA Supervisor → no way to validate, user
+    # hits a bare-JSON 401 at :8765 with no recovery). Ingress-wrapped
+    # access never consults this flag — path 1 (Supervisor peer trust) in
+    # ``ha_auth.py`` short-circuits first — so flipping the default only
+    # affects the direct port, which on trusted LANs is the pre-1.6 norm.
+    # Opt-in via the Settings drawer when running the add-on on an
+    # untrusted network. Existing installs that explicitly set ``true`` in
+    # ``/data/settings.json`` keep their value; the new default only
+    # applies to (a) fresh installs and (b) standalone Docker installs
+    # whose persisted settings file pre-dates the key.
+    require_ha_auth: bool = False
     # #82 / UX_REVIEW §3.10 — time-of-day presentation for Queue,
     # History, and log timestamps. ``'auto'`` defers to the browser's
     # resolved locale (``Intl.DateTimeFormat().resolvedOptions().hour12``);

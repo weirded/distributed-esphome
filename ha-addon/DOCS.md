@@ -6,6 +6,8 @@ A modern Home Assistant UI for ESPHome — works just as well for three devices 
 
 Start the add-on, then open the web UI via the **ESPHome Fleet** entry in the HA sidebar.
 
+From 1.6.2, installing this add-on pulls a prebuilt image from GitHub Container Registry instead of building locally on your Home Assistant host. Installs now finish in a few seconds instead of a few minutes, and no longer fail when Docker Hub is rate-limiting or briefly unreachable.
+
 ### First steps
 
 1. Your existing ESPHome configs in `/config/esphome/` are picked up automatically — you should see them on the **Devices** tab.
