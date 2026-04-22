@@ -110,10 +110,19 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry pre-dates AU.7 (no CONF_TOKEN), the add-on token was
         rotated, or the entry was copied from a different install. We
         keep the base URL but rewrite the token.
+
+        TR.6 (1.6.2): ``.get()`` + explicit abort instead of bracket-
+        access (which would ``KeyError``) + ``async_get_entry`` None
+        check (which would have fired the assert in
+        ``async_step_reauth_confirm``). Both paths abort cleanly with
+        ``reauth_unknown_entry`` instead of surfacing a raw
+        ``AssertionError`` to the user.
         """
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
+        entry_id = self.context.get("entry_id", "")
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return self.async_abort(reason="reauth_unknown_entry")
+        self._reauth_entry = entry
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -121,21 +130,23 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Capture a new token for an existing entry."""
         errors: dict[str, str] = {}
-        assert self._reauth_entry is not None
+        # Defensive: same abort shape as async_step_reauth — if a caller
+        # reached this step without going through the entry lookup above
+        # (direct re-entry via flow.async_configure on a torn-down flow),
+        # bail cleanly instead of raising AssertionError.
+        if self._reauth_entry is None:
+            return self.async_abort(reason="reauth_unknown_entry")
 
         if user_input is not None:
             token = (user_input.get(CONF_TOKEN) or "").strip()
             if not token:
                 errors[CONF_TOKEN] = "token_required"
             else:
-                self.hass.config_entries.async_update_entry(
+                return self.async_update_reload_and_abort(
                     self._reauth_entry,
                     data={**self._reauth_entry.data, CONF_TOKEN: token},
+                    reason="reauth_successful",
                 )
-                await self.hass.config_entries.async_reload(
-                    self._reauth_entry.entry_id
-                )
-                return self.async_abort(reason="reauth_successful")
 
         return self.async_show_form(
             step_id="reauth_confirm",
@@ -195,16 +206,15 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 elif not await _probe_server(self.hass, base_url):
                     errors["base"] = "cannot_connect"
                 else:
-                    # PR #80 review: the async_update_reload_and_abort
-                    # helper has been in HA since 2024.11, which is
-                    # the integration's declared minimum as of 1.6.1
-                    # (``config.yaml.homeassistant: "2024.11.0"``). No
-                    # fallback to `update_entry + reload + abort` —
-                    # that path was dead code because HA versions
-                    # without the helper also never dispatch to
-                    # ``async_step_reconfigure`` in the first place.
+                    # ``async_update_reload_and_abort`` is a @callback
+                    # synchronous helper in HA 2024.11+ (the add-on's
+                    # declared HA minimum) — returns a FlowResult
+                    # directly, not a coroutine. The earlier ``await``
+                    # would raise ``TypeError: object dict can't be used
+                    # in 'await' expression`` on every successful
+                    # reconfigure. HT.7 covers this path now.
                     update = {CONF_BASE_URL: base_url, CONF_TOKEN: token}
-                    return await self.async_update_reload_and_abort(
+                    return self.async_update_reload_and_abort(
                         self._reconfigure_entry,
                         data={**self._reconfigure_entry.data, **update},
                         reason="reconfigure_successful",

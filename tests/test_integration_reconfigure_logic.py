@@ -50,8 +50,13 @@ def _make_flow(existing_url: str = "http://old.local:8765", existing_token: str 
     # can inspect decisions without loading homeassistant.data_entry_flow.
     flow.async_abort = lambda *, reason: {"type": "abort", "reason": reason}
     flow.async_show_form = lambda **kw: {"type": "form", **kw}
-    # HA 2024.11+ helper — return a sentinel the test can inspect.
-    flow.async_update_reload_and_abort = AsyncMock(
+    # HA 2024.11+ helper — it's a @callback (sync) method returning a
+    # FlowResult dict, not a coroutine. TR.3.4 (1.6.2) fixed the prod
+    # ``await`` that matched the previously-async signature but would
+    # raise ``TypeError: object dict can't be used in 'await' expression``
+    # on the 2025.1 shape. Match the real signature here so the logic
+    # test doesn't silently re-introduce the bug.
+    flow.async_update_reload_and_abort = MagicMock(
         return_value={"type": "abort", "reason": "reconfigure_successful"},
     )
     return flow, entry, hass
@@ -109,7 +114,7 @@ async def test_reconfigure_commits_and_reloads_on_success() -> None:
     assert result["type"] == "abort"
     assert result["reason"] == "reconfigure_successful"
     # Helper was called with the merged data dict.
-    flow.async_update_reload_and_abort.assert_awaited_once()
+    flow.async_update_reload_and_abort.assert_called_once()
     _, kwargs = flow.async_update_reload_and_abort.call_args
     assert kwargs["data"][CONF_BASE_URL] == "http://new.local:8765"
     assert kwargs["data"][CONF_TOKEN] == "new-token"
