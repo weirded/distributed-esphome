@@ -147,6 +147,15 @@ def _clear_state_dir() -> None:
 # whose diff touches ha-addon/VERSION (which bump-dev.sh always does).
 EXPECTED_IMAGES = [IMG_ADDON, IMG_SERVER, IMG_CLIENT]
 
+# Map image short-name (last path segment) → publish workflow filename.
+# Used to render per-workflow GitHub Actions status in the --web UI.
+GH_REPO = f"{GHCR_OWNER}/distributed-esphome"
+WORKFLOW_BY_IMAGE = {
+    "amd64-addon-esphome-dist-server": "publish-addon.yml",
+    "esphome-dist-server": "publish-server.yml",
+    "esphome-dist-client": "publish-client.yml",
+}
+
 
 @dataclass
 class Target:
@@ -199,7 +208,10 @@ def make_targets(version: str) -> dict[str, Target]:
         ),
         "standalone-pve": Target(
             name="standalone-pve",
-            base_url="http://docker-pve:8765",
+            # IP, not the `docker-pve` SSH alias — the browser and
+            # Playwright's Node client don't read ~/.ssh/config. The
+            # SSH-side (STANDALONE_HOST below) still uses the alias.
+            base_url="http://192.168.227.90:8765",
             deploy_cmd=["bash", "scripts/standalone/deploy.sh"],
             deploy_env={"TAG": tag, "STANDALONE_HOST": "docker-pve"},
             token_cache=home / ".config" / "distributed-esphome" / "standalone-token",
@@ -322,36 +334,106 @@ async def _tag_exists(image: str, version: str) -> bool:
     return (await proc.wait()) == 0
 
 
-async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
-    """Poll GHCR until all three dev-tagged images are published (CI job
-    output). Returns True on full success, False on timeout.
+def _head_sha() -> str:
+    """HEAD commit on the current branch, used to look up the GitHub
+    Actions run that built this dev-tag. Empty string if git fails.
     """
+    try:
+        import subprocess as _sp
+        r = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except OSError:
+        return ""
+
+
+async def _workflow_run(workflow_file: str, head_sha: str) -> dict[str, Any]:
+    """Fetch the latest GitHub Actions run for ``workflow_file`` on
+    commit ``head_sha``. Returns {status, conclusion, url}. Falls back
+    to ``status='not_started'`` when no run matches, ``status='unknown'``
+    when `gh api` fails (not authed, offline, etc.) — either way the
+    matrix still proceeds on GHCR tag presence, so this is just for the
+    UI.
+    """
+    if not head_sha:
+        return {"status": "unknown", "conclusion": None, "url": None}
+    # Query string goes in the URL — `gh api -f key=val` sends a form
+    # body on GET, which the API ignores / rejects as a bad request.
+    path = (
+        f"/repos/{GH_REPO}/actions/workflows/{workflow_file}/runs"
+        f"?head_sha={head_sha}&per_page=1"
+    )
+    cmd = ["gh", "api", path, "--jq", ".workflow_runs[0] // empty"]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout_b, _ = await proc.communicate()
+    if proc.returncode != 0:
+        return {"status": "unknown", "conclusion": None, "url": None}
+    out = stdout_b.decode("utf-8", errors="replace").strip()
+    if not out:
+        return {"status": "not_started", "conclusion": None, "url": None}
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return {"status": "unknown", "conclusion": None, "url": None}
+    return {
+        "status": data.get("status") or "unknown",  # queued | in_progress | completed
+        "conclusion": data.get("conclusion"),        # success | failure | cancelled | None
+        "url": data.get("html_url"),
+    }
+
+
+async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
+    """Poll both the GitHub Actions publish workflows AND the GHCR
+    registry for the three dev-tagged images. Returns True once every
+    image is published on GHCR (the authoritative signal for downstream
+    deploys). Workflow status is collected for the --web UI; a workflow
+    failure short-circuits the wait so we don't sit out the full timeout.
+    """
+    head_sha = _head_sha()
     print(color(
         "build",
-        f"==> Waiting for CI to publish tag {version} on GHCR "
-        f"(timeout {timeout_s}s) ...",
+        f"==> Waiting for CI build (commit {head_sha[:7] or '?'}, tag {version}, "
+        f"timeout {timeout_s}s) ...",
     ), flush=True)
     start = time.monotonic()
     published: set[str] = set()
+    workflows: dict[str, dict[str, Any]] = {}
     last_progress = 0.0
+
+    short_names = [img.rsplit("/", 1)[-1] for img in EXPECTED_IMAGES]
 
     def snapshot(phase: str) -> None:
         _write_state(LOG_ROOT / "build-state.json", {
             "version": version,
             "phase": phase,  # waiting | ready | failed
+            "head_sha": head_sha[:7],
+            "repo": GH_REPO,
             "started_at": start,
             "elapsed": time.monotonic() - start,
             "images_total": len(EXPECTED_IMAGES),
             "images_published": sorted(i.rsplit("/", 1)[-1] for i in published),
+            "workflows": workflows,
         })
 
     snapshot("waiting")
     while True:
-        # Re-check each still-missing image each round.
-        checks = await asyncio.gather(*[
+        # Poll workflows and GHCR tags together each round.
+        wf_results = await asyncio.gather(*[
+            _workflow_run(WORKFLOW_BY_IMAGE[n], head_sha) for n in short_names
+        ])
+        for name, result in zip(short_names, wf_results):
+            workflows[name] = result
+
+        tag_checks = await asyncio.gather(*[
             _tag_exists(img, version) for img in EXPECTED_IMAGES if img not in published
         ])
-        for img, ok in zip([i for i in EXPECTED_IMAGES if i not in published], checks):
+        for img, ok in zip([i for i in EXPECTED_IMAGES if i not in published], tag_checks):
             if ok:
                 published.add(img)
                 short = img.rsplit("/", 1)[-1]
@@ -364,6 +446,19 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
         if len(published) == len(EXPECTED_IMAGES):
             snapshot("ready")
             return True
+
+        # Short-circuit on any workflow failure — image won't appear.
+        failed = [
+            n for n, w in workflows.items()
+            if w.get("status") == "completed" and w.get("conclusion") not in (None, "success")
+        ]
+        if failed:
+            print(color(
+                "build",
+                f"[ghcr          ] ✖ workflow(s) failed: {', '.join(failed)} — aborting wait",
+            ), flush=True)
+            snapshot("failed")
+            return False
 
         elapsed = time.monotonic() - start
         if elapsed >= timeout_s:
@@ -382,11 +477,22 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
             return False
 
         # Status line every 30s so the terminal doesn't look frozen.
+        # Include per-workflow status so the terminal mirrors what the
+        # --web UI shows.
         if elapsed - last_progress >= 30:
-            missing = [i.rsplit("/", 1)[-1] for i in EXPECTED_IMAGES if i not in published]
+            parts = []
+            for n in short_names:
+                if any(n in img for img in published):
+                    parts.append(f"{n}:✔")
+                else:
+                    w = workflows.get(n, {})
+                    status = w.get("status") or "pending"
+                    concl = w.get("conclusion")
+                    label = f"{status}" if not concl else f"{status}/{concl}"
+                    parts.append(f"{n}:{label}")
             print(color(
                 "build",
-                f"[ghcr          ] ⧗ still waiting on {', '.join(missing)} ({fmt_duration(elapsed)})",
+                f"[ghcr          ] ⧗ {'  '.join(parts)} ({fmt_duration(elapsed)})",
             ), flush=True)
             last_progress = elapsed
 
@@ -743,9 +849,39 @@ _HTML_PAGE = """<!DOCTYPE html>
           '<span class="dim">' + ((b.images_published || []).length) + '/' + (b.images_total || '?') + '</span>' +
           '<span class="dim">' + fmtDur(b.elapsed) + '</span>' +
           '</div>';
-        if ((b.images_published || []).length) {
-          buildHtml += '<div style="margin-top:8px;font-size:11px;color:#888;">' +
-            b.images_published.map(i => '&#x2714; ' + i).join(' &nbsp; ') + '</div>';
+        if (b.head_sha) {
+          buildHtml += '<div style="margin-top:6px;font-size:11px;color:#666;">commit ' + b.head_sha + '</div>';
+        }
+        // Per-workflow status table. The matrix polls the GitHub Actions
+        // API for each publish workflow keyed on HEAD SHA; displayed
+        // alongside the GHCR tag check so it's obvious when CI is
+        // running vs when it simply hasn't started.
+        const wf = b.workflows || {};
+        const wfRows = Object.keys(wf).map(name => {
+          const w = wf[name] || {};
+          const status = w.status || 'pending';
+          const concl = w.conclusion;
+          const pubbed = (b.images_published || []).includes(name);
+          // Derive a phase chip: published → done; otherwise map workflow states.
+          let chipPhase = 'pending';
+          if (pubbed || concl === 'success') chipPhase = 'done';
+          else if (concl && concl !== 'success') chipPhase = 'failed';
+          else if (status === 'in_progress') chipPhase = 'testing';
+          else if (status === 'queued') chipPhase = 'waiting';
+          else if (status === 'not_started') chipPhase = 'pending';
+          const label = concl ? status + ' / ' + concl : status;
+          const link = w.url ? ' <a href="' + w.url + '" target="_blank" style="font-size:11px;">run&#x2197;</a>' : '';
+          const pubMark = pubbed ? ' <span class="ok">&#x2714; on ghcr</span>' : '';
+          return '<tr>' +
+            '<td class="name" style="font-size:12px;">' + name + '</td>' +
+            '<td><span class="phase phase-' + chipPhase + '">' + label + '</span></td>' +
+            '<td style="font-size:11px; color:#888;">' + link + pubMark + '</td>' +
+          '</tr>';
+        }).join('');
+        if (wfRows) {
+          buildHtml += '<table style="margin-top:10px;font-size:12px;">' +
+            '<thead><tr><th>Image</th><th>Workflow</th><th></th></tr></thead>' +
+            '<tbody>' + wfRows + '</tbody></table>';
         }
       }
       document.getElementById('build-card').innerHTML = buildHtml;
