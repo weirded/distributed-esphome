@@ -206,8 +206,9 @@ Everything lives in `dev-plans/`:
 
 - `dev-plans/README.md` — index.
 - `dev-plans/WORKITEMS-X.Y.md` — one file per release. Feature work items (checkboxes) + bug fixes (numbered). **Bug numbers are global and monotonic across releases** — never reset.
-- `dev-plans/WORKITEMS-1.6.2.md` — current release (Honest HA Gold — closes TEST-AUDIT-1.6.1 blind spots, fixes the 5 PR #80 review-flagged paths that shipped broken, walks every remaining Bronze+Silver+Gold quality-scale rule to done/exempt so the claim is hassfest-backed; hardening-only, no new features).
-- `dev-plans/WORKITEMS-1.7.md` — next release (LLM assistance — multi-provider in-editor YAML assistant, fleet-wide tool-calling chat, release breaking-change analyzer).
+- `dev-plans/WORKITEMS-1.6.2.md` — current release (Install paths users can trust — closes #82 fresh-HAOS install, #83 standalone Docker auth, #84 `wifi.domain` OTA; adds install regression guards for both the HAOS and standalone-Docker paths; restates the Gold claim honestly via TP.1/TP.3-docs/TP.4; adds worker log visibility for the first-setup-operational-gap class).
+- `dev-plans/WORKITEMS-1.6.3.md` — next release (Honest Gold — the tier-flip that 1.6.2 pivoted away from: walks every remaining Bronze+Silver+Gold quality-scale rule to done/exempt so the claim is hassfest-backed, closes the TEST-AUDIT-1.6.1 blind spots, finishes the ESPHome-delegation audit, UX polish).
+- `dev-plans/WORKITEMS-1.7.md` — after-next release (LLM assistance — multi-provider in-editor YAML assistant, fleet-wide tool-calling chat, release breaking-change analyzer).
 - `dev-plans/WORKITEMS-future.md` — unscheduled items. Things we may do someday but haven't picked a release for yet.
 - `dev-plans/archive/` — released WORKITEMS files from prior versions. Historical reference; don't edit.
 - `dev-plans/SECURITY_AUDIT.md` — security audit findings.
