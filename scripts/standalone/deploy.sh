@@ -159,7 +159,17 @@ rsh "chmod 600 '$STANDALONE_COMPOSE_DIR/.env'"
 
 # -----------------------------------------------------------------------
 # 6. Now bring up the worker with the correct token.
+#    docker-compose.yml gives the worker a static container_name
+#    (esphome-fleet-worker). If a foreign container owns that name — e.g.
+#    from a previous run whose compose project was recreated, so compose
+#    no longer tracks it — `compose up` (even with --force-recreate)
+#    hits "container name already in use" and bails. Force-remove the
+#    conflicting name first; harmless if absent.
 # -----------------------------------------------------------------------
 echo ""
+echo "==> Removing any foreign esphome-fleet-worker container (if present)..."
+rsh "docker rm -f esphome-fleet-worker 2>/dev/null || true" >/dev/null
+
+echo ""
 echo "==> docker compose up -d worker ..."
-rsh "cd '$STANDALONE_COMPOSE_DIR' && docker compose up -d worker"
+rsh "cd '$STANDALONE_COMPOSE_DIR' && docker compose up -d --force-recreate worker"

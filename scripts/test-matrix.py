@@ -35,13 +35,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
+import http.server
 import json
 import os
+import re
 import shutil
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERSION_FILE = REPO_ROOT / "ha-addon" / "VERSION"
@@ -75,6 +80,66 @@ def color(name: str, text: str) -> str:
     if not sys.stdout.isatty():
         return text
     return f"{COLORS.get(name, '')}{text}{RESET}"
+
+
+# ---------------------------------------------------------------------------
+# Tee: every line the matrix prints to stdout also lands in an in-memory
+# ring buffer so the --web HTTP server can serve it back to a browser.
+# Wrapping sys.stdout once at startup (see main()) means there's no need
+# to route every `print()` through a helper.
+# ---------------------------------------------------------------------------
+
+_output_lines: collections.deque[str] = collections.deque(maxlen=5000)
+_output_lock = threading.Lock()
+
+
+class _TeeStdout:
+    def __init__(self, original: Any) -> None:
+        self._orig = original
+
+    def write(self, s: str) -> int:
+        n = self._orig.write(s)
+        if s:
+            with _output_lock:
+                # Append each full line. A trailing partial (no \n) is held
+                # under the assumption a later write completes it; keeping
+                # it simple — split on any newline and drop empty trailing.
+                for line in s.splitlines():
+                    _output_lines.append(line)
+        return n
+
+    def flush(self) -> None:
+        self._orig.flush()
+
+    def isatty(self) -> bool:
+        return self._orig.isatty()
+
+    def fileno(self) -> int:
+        return self._orig.fileno()
+
+
+# ---------------------------------------------------------------------------
+# Per-target state files. Each target's state.json is the single source
+# of truth the --web server reads to render the status table; the matrix
+# overwrites it at each phase transition.
+# ---------------------------------------------------------------------------
+
+def _write_state(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic enough for a reader that polls: write to tmp, rename.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.replace(path)
+
+
+def _clear_state_dir() -> None:
+    """Remove stale state files from a prior run so the web UI starts fresh."""
+    if not LOG_ROOT.exists():
+        return
+    (LOG_ROOT / "build-state.json").unlink(missing_ok=True)
+    for d in LOG_ROOT.iterdir():
+        if d.is_dir():
+            (d / "state.json").unlink(missing_ok=True)
 
 
 # Images the matrix waits for. All three are published by the CI
@@ -269,6 +334,18 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
     start = time.monotonic()
     published: set[str] = set()
     last_progress = 0.0
+
+    def snapshot(phase: str) -> None:
+        _write_state(LOG_ROOT / "build-state.json", {
+            "version": version,
+            "phase": phase,  # waiting | ready | failed
+            "started_at": start,
+            "elapsed": time.monotonic() - start,
+            "images_total": len(EXPECTED_IMAGES),
+            "images_published": sorted(i.rsplit("/", 1)[-1] for i in published),
+        })
+
+    snapshot("waiting")
     while True:
         # Re-check each still-missing image each round.
         checks = await asyncio.gather(*[
@@ -282,8 +359,10 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
                     "build",
                     f"[ghcr          ] ✔ {short}:{version} ({fmt_duration(time.monotonic() - start)})",
                 ), flush=True)
+        snapshot("waiting")
 
         if len(published) == len(EXPECTED_IMAGES):
+            snapshot("ready")
             return True
 
         elapsed = time.monotonic() - start
@@ -299,6 +378,7 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
                 "[ghcr          ]   hint: did you `git push` to develop? The publish-*.yml "
                 "workflows only fire on develop pushes that change ha-addon/VERSION.",
             ), flush=True)
+            snapshot("failed")
             return False
 
         # Status line every 30s so the terminal doesn't look frozen.
@@ -324,10 +404,28 @@ async def run_target_chain(target: Target, sem: asyncio.Semaphore | None) -> Tar
     result.report_dir = target_dir / "playwright-report"
     deploy_log = target_dir / "deploy.log"
     test_log = target_dir / "playwright.log"
+    state_file = target_dir / "state.json"
 
     target_start = time.monotonic()
 
+    def snapshot(**overrides: Any) -> None:
+        """Persist current target state for the --web UI."""
+        _write_state(state_file, {
+            "name": target.name,
+            "url": target.base_url,
+            "started_at": target_start,
+            "deploy_ok": result.deploy_ok,
+            "deploy_elapsed": result.deploy_elapsed or None,
+            "tests_passed": result.tests_passed,
+            "tests_total": result.tests_total,
+            "tests_ok": result.tests_ok,
+            "total_elapsed": time.monotonic() - target_start,
+            "error": result.error,
+            **overrides,
+        })
+
     # -- Deploy ------------------------------------------------------------
+    snapshot(phase="deploying")
     deploy_start = time.monotonic()
     code = await run_streaming(
         target.deploy_cmd,
@@ -340,8 +438,10 @@ async def run_target_chain(target: Target, sem: asyncio.Semaphore | None) -> Tar
     if code != 0:
         result.error = f"deploy exited {code} (see {deploy_log})"
         result.total_elapsed = time.monotonic() - target_start
+        snapshot(phase="deploy-failed")
         return result
     result.deploy_ok = True
+    snapshot(phase="testing")
 
     # -- Resolve the add-on token the deploy script just cached ------------
     token = ""
@@ -414,6 +514,7 @@ async def run_target_chain(target: Target, sem: asyncio.Semaphore | None) -> Tar
             result.error = f"playwright exited {code} with no results.json (see {test_log})"
 
     result.total_elapsed = time.monotonic() - target_start
+    snapshot(phase="done" if (result.deploy_ok and result.tests_ok) else "failed")
     return result
 
 
@@ -483,6 +584,242 @@ def print_summary(results: list[TargetResult], targets: dict[str, Target]) -> No
             print(f"  {r.target}: {r.error}")
 
     print()
+
+
+# ---------------------------------------------------------------------------
+# --web HTTP server: serves a live status page + JSON feed the page polls.
+# ---------------------------------------------------------------------------
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(s: str) -> str:
+    return _ANSI_RE.sub("", s)
+
+
+def _read_target_states() -> list[dict[str, Any]]:
+    if not LOG_ROOT.exists():
+        return []
+    states: list[dict[str, Any]] = []
+    for d in sorted(LOG_ROOT.iterdir()):
+        if not d.is_dir() or d.name == "build":
+            continue
+        sf = d / "state.json"
+        if not sf.exists():
+            continue
+        try:
+            states.append(json.loads(sf.read_text()))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return states
+
+
+def _read_build_state() -> dict[str, Any]:
+    sf = LOG_ROOT / "build-state.json"
+    if not sf.exists():
+        return {}
+    try:
+        return json.loads(sf.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+_HTML_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>test-matrix</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         margin: 0; background: #0f0f11; color: #e5e5e5; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font: 600 16px/1 inherit; margin: 0 0 6px; letter-spacing: 0.02em; }
+  .sub { color: #888; font-size: 12px; margin-bottom: 20px; }
+  .sub .v { color: #aaa; }
+  .sub .sep { color: #444; margin: 0 8px; }
+  .card { background: #18181b; border: 1px solid #27272a; border-radius: 6px;
+          padding: 14px 16px; margin-bottom: 16px; }
+  .card h2 { font: 600 11px/1 inherit; color: #888; text-transform: uppercase;
+             letter-spacing: 0.08em; margin: 0 0 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #27272a; }
+  tr:last-child td { border-bottom: 0; }
+  th { color: #888; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.name { font-weight: 500; color: #e5e5e5; }
+  td.url a { color: #60a5fa; text-decoration: none; }
+  td.url a:hover { text-decoration: underline; }
+  .phase { display: inline-block; padding: 2px 8px; border-radius: 10px;
+           font-size: 11px; letter-spacing: 0.02em; }
+  .phase-pending       { color: #a1a1aa; background: #27272a; }
+  .phase-deploying     { color: #fde68a; background: #3f2d00; }
+  .phase-testing       { color: #93c5fd; background: #1e3a5f; }
+  .phase-waiting       { color: #fde68a; background: #3f2d00; }
+  .phase-ready         { color: #86efac; background: #14532d; }
+  .phase-done          { color: #86efac; background: #14532d; }
+  .phase-failed        { color: #fca5a5; background: #5c1a1a; }
+  .phase-deploy-failed { color: #fca5a5; background: #5c1a1a; }
+  .ok   { color: #86efac; }
+  .fail { color: #fca5a5; }
+  .dim  { color: #666; }
+  .progress { height: 4px; background: #27272a; border-radius: 2px; overflow: hidden; }
+  .progress .fill { height: 100%; background: #60a5fa; transition: width 0.3s; }
+  pre#output { background: #050506; padding: 14px; border-radius: 6px; border: 1px solid #27272a;
+               max-height: 50vh; overflow: auto; white-space: pre-wrap; word-break: break-all;
+               font: 12px/1.45 "SF Mono", Menlo, Consolas, monospace; margin: 0; }
+  .disconnected { color: #fca5a5; margin-left: 6px; }
+  .disconnected.ok { color: #666; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>test-matrix</h1>
+  <div class="sub" id="sub">loading&hellip;</div>
+
+  <div class="card">
+    <h2>Build</h2>
+    <div id="build-card">—</div>
+  </div>
+
+  <div class="card">
+    <h2>Targets</h2>
+    <table>
+      <thead><tr><th>Target</th><th>Phase</th><th>Deploy</th><th>Tests</th><th>Elapsed</th><th>URL</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Output <span id="conn" class="disconnected ok">live</span></h2>
+    <pre id="output"></pre>
+  </div>
+</div>
+<script>
+  const fmtDur = (s) => {
+    if (s == null) return '';
+    if (s < 60) return Math.round(s) + 's';
+    const m = Math.floor(s / 60), r = Math.round(s - m * 60);
+    return m + 'm ' + String(r).padStart(2, '0') + 's';
+  };
+  const phaseLabel = (p) => p || 'pending';
+  const deployCell = (t) => {
+    if (t.deploy_ok === true)  return '<span class="ok">&#x2714; ' + fmtDur(t.deploy_elapsed) + '</span>';
+    if (t.deploy_ok === false) return '<span class="fail">&#x2716;</span>';
+    return '<span class="dim">&mdash;</span>';
+  };
+  const testsCell = (t) => {
+    if (t.tests_total != null && t.tests_total > 0) {
+      const cls = t.tests_ok === true ? 'ok' : (t.tests_ok === false ? 'fail' : '');
+      const mark = t.tests_ok === true ? '&#x2714;' : (t.tests_ok === false ? '&#x2716;' : '');
+      return '<span class="' + cls + '">' + mark + ' ' + t.tests_passed + '/' + t.tests_total + '</span>';
+    }
+    return '<span class="dim">&mdash;</span>';
+  };
+
+  async function tick() {
+    try {
+      const r = await fetch('/status.json', { cache: 'no-store' });
+      const s = await r.json();
+      document.getElementById('conn').classList.add('ok');
+      document.getElementById('conn').textContent = 'live';
+
+      const b = s.build || {};
+      const subParts = [];
+      if (b.version) subParts.push('<span class="v">' + b.version + '</span>');
+      subParts.push((s.targets || []).length + ' targets');
+      if (b.phase) subParts.push(b.phase);
+      document.getElementById('sub').innerHTML = subParts.join('<span class="sep">&middot;</span>');
+
+      let buildHtml;
+      if (!b.phase) {
+        buildHtml = '<span class="dim">pending&hellip;</span>';
+      } else {
+        const pct = b.images_total ? Math.round(100 * (b.images_published || []).length / b.images_total) : 0;
+        buildHtml =
+          '<div style="display:flex;align-items:center;gap:12px;">' +
+          '<span class="phase phase-' + b.phase + '">' + b.phase + '</span>' +
+          '<div style="flex:1;"><div class="progress"><div class="fill" style="width:' + pct + '%"></div></div></div>' +
+          '<span class="dim">' + ((b.images_published || []).length) + '/' + (b.images_total || '?') + '</span>' +
+          '<span class="dim">' + fmtDur(b.elapsed) + '</span>' +
+          '</div>';
+        if ((b.images_published || []).length) {
+          buildHtml += '<div style="margin-top:8px;font-size:11px;color:#888;">' +
+            b.images_published.map(i => '&#x2714; ' + i).join(' &nbsp; ') + '</div>';
+        }
+      }
+      document.getElementById('build-card').innerHTML = buildHtml;
+
+      const rows = (s.targets || []).map(t => {
+        const phase = phaseLabel(t.phase);
+        return '<tr>' +
+          '<td class="name">' + t.name + '</td>' +
+          '<td><span class="phase phase-' + phase + '">' + phase + '</span></td>' +
+          '<td>' + deployCell(t) + '</td>' +
+          '<td>' + testsCell(t) + '</td>' +
+          '<td>' + fmtDur(t.total_elapsed) + '</td>' +
+          '<td class="url">' + (t.url ? '<a href="' + t.url + '" target="_blank">' + t.url + '</a>' : '') + '</td>' +
+        '</tr>';
+      }).join('');
+      document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="dim">no targets yet</td></tr>';
+
+      const out = document.getElementById('output');
+      const pinned = out.scrollHeight - out.scrollTop - out.clientHeight < 60;
+      out.textContent = (s.output || []).join('\\n');
+      if (pinned) out.scrollTop = out.scrollHeight;
+    } catch (e) {
+      document.getElementById('conn').classList.remove('ok');
+      document.getElementById('conn').textContent = 'disconnected';
+    }
+  }
+  setInterval(tick, 1500);
+  tick();
+</script>
+</body>
+</html>
+"""
+
+
+class _StatusHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 (http.server convention)
+        if self.path == "/" or self.path == "/index.html":
+            body = _HTML_PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/status.json":
+            with _output_lock:
+                lines = [_strip_ansi(line) for line in _output_lines]
+            payload = {
+                "build": _read_build_state(),
+                "targets": _read_target_states(),
+                "output": lines,
+            }
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_error(404)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        # Suppress default BaseHTTPRequestHandler access logging; the matrix
+        # already has plenty of output.
+        return
+
+
+def start_web_server(port: int) -> None:
+    """Start the status server on a background daemon thread."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), _StatusHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    print(color("build", f"==> Web UI: http://localhost:{port}/"), flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -575,15 +912,47 @@ def main() -> int:
         action="store_true",
         help="List available targets and exit.",
     )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Launch a local HTTP server that streams live progress to "
+             "a browser (see --web-port). Server stays up after the run "
+             "finishes so the final state remains viewable until Ctrl-C.",
+    )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=8099,
+        help="Port for --web (default 8099).",
+    )
     args = parser.parse_args()
 
     preflight(skip_wait=args.no_wait or args.list)
 
+    # Tee stdout into the ring buffer so the --web server can replay it.
+    # Safe to do unconditionally — cost is one deque append per line.
+    sys.stdout = _TeeStdout(sys.stdout)  # type: ignore[assignment]
+
+    if args.web and not args.list:
+        LOG_ROOT.mkdir(parents=True, exist_ok=True)
+        _clear_state_dir()
+        start_web_server(args.web_port)
+
     try:
-        return asyncio.run(run(args))
+        rc = asyncio.run(run(args))
     except KeyboardInterrupt:
         sys.stderr.write("\nInterrupted.\n")
         return 130
+
+    if args.web and not args.list:
+        print(color("build", f"==> Web UI still at http://localhost:{args.web_port}/  (Ctrl-C to exit)"), flush=True)
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+
+    return rc
 
 
 if __name__ == "__main__":
