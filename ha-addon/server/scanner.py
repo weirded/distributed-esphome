@@ -302,6 +302,73 @@ def scan_configs(config_dir: str) -> list[str]:
     return results
 
 
+# Subprocess-executed inside the ESPHome venv by create_bundle(). Runs
+# validate_config + ConfigBundleCreator in a FRESH Python process and
+# writes the tar.gz to stdout. Fresh-process isolation is required
+# because:
+#   1. External components (remote_package:, dashboard_import:, etc.)
+#      register module-level validators in their imported modules;
+#      once a target's external component has run in-process, its
+#      module is in sys.modules and its globals persist across
+#      subsequent CORE.reset() calls.
+#   2. The ratgdo package (and others) register "only-one" invariants
+#      per device_class. A second validation of the same target in the
+#      same process sees the first validation's registrations as
+#      duplicates — reproduced on hass-4's garage-door-big.yaml even
+#      with CORE.reset() + _validator_lock.
+#   3. Even process-global caches outside CORE (e.g. an external
+#      module's entity registry) survive CORE.reset() and cannot be
+#      safely reset without patching ESPHome internals.
+# ESPHome's own `esphome compile <yaml>` CLI runs one target per
+# process so never hits this; we mimic the fresh-process contract
+# explicitly. Overhead ~1-2 seconds per bundle on a 67-target fleet
+# is fine — bundle creation is on the job-claim path, not hot.
+_BUNDLE_SUBPROCESS_SCRIPT = r"""
+import sys
+from pathlib import Path
+from esphome.core import CORE
+from esphome.yaml_util import load_yaml
+from esphome.config import validate_config
+from esphome.bundle import ConfigBundleCreator
+
+target_path = Path(sys.argv[1]).resolve()
+CORE.config_path = target_path
+config = load_yaml(target_path)
+if not isinstance(config, dict):
+    sys.stderr.write(f"YAML root of {target_path.name} is not a mapping\n")
+    sys.exit(2)
+result = validate_config(config, None, skip_external_update=True)
+if result.errors:
+    first = result.errors[0]
+    msg = getattr(first, "msg", None) or str(first)
+    sys.stderr.write(
+        f"validation errors ({len(result.errors)} total): {msg}\n"
+    )
+    sys.exit(3)
+bundle = ConfigBundleCreator(result).create_bundle()
+sys.stdout.buffer.write(bundle.data)
+"""
+
+
+def _venv_python() -> str:
+    """Return the path to the ESPHome venv's python binary.
+
+    The venv is activated by ``ensure_esphome_installed`` at first
+    boot and stored as ``_server_esphome_bin`` (path to the
+    ``esphome`` script). The ``python`` binary sits next to it.
+
+    Falls back to ``sys.executable`` for test + dev environments where
+    the venv isn't managed by ``ensure_esphome_installed`` (local
+    pytest run, CI). The fallback only works because those
+    environments have ESPHome installed in the same Python they're
+    using for the server — tests exercise the same ``esphome.*``
+    imports.
+    """
+    if _server_esphome_bin is not None:
+        return str(Path(_server_esphome_bin).parent / "python")
+    return sys.executable
+
+
 def create_bundle(config_dir: str, target: str) -> bytes:
     """Create a self-contained bundle for *target* under *config_dir*.
 
@@ -320,50 +387,46 @@ def create_bundle(config_dir: str, target: str) -> bytes:
     Wi-Fi PSK, API noise keys, the fleet's git remote URL, and any
     in-place ``esphome compile`` PlatformIO cache. Cleaned up here.
 
-    Runs under the full ESPHome validator (same ``_full_validate_config``
-    used by ``_resolve_esphome_config`` for #84). Validation failures
-    are surfaced as exceptions so the caller can fail the job cleanly
-    — this is an intentional behavior change: targets that don't
+    Validation + bundling runs in a **fresh subprocess** via the
+    ESPHome venv's python (``_BUNDLE_SUBPROCESS_SCRIPT``). In-process
+    validate_config is not safe to call repeatedly: external components
+    (e.g. ratgdo dashboard_import) register module-level validators
+    whose state persists across ``CORE.reset()``, causing phantom
+    "Only one binary sensor of type 'motion' is allowed" errors on
+    targets that pass ``esphome compile`` standalone. Fresh-process
+    isolation mirrors what the ESPHome CLI gets for free.
+
+    Validation failures are surfaced as ``RuntimeError`` so the caller
+    can fail the job cleanly — intentional: targets that don't
     validate under the server's ESPHome version can't be dispatched
     until the YAML is fixed. Far better than silently shipping the
     full config directory.
 
-    The whole validate + bundle sequence runs under ``_validator_lock``
-    because ``ConfigBundleCreator`` reads ``CORE.config_dir`` /
-    ``CORE.config_path`` and re-parses YAML to discover includes —
-    all of which would race with a concurrent validation on another
-    executor thread. Validating inside the lock and bundling inside
-    the same acquisition is the only way to guarantee the bundler
-    sees the CORE state the validator just set.
-
     Returns raw bytes (caller base64-encodes if needed).
     """
-    from esphome.bundle import ConfigBundleCreator  # noqa: PLC0415
-    from esphome.core import CORE  # noqa: PLC0415
-    from esphome.yaml_util import load_yaml  # noqa: PLC0415
-    from esphome.config import validate_config  # noqa: PLC0415
-
     path = Path(config_dir) / target
-    with _validator_lock:
-        CORE.reset()
-        CORE.config_path = path
-        config = load_yaml(path)
-        if not isinstance(config, dict):
-            raise ValueError(f"YAML root of {path.name} is not a mapping")
-        validated = validate_config(config, None, skip_external_update=True)
-        if validated.errors:
-            first = validated.errors[0]
-            msg = getattr(first, "msg", None) or str(first)
-            raise RuntimeError(
-                f"validation errors ({len(validated.errors)} total): {msg}"
-            )
-        result = ConfigBundleCreator(validated).create_bundle()
-    logger.info(
-        "Bundle for %s: %d files, %d bytes (has_secrets=%s)",
-        target, len(result.files), len(result.data),
-        result.manifest.get("has_secrets"),
+    if not path.is_file():
+        raise FileNotFoundError(f"Target not found: {path}")
+
+    proc = subprocess.run(
+        [_venv_python(), "-c", _BUNDLE_SUBPROCESS_SCRIPT, str(path)],
+        capture_output=True,
+        check=False,
+        timeout=120,  # validation+bundle is fast; 2 min is paranoid
     )
-    return result.data
+    if proc.returncode == 3:
+        raise RuntimeError(proc.stderr.decode("utf-8", errors="replace").strip())
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"bundle subprocess exited {proc.returncode}: "
+            f"{proc.stderr.decode('utf-8', errors='replace').strip()}"
+        )
+    data = proc.stdout
+    logger.info(
+        "Bundle for %s: %d bytes (subprocess-isolated validation)",
+        target, len(data),
+    )
+    return data
 
 
 # Cache resolved configs by (target, mtime) to avoid repeated git clones
