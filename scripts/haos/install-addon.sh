@@ -166,10 +166,30 @@ trap 'rm -f "$TARBALL"' EXIT
 # COPYFILE_DISABLE=1 is the documented way to suppress that on bsdtar / macOS tar.
 # The ui/ subdir is the frontend source — not shipped in the built add-on;
 # the compiled output lives under server/static/ and is included.
+#
+# INSTALL_MODE=ghcr: also skip everything that lives inside the runtime
+# container image (server/client source, custom_integration, Dockerfiles,
+# requirements). Supervisor only reads config.yaml + apparmor.txt +
+# translations + icons/docs from the on-disk add-on directory; the image
+# is pulled from GHCR. Default (local) mode keeps the full tarball so
+# Supervisor can local-build.
+GHCR_EXCLUDES=()
+if [[ "$INSTALL_MODE" == "ghcr" ]]; then
+  GHCR_EXCLUDES=(
+    --exclude="server"
+    --exclude="client"
+    --exclude="custom_integration"
+    --exclude="Dockerfile"
+    --exclude="Dockerfile.*"
+    --exclude="requirements.txt"
+    --exclude="requirements.lock"
+  )
+fi
 COPYFILE_DISABLE=1 tar cf "$TARBALL" -C "$ADDON_DIR" \
   --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" \
   --exclude=".ruff_cache" --exclude="._*" --exclude=".DS_Store" \
   --exclude="ui" \
+  "${GHCR_EXCLUDES[@]}" \
   .
 log "Tarball size: $(du -h "$TARBALL" | awk '{print $1}')"
 
@@ -250,6 +270,13 @@ elif [[ "$INSTALLED_VERSION" != "$LATEST_VERSION" ]]; then
   # use `apps update` to pick up the new version + build.
   log "Updating $FULL_SLUG ($INSTALLED_VERSION → $LATEST_VERSION)"
   HA_CLI_TIMEOUT=1200 ha_cli "apps update $FULL_SLUG" >/dev/null
+elif [[ "$INSTALL_MODE" == "ghcr" ]]; then
+  # Supervisor refuses `apps rebuild` on image-based add-ons ("Can't
+  # rebuild an image-based app"). In GHCR mode the runtime container
+  # IS authoritative — if version already matches, the right image is
+  # already installed. No-op here; the unconditional `apps restart`
+  # below picks up any container-layer changes (re-tagged images).
+  log "Already at $INSTALLED_VERSION (GHCR image-based) — skipping rebuild"
 else
   log "Rebuilding $FULL_SLUG (was at $INSTALLED_VERSION, same version — code-only change)"
   HA_CLI_TIMEOUT=1200 ha_cli "apps rebuild $FULL_SLUG" >/dev/null

@@ -160,13 +160,21 @@ WORKFLOW_BY_IMAGE = {
 @dataclass
 class Target:
     name: str
+    # Direct add-on port, with Bearer auth. Used by Playwright as
+    # FLEET_URL and by the matrix for version-ready probes.
     base_url: str
     # Command to deploy (with --skip-smoke appended). Run from REPO_ROOT.
     deploy_cmd: list[str]
+    # Browser-friendly URL for the user to click from the --web dashboard
+    # and the terminal summary. For HA add-on targets this is the Ingress
+    # URL (port 8123 + /<addon-slug>) so the HA session auto-authenticates
+    # — the direct 8765 URL would hit a 401. Defaults to base_url if
+    # unset (standalone-pve has no Ingress, so the direct port works).
+    open_url: str = ""
     deploy_env: dict[str, str] = field(default_factory=dict)
     # Path the deploy script writes the add-on token to on success. Read
     # after deploy completes and passed to Playwright as FLEET_TOKEN.
-    token_cache: Path = Path()
+    token_cache: Path = field(default_factory=Path)
     # Extra env to pass to Playwright (FLEET_TARGET, HASS_URL/HASS_TOKEN
     # for ha-services.spec.ts, etc.).
     playwright_env: dict[str, str] = field(default_factory=dict)
@@ -174,15 +182,25 @@ class Target:
     # ["--grep-invert=@requires-ha"].
     playwright_args: list[str] = field(default_factory=list)
 
+    def get_open_url(self) -> str:
+        return self.open_url or self.base_url
+
 
 def make_targets(version: str) -> dict[str, Target]:
     home = Path.home()
     tag = version  # 1:1 with VERSION; no separate --from-ghcr TAG argument
 
+    # HA add-on slug — Ingress URL is http://<ha-host>:8123/<slug>
+    addon_slug = "local_esphome_dist_server"
+
     return {
         "hass-4": Target(
             name="hass-4",
             base_url="http://192.168.225.112:8765",
+            # Use the HA Ingress URL so the click auto-authenticates via
+            # the HA session. The direct :8765 returns 401 under
+            # require_ha_auth=true.
+            open_url=f"http://hass-4.local:8123/{addon_slug}",
             deploy_cmd=["./push-to-hass-4.sh", "--from-ghcr", "--skip-smoke"],
             token_cache=home / ".config" / "distributed-esphome" / "hass4-token",
             playwright_env={
@@ -194,6 +212,7 @@ def make_targets(version: str) -> dict[str, Target]:
         "haos-pve": Target(
             name="haos-pve",
             base_url="http://192.168.226.135:8765",
+            open_url=f"http://192.168.226.135:8123/{addon_slug}",
             deploy_cmd=["./push-to-haos.sh", "--from-ghcr", "--skip-smoke"],
             deploy_env={"HAOS_URL": "http://192.168.226.135:8123"},
             token_cache=home / ".config" / "distributed-esphome" / "haos-addon-token",
@@ -212,6 +231,9 @@ def make_targets(version: str) -> dict[str, Target]:
             # Playwright's Node client don't read ~/.ssh/config. The
             # SSH-side (STANDALONE_HOST below) still uses the alias.
             base_url="http://192.168.227.90:8765",
+            # Standalone has no HA Ingress, so the direct port IS the
+            # open URL. Also: standalone defaults to require_ha_auth=false,
+            # so clicking it loads the UI without a Bearer prompt.
             deploy_cmd=["bash", "scripts/standalone/deploy.sh"],
             deploy_env={"TAG": tag, "STANDALONE_HOST": "docker-pve"},
             token_cache=home / ".config" / "distributed-esphome" / "standalone-token",
@@ -518,7 +540,7 @@ async def run_target_chain(target: Target, sem: asyncio.Semaphore | None) -> Tar
         """Persist current target state for the --web UI."""
         _write_state(state_file, {
             "name": target.name,
-            "url": target.base_url,
+            "url": target.get_open_url(),
             "started_at": target_start,
             "deploy_ok": result.deploy_ok,
             "deploy_elapsed": result.deploy_elapsed or None,
@@ -676,7 +698,7 @@ def print_summary(results: list[TargetResult], targets: dict[str, Target]) -> No
     print()
     print("Open:")
     for r in results:
-        url = targets[r.target].base_url
+        url = targets[r.target].get_open_url()
         status = "✔" if (r.deploy_ok and r.tests_ok) else "✖"
         print(f"  {status} {r.target:<14}  {url}")
 
@@ -774,6 +796,15 @@ _HTML_PAGE = """<!DOCTYPE html>
   pre#output { background: #050506; padding: 14px; border-radius: 6px; border: 1px solid #27272a;
                max-height: 50vh; overflow: auto; white-space: pre-wrap; word-break: break-all;
                font: 12px/1.45 "SF Mono", Menlo, Consolas, monospace; margin: 0; }
+  .tabs { display: flex; gap: 2px; margin-bottom: 10px; border-bottom: 1px solid #27272a; }
+  .tab { background: transparent; border: none; color: #888; padding: 7px 14px;
+         font: 500 12px/1 inherit; letter-spacing: 0.02em; cursor: pointer;
+         border-bottom: 2px solid transparent; margin-bottom: -1px; border-radius: 4px 4px 0 0; }
+  .tab:hover { color: #e5e5e5; background: #1a1a1e; }
+  .tab.active { color: #e5e5e5; border-bottom-color: #60a5fa; background: #1a1a1e; }
+  .tab .badge { display: inline-block; margin-left: 6px; font-size: 10px;
+                color: #666; font-weight: 400; }
+  .tab.active .badge { color: #aaa; }
   .disconnected { color: #fca5a5; margin-left: 6px; }
   .disconnected.ok { color: #666; }
 </style>
@@ -798,6 +829,7 @@ _HTML_PAGE = """<!DOCTYPE html>
 
   <div class="card">
     <h2>Output <span id="conn" class="disconnected ok">live</span></h2>
+    <div class="tabs" id="tabs"></div>
     <pre id="output"></pre>
   </div>
 </div>
@@ -808,6 +840,56 @@ _HTML_PAGE = """<!DOCTYPE html>
     const m = Math.floor(s / 60), r = Math.round(s - m * 60);
     return m + 'm ' + String(r).padStart(2, '0') + 's';
   };
+
+  // Output pane tab filtering. Lines in the buffer are prefixed by
+  // `[<prefix>...]` — the matrix pads prefixes to 14 chars. We match by
+  // the prefix substring so any dup padding/unpadding still works.
+  let currentTab = 'all';
+  let lastTargets = [];
+  const MATRIX_PREFIXES = { build: ['build', 'ghcr'] };
+
+  function renderTabs(targets) {
+    const names = targets.map(t => t.name);
+    // Only re-render when the set changed — avoids losing hover state.
+    if (JSON.stringify(names) === JSON.stringify(lastTargets)) return;
+    lastTargets = names;
+    const tabs = [
+      { id: 'all',   label: 'All' },
+      { id: 'build', label: 'Build' },
+      ...names.map(n => ({ id: n, label: n })),
+    ];
+    const el = document.getElementById('tabs');
+    el.innerHTML = tabs.map(t =>
+      '<button class="tab' + (currentTab === t.id ? ' active' : '') +
+      '" data-tab="' + t.id + '">' + t.label + '</button>'
+    ).join('');
+    el.querySelectorAll('.tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentTab = btn.dataset.tab;
+        el.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
+        renderOutput(window.__lastLines || []);
+      });
+    });
+  }
+
+  function lineMatchesTab(line, tab) {
+    if (tab === 'all') return true;
+    // Anchor on the "[prefix" chunk at the start of the line.
+    const m = line.match(/^\[([^\s\]]+)/);
+    if (!m) return false;
+    const prefix = m[1];
+    if (tab === 'build') return MATRIX_PREFIXES.build.includes(prefix);
+    return prefix === tab;
+  }
+
+  function renderOutput(lines) {
+    window.__lastLines = lines;
+    const filtered = lines.filter(l => lineMatchesTab(l, currentTab));
+    const out = document.getElementById('output');
+    const pinned = out.scrollHeight - out.scrollTop - out.clientHeight < 60;
+    out.textContent = filtered.join('\\n');
+    if (pinned) out.scrollTop = out.scrollHeight;
+  }
   const phaseLabel = (p) => p || 'pending';
   const deployCell = (t) => {
     if (t.deploy_ok === true)  return '<span class="ok">&#x2714; ' + fmtDur(t.deploy_elapsed) + '</span>';
@@ -899,10 +981,8 @@ _HTML_PAGE = """<!DOCTYPE html>
       }).join('');
       document.getElementById('rows').innerHTML = rows || '<tr><td colspan="6" class="dim">no targets yet</td></tr>';
 
-      const out = document.getElementById('output');
-      const pinned = out.scrollHeight - out.scrollTop - out.clientHeight < 60;
-      out.textContent = (s.output || []).join('\\n');
-      if (pinned) out.scrollTop = out.scrollHeight;
+      renderTabs(s.targets || []);
+      renderOutput(s.output || []);
     } catch (e) {
       document.getElementById('conn').classList.remove('ok');
       document.getElementById('conn').textContent = 'disconnected';
@@ -969,7 +1049,7 @@ async def run(args: argparse.Namespace) -> int:
     if args.list:
         print("Available targets:")
         for name, t in all_targets.items():
-            print(f"  {name:<16} {t.base_url}")
+            print(f"  {name:<16} {t.get_open_url()}")
         return 0
 
     if args.targets:
@@ -986,6 +1066,18 @@ async def run(args: argparse.Namespace) -> int:
 
     print(color("build", f"==> test-matrix.py v{version}  targets: {', '.join(names)}"), flush=True)
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # Pre-populate per-target state.json as "pending" so the --web UI
+    # shows all target rows up front while the build wait is in flight,
+    # instead of an empty targets table until the first deploy starts.
+    for name, target in selected.items():
+        target_dir = LOG_ROOT / name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        _write_state(target_dir / "state.json", {
+            "name": name,
+            "url": target.get_open_url(),
+            "phase": "pending",
+        })
 
     # -- Wait for CI-published images ----------------------------------
     if not args.no_wait:
