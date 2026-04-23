@@ -32,6 +32,7 @@ from protocol import (
     ProtocolError,
     RegisterRequest,
     RegisterResponse,
+    WorkerLogAppend,
 )
 from scanner import create_bundle, get_esphome_version
 
@@ -183,6 +184,15 @@ async def _heartbeat_handler(request: web.Request) -> web.Response:
     if worker and worker.pending_clean:
         resp.clean_build_cache = True
         worker.pending_clean = False
+
+    # WL.2: tell the worker to start (or stop) streaming logs based on
+    # whether any UI is currently watching. Explicit True/False — never
+    # leave it as None once the feature is live because the worker uses
+    # the explicit False to tear its pusher thread down.
+    broker = request.app.get("worker_log_broker")
+    if broker is not None:
+        resp.stream_logs = broker.is_watched(msg.client_id)
+
     return web.json_response(resp.model_dump(exclude_none=True))
 
 
@@ -675,6 +685,43 @@ async def append_job_log(request: web.Request) -> web.Response:
         except Exception:
             subscribers[job_id].discard(sub_ws)
 
+    return web.json_response(OkResponse().model_dump())
+
+
+@routes.post("/api/v1/workers/{id}/logs")
+async def append_worker_log(request: web.Request) -> web.Response:
+    """WL.2: receive a worker-log push while ``stream_logs`` is on.
+
+    Body-size cap + shape mirror the job-log path (``/api/v1/jobs/{id}/log``)
+    so the two log streams look identical on the wire. The heartbeat
+    handler is what flips ``stream_logs``; this endpoint just trusts
+    the flag and buffers what arrives.
+    """
+    client_id = request.match_info["id"]
+
+    from job_queue import MAX_LOG_BYTES  # noqa: PLC0415
+    max_body = MAX_LOG_BYTES * 4
+    content_length = request.content_length
+    if content_length is not None and content_length > max_body:
+        return _protocol_error(
+            "log_payload_too_large",
+            f"body {content_length} bytes exceeds cap {max_body}",
+            status=413,
+        )
+
+    msg, err = await _parse_body(request, WorkerLogAppend)
+    if err is not None:
+        return err
+    assert msg is not None
+
+    broker = request.app.get("worker_log_broker")
+    if broker is None:
+        # Shouldn't happen in production (main.py instantiates it in
+        # app startup), but guard so tests that wire only the registry
+        # don't crash with a vaguer error.
+        return _protocol_error("worker_log_broker_unavailable", status=500)
+
+    await broker.append_async(client_id, msg.offset, msg.lines)
     return web.json_response(OkResponse().model_dump())
 
 

@@ -1237,6 +1237,53 @@ async def ws_events(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+@routes.get("/ui/api/workers/{id}/logs")
+async def get_worker_logs_snapshot(request: web.Request) -> web.Response:
+    """WL.3 hydration: plain-text dump of whatever the broker has buffered.
+
+    Called once by the UI when the dialog opens. The WS path is what
+    delivers live lines after the initial snapshot.
+    """
+    client_id = request.match_info["id"]
+    broker = request.app.get("worker_log_broker")
+    body = broker.snapshot(client_id) if broker else ""
+    return web.Response(
+        body=body.encode("utf-8"),
+        content_type="text/plain",
+        charset="utf-8",
+    )
+
+
+@routes.get("/ui/api/workers/{id}/logs/ws")
+async def ws_worker_logs(request: web.Request) -> web.WebSocketResponse:
+    """WL.3 live tail: open WS == 'user is watching this worker'.
+
+    The subscriber count maintained by the broker is exactly what drives
+    ``stream_logs`` in the heartbeat response. Closing this WS decrements
+    the count, which flips the worker's pusher off within one heartbeat.
+    """
+    client_id = request.match_info["id"]
+    broker = request.app.get("worker_log_broker")
+
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    if broker is None:
+        await ws.close()
+        return ws
+
+    broker.subscribe(client_id, ws)
+    try:
+        async for msg in ws:
+            if msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
+                break
+            # Browser keep-alive pings are otherwise ignored.
+    finally:
+        broker.unsubscribe(client_id, ws)
+
+    return ws
+
+
 @routes.get("/ui/api/jobs/{id}/log/ws")
 async def ws_browser_log(request: web.Request) -> web.WebSocketResponse:
     """WebSocket endpoint for browser live log tailing."""

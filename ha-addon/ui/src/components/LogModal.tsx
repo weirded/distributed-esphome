@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { buildWsUrl, getJobLog } from '../api/client';
+import { buildWsUrl, getJobLog, getWorkerLogSnapshot } from '../api/client';
 import { useVersioningEnabled } from '../hooks/useVersioning';
 import { copyTerminalText, downloadTerminalText } from '../utils/terminal';
 import type { Job, Worker } from '../types';
@@ -15,8 +15,19 @@ import {
 } from './ui/dialog';
 import { Button } from './ui/button';
 
+/**
+ * WL.3: the log viewer is shared between compile-job logs (the original
+ * use case) and worker-side logs (pull-when-watched). The caller picks
+ * the source via a tagged union; URL builder and download filename key
+ * off `source.kind`. Job-specific chrome (Retry/Rerun, Edit, Diff since
+ * compile) only renders when `kind === 'job'`.
+ */
+export type LogSource =
+  | { kind: 'job'; jobId: string }
+  | { kind: 'worker'; workerId: string };
+
 interface Props {
-  jobId: string | null;
+  source: LogSource | null;
   queue: Job[];
   workers: Worker[];
   onClose: () => void;
@@ -32,8 +43,10 @@ interface Props {
   stacked?: boolean;
 }
 
-export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOpenHistoryDiff, stacked }: Props) {
-  const isOpen = jobId !== null;
+export function LogModal({ source, queue, workers, onClose, onRetry, onEdit, onOpenHistoryDiff, stacked }: Props) {
+  const isOpen = source !== null;
+  const isJob = source?.kind === 'job';
+  const isWorker = source?.kind === 'worker';
   // Bug #111: hide the "Diff since compile" button when versioning is off.
   // With no git history, the button opens an empty diff drawer.
   const versioningEnabled = useVersioningEnabled();
@@ -61,7 +74,8 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
   const [, forceUpdate] = useState(0);
   const headerTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const job = jobId ? queue.find(j => j.id === jobId) ?? null : null;
+  const job = isJob && source ? queue.find(j => j.id === source.jobId) ?? null : null;
+  const worker = isWorker && source ? workers.find(w => w.client_id === source.workerId) ?? null : null;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -93,7 +107,7 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
     }
   }
 
-  const startPolling = useCallback((pJobId: string) => {
+  const startJobPolling = useCallback((pJobId: string) => {
     pollOffsetRef.current = 0;
     pollJobIdRef.current = pJobId;
 
@@ -114,10 +128,10 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
     poll();
   }, []);
 
-  // Initialize terminal and connections when jobId changes or container mounts
+  // Initialize terminal and connections when source changes or container mounts
   useEffect(() => {
     mountedRef.current = true;
-    if (!jobId || !containerMounted || !containerRef.current) return;
+    if (!source || !containerMounted || !containerRef.current) return;
 
     // Clean up previous
     stopWs();
@@ -163,28 +177,56 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
     setTimeout(fit, 100);
     setTimeout(fit, 300);
 
-    const currentJob = queue.find(j => j.id === jobId);
-    const isLive = currentJob && ['working', 'pending'].includes(currentJob.state);
+    if (source.kind === 'job') {
+      const currentJob = queue.find(j => j.id === source.jobId);
+      const isLive = currentJob && ['working', 'pending'].includes(currentJob.state);
 
-    if (isLive) {
-      // Prefer WebSocket, fall back to HTTP polling
+      if (isLive) {
+        // Prefer WebSocket, fall back to HTTP polling
+        try {
+          const ws = new WebSocket(buildWsUrl(`ui/api/jobs/${source.jobId}/log/ws`));
+          ws.onmessage = (e) => { if (termRef.current) termRef.current.write(e.data as string); };
+          ws.onerror = () => {
+            stopWs();
+            startJobPolling(source.jobId);
+          };
+          ws.onclose = () => { wsRef.current = null; };
+          wsRef.current = ws;
+        } catch {
+          startJobPolling(source.jobId);
+        }
+      } else if (currentJob) {
+        // SP.2: queue list no longer carries `log`. For terminal jobs, fetch
+        // via /ui/api/jobs/{id}/log — startPolling does one full read and
+        // stops as soon as the response says finished:true.
+        startJobPolling(source.jobId);
+      }
+    } else {
+      // WL.3 worker-log path: one-shot hydration then WS for live tail.
+      // No HTTP polling fallback — the snapshot GET covers offline state,
+      // and a WS failure just leaves the dialog with whatever the snapshot
+      // contained.
+      const workerId = source.workerId;
+      (async () => {
+        try {
+          const snapshot = await getWorkerLogSnapshot(workerId);
+          if (!mountedRef.current || !termRef.current) return;
+          if (snapshot) {
+            termRef.current.write(snapshot);
+          } else {
+            // Dim hint so the user knows they're not staring at a dead
+            // dialog during the up-to-10-s wait for the next heartbeat
+            // to pick up stream_logs=true.
+            termRef.current.write('\x1b[2mWaiting for worker to start streaming… (up to 10 s)\x1b[0m\r\n');
+          }
+        } catch { /* ignore */ }
+      })();
       try {
-        const ws = new WebSocket(buildWsUrl(`ui/api/jobs/${jobId}/log/ws`));
+        const ws = new WebSocket(buildWsUrl(`ui/api/workers/${workerId}/logs/ws`));
         ws.onmessage = (e) => { if (termRef.current) termRef.current.write(e.data as string); };
-        ws.onerror = () => {
-          stopWs();
-          startPolling(jobId);
-        };
         ws.onclose = () => { wsRef.current = null; };
         wsRef.current = ws;
-      } catch {
-        startPolling(jobId);
-      }
-    } else if (currentJob) {
-      // SP.2: queue list no longer carries `log`. For terminal jobs, fetch
-      // via /ui/api/jobs/{id}/log — startPolling does one full read and
-      // stops as soon as the response says finished:true.
-      startPolling(jobId);
+      } catch { /* ignore */ }
     }
 
     return () => {
@@ -193,11 +235,11 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
       stopPolling();
       disposeTerminal();
     };
-    // We deliberately don't re-run when queue changes — only when jobId/container changes
+    // We deliberately don't re-run when queue changes — only when source/container changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, containerMounted, startPolling]);
+  }, [source, containerMounted, startJobPolling]);
 
-  // Compute header contents from current job state
+  // Compute header contents from current state
   let modalTitle = '';
   let badgeEl: React.ReactNode = null;
   let metaEl: React.ReactNode = null;
@@ -235,10 +277,26 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
         </Button>
       );
     }
+  } else if (worker) {
+    modalTitle = worker.hostname;
+    metaEl = (
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        {worker.online ? 'online' : 'offline'}
+      </span>
+    );
   }
 
   const handleCopy = () => copyTerminalText(termRef.current);
-  const handleDownload = () => downloadTerminalText(termRef.current, job?.target ?? 'log');
+  const handleDownload = () => {
+    if (job) {
+      downloadTerminalText(termRef.current, job.target);
+    } else if (worker) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadTerminalText(termRef.current, `worker-${worker.hostname}-${ts}`);
+    } else {
+      downloadTerminalText(termRef.current, 'log');
+    }
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -250,7 +308,7 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
             {metaEl}
             {retryEl}
           </div>
-          {onEdit && job && !job.validate_only && (
+          {isJob && onEdit && job && !job.validate_only && (
             <Button
               variant="secondary"
               size="sm"
@@ -260,7 +318,7 @@ export function LogModal({ jobId, queue, workers, onClose, onRetry, onEdit, onOp
               Edit
             </Button>
           )}
-          {onOpenHistoryDiff && versioningEnabled && job && !job.validate_only && job.config_hash && (
+          {isJob && onOpenHistoryDiff && versioningEnabled && job && !job.validate_only && job.config_hash && (
             <Button
               variant="secondary"
               size="sm"

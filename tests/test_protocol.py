@@ -19,6 +19,7 @@ from protocol import (
     RegisterRequest,
     RegisterResponse,
     SystemInfo,
+    WorkerLogAppend,
 )
 
 
@@ -111,6 +112,44 @@ class TestRoundTrip:
         msg = JobLogAppend(lines="INFO[1] foo\nINFO[1] bar\n")
         assert JobLogAppend.model_validate(msg.model_dump()) == msg
 
+    def test_heartbeat_response_stream_logs_roundtrip(self) -> None:
+        # WL.2: server tells the worker to start streaming logs.
+        msg = HeartbeatResponse(ok=True, stream_logs=True)
+        d = msg.model_dump()
+        assert d["stream_logs"] is True
+        assert HeartbeatResponse.model_validate(d) == msg
+
+    def test_heartbeat_response_stream_logs_stop(self) -> None:
+        # Flipping it off again — the worker needs to see the explicit False
+        # to tear down its pusher thread.
+        msg = HeartbeatResponse(stream_logs=False)
+        assert HeartbeatResponse.model_validate(msg.model_dump()).stream_logs is False
+
+    def test_heartbeat_response_stream_logs_omitted_is_none(self) -> None:
+        # No flag = no change from the worker's current state. Default must
+        # be None so we can distinguish "unchanged" from "stop".
+        msg = HeartbeatResponse()
+        assert msg.stream_logs is None
+
+    def test_worker_log_append_roundtrip(self) -> None:
+        # WL.2: the payload the worker sends to POST /api/v1/workers/{id}/logs.
+        msg = WorkerLogAppend(offset=0, lines="2026-04-23 INFO foo\n")
+        assert WorkerLogAppend.model_validate(msg.model_dump()) == msg
+
+    def test_worker_log_append_with_nonzero_offset(self) -> None:
+        # Subsequent pushes carry the byte-offset since worker process start.
+        msg = WorkerLogAppend(offset=1234, lines="later line\n")
+        d = msg.model_dump()
+        assert d["offset"] == 1234
+        assert WorkerLogAppend.model_validate(d) == msg
+
+    def test_worker_log_append_empty_lines_allowed(self) -> None:
+        # The heartbeat pusher may fire with nothing to send; we'd rather
+        # not special-case the empty path — the server can accept and
+        # no-op it.
+        msg = WorkerLogAppend(offset=0, lines="")
+        assert WorkerLogAppend.model_validate(msg.model_dump()) == msg
+
     def test_protocol_error_roundtrip(self) -> None:
         err = ProtocolError(error="invalid_payload", reason="hostname: field required")
         parsed = ProtocolError.model_validate(err.model_dump())
@@ -149,6 +188,17 @@ class TestForwardCompatibility:
         })
         assert msg.ok is True
         assert msg.server_client_version == "9.9.9"
+
+    def test_worker_log_append_ignores_unknown_fields(self) -> None:
+        # Older server receiving a newer worker's log push with fields it
+        # doesn't know yet (e.g. session_id added in a later release).
+        msg = WorkerLogAppend.model_validate({
+            "offset": 42,
+            "lines": "hello\n",
+            "future_session_id": "abc-xyz",
+        })
+        assert msg.offset == 42
+        assert msg.lines == "hello\n"
 
     def test_job_assignment_ignores_unknown_fields(self) -> None:
         msg = JobAssignment.model_validate({

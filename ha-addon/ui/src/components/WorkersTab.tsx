@@ -30,6 +30,7 @@ interface Props {
   onCleanCache: (id: string) => void;
   onCleanAllCaches: () => void;
   onConnectWorker: (preset?: import('../types').WorkerPreset | null) => void;
+  onViewLogs: (clientId: string) => void;
 }
 
 function workerPlatformHtml(si: SystemInfo): React.ReactNode {
@@ -236,7 +237,12 @@ function getWorkerSortValue(w: Worker, colId: string): string {
 
 const columnHelper = createColumnHelper<Worker>();
 
-export function WorkersTab({ workers, queue, serverClientVersion, minImageVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker }: Props) {
+export function WorkersTab({ workers, queue, serverClientVersion, minImageVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker, onViewLogs }: Props) {
+  // WL.3: lift the actions-dropdown open state out of the TanStack row
+  // cell so the 1 Hz SWR poll doesn't tear it down mid-click (bug #2
+  // / #71 class — see Design Judgment in CLAUDE.md). Keyed by
+  // client_id so only one dropdown is open at a time.
+  const [actionsMenuOpenClientId, setActionsMenuOpenClientId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   // QS.27: persist sort across reloads via localStorage.
   const [sorting, setSorting] = usePersistedState<SortingState>(
@@ -401,11 +407,38 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
               />
             </td>
             <td>
-              {c.online ? (
-                <Button variant="secondary" size="sm" onClick={() => onCleanCache(c.client_id)}>Clean Cache</Button>
-              ) : !isLocal ? (
-                <Button variant="destructive" size="sm" onClick={() => onRemove(c.client_id)}>Remove</Button>
-              ) : null}
+              <DropdownMenu
+                open={actionsMenuOpenClientId === c.client_id}
+                onOpenChange={(open) => setActionsMenuOpenClientId(open ? c.client_id : null)}
+              >
+                <DropdownMenuTrigger
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 h-7 text-[0.8rem] font-medium text-foreground hover:bg-muted cursor-pointer"
+                  aria-label={`Actions for ${c.hostname}`}
+                  title="Actions"
+                >
+                  Actions ▾
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onClick={() => onViewLogs(c.client_id)}>
+                      View logs
+                    </DropdownMenuItem>
+                    {c.online && (
+                      <DropdownMenuItem onClick={() => onCleanCache(c.client_id)}>
+                        Clean cache
+                      </DropdownMenuItem>
+                    )}
+                    {!c.online && !isLocal && (
+                      <DropdownMenuItem
+                        onClick={() => onRemove(c.client_id)}
+                        className="text-[var(--danger,#ef4444)]"
+                      >
+                        Remove
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </td>
           </tr>
         );

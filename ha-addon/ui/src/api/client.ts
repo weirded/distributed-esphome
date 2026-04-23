@@ -492,6 +492,19 @@ export async function getJobLog(jobId: string, offset: number): Promise<JobLogRe
   );
 }
 
+/**
+ * WL.3: one-shot hydration snapshot of the server's per-worker log buffer.
+ * Returns the raw ANSI-coloured text; live lines after this call arrive
+ * via the WS stream, not incremental polling.
+ */
+export async function getWorkerLogSnapshot(workerId: string): Promise<string> {
+  const resp = await apiFetch(`./ui/api/workers/${workerId}/logs`);
+  if (!resp.ok) {
+    throw new Error(`Fetching worker logs: ${resp.status} ${resp.statusText}`);
+  }
+  return resp.text();
+}
+
 export async function getApiKey(filename: string): Promise<string> {
   // Fetched separately rather than via parseResponse because the success
   // branch needs to validate the `key` field is actually present (QS.4).

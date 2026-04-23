@@ -120,6 +120,10 @@ class HeartbeatResponse(_ProtocolMessage):
     min_image_version: Optional[str] = None
     set_max_parallel_jobs: Optional[int] = None
     clean_build_cache: Optional[bool] = None
+    # WL.2: None = "unchanged" (default — older servers never set it).
+    # True = start pushing logs at 1 Hz to /api/v1/workers/{id}/logs.
+    # False = stop pushing and tear down the pusher thread.
+    stream_logs: Optional[bool] = None
     protocol_version: int = PROTOCOL_VERSION
 
 
@@ -171,6 +175,25 @@ class JobStatusUpdate(_ProtocolMessage):
 
 
 class JobLogAppend(_ProtocolMessage):
+    lines: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Worker logs — POST /api/v1/workers/{client_id}/logs (WL.2, pull-when-watched)
+# ---------------------------------------------------------------------------
+
+
+class WorkerLogAppend(_ProtocolMessage):
+    """Payload the worker sends while the server's stream_logs flag is on.
+
+    Shape mirrors ``JobLogAppend`` as closely as possible — the same pre-
+    formatted, ANSI-coloured, newline-terminated text xterm renders directly.
+    ``offset`` is the byte-offset of the first byte of ``lines`` since worker
+    process start; the server uses it to dedupe retries and to detect worker
+    restarts (``offset`` going backwards).
+    """
+
+    offset: int = 0
     lines: str = ""
 
 

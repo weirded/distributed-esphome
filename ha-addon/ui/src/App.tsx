@@ -272,6 +272,10 @@ export default function App() {
   }, [streamerMode]);
 
   const [logJobId, setLogJobId] = useState<string | null>(null);
+  // WL.3: separate state for the worker-log dialog; both feed the same
+  // `<LogModal>` but only one can be open at a time (they share the
+  // xterm + WS transport).
+  const [logWorkerId, setLogWorkerId] = useState<string | null>(null);
   const [deviceLogTarget, setDeviceLogTarget] = useState<string | null>(null);
   const [editorTarget, setEditorTarget] = useState<string | null>(null);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
@@ -787,6 +791,7 @@ export default function App() {
             onCleanCache={handleCleanWorkerCache}
             onCleanAllCaches={handleCleanAllCaches}
             onConnectWorker={(preset) => { setConnectModalPreset(preset ?? null); setConnectModalOpen(true); }}
+            onViewLogs={setLogWorkerId}
           />
         )}
         {activeTab === 'schedules' && (
@@ -841,10 +846,10 @@ export default function App() {
       )}
 
       <LogModal
-        jobId={logJobId}
+        source={logJobId ? { kind: 'job', jobId: logJobId } : logWorkerId ? { kind: 'worker', workerId: logWorkerId } : null}
         queue={queue}
         workers={workers}
-        onClose={() => setLogJobId(null)}
+        onClose={() => { setLogJobId(null); setLogWorkerId(null); }}
         onRetry={handleRetryJobs}
         onEdit={(target) => { setLogJobId(null); setEditorTarget(target); }}
         onOpenHistoryDiff={(target, fromHash) => {

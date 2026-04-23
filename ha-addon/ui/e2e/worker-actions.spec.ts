@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test';
 import { mockApi } from './fixtures';
 
 // QS.25 follow-up — Workers tab actions: clean cache, parallel-jobs slot
-// control, remove offline worker.
+// control, remove offline worker. WL.3 consolidated Clean Cache / Remove
+// and "View logs" into a single per-row "Actions" dropdown menu.
 
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
@@ -16,18 +17,28 @@ function workerRow(page: import('@playwright/test').Page, hostname: string) {
   return page.locator('table tbody tr').filter({ hasText: hostname });
 }
 
-test('online worker shows Clean Cache button, offline shows Remove', async ({ page }) => {
-  const online = workerRow(page, 'build-server-1');
-  await expect(online.getByRole('button', { name: 'Clean Cache' })).toBeVisible();
-  await expect(online.getByRole('button', { name: 'Remove' })).toHaveCount(0);
+async function openActions(page: import('@playwright/test').Page, hostname: string) {
+  await workerRow(page, hostname).getByRole('button', { name: new RegExp(`Actions for ${hostname}`) }).click();
+}
 
-  const offline = workerRow(page, 'build-server-2');
-  await expect(offline.getByRole('button', { name: 'Remove' })).toBeVisible();
-  await expect(offline.getByRole('button', { name: 'Clean Cache' })).toHaveCount(0);
+test('actions dropdown reveals Clean cache for online workers', async ({ page }) => {
+  await openActions(page, 'build-server-1');
+  await expect(page.getByRole('menuitem', { name: 'Clean cache' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Remove' })).toHaveCount(0);
 });
 
-test('Clean Cache fires POST /workers/{id}/clean', async ({ page }) => {
+test('actions dropdown reveals Remove for offline workers', async ({ page }) => {
+  await openActions(page, 'build-server-2');
+  await expect(page.getByRole('menuitem', { name: 'Remove' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Clean cache' })).toHaveCount(0);
+});
+
+test('Clean cache fires POST /workers/{id}/clean', async ({ page }) => {
   let cleanedFor: string | null = null;
+  // Clear the mockApi fixture's handler for this pattern so ours is
+  // the only one that runs (Playwright's route stack doesn't always
+  // prefer the newest registration when the patterns match identically).
+  await page.unroute('**/ui/api/workers/*/clean');
   await page.route('**/ui/api/workers/*/clean', route => {
     if (route.request().method() === 'POST') {
       const url = route.request().url();
@@ -36,13 +47,17 @@ test('Clean Cache fires POST /workers/{id}/clean', async ({ page }) => {
     route.fulfill({ status: 200, json: {} });
   });
 
-  await workerRow(page, 'build-server-1').getByRole('button', { name: 'Clean Cache' }).click();
+  await openActions(page, 'build-server-1');
+  const cleanItem = page.getByRole('menuitem', { name: 'Clean cache' });
+  await expect(cleanItem).toBeVisible();
+  await cleanItem.click();
 
   await expect.poll(() => cleanedFor).toBe('worker-1');
 });
 
 test('Remove offline worker fires DELETE /workers/{id}', async ({ page }) => {
   let removedFor: string | null = null;
+  await page.unroute('**/ui/api/workers/*');
   await page.route('**/ui/api/workers/*', route => {
     if (route.request().method() === 'DELETE') {
       const url = route.request().url();
@@ -51,7 +66,10 @@ test('Remove offline worker fires DELETE /workers/{id}', async ({ page }) => {
     route.fulfill({ status: 200, json: {} });
   });
 
-  await workerRow(page, 'build-server-2').getByRole('button', { name: 'Remove' }).click();
+  await openActions(page, 'build-server-2');
+  const removeItem = page.getByRole('menuitem', { name: 'Remove' });
+  await expect(removeItem).toBeVisible();
+  await removeItem.click();
 
   await expect.poll(() => removedFor).toBe('worker-2');
 });

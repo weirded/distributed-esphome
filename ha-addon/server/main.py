@@ -1367,6 +1367,10 @@ def create_app() -> web.Application:
     app["scanner_config_dir"] = cfg.config_dir
     app["device_poller"] = device_poller
     app["log_subscribers"] = {}
+    # WL.2: per-worker log broker. Independent of the registry so log
+    # transport state doesn't leak into worker liveness/config state.
+    from worker_log_broker import WorkerLogBroker  # noqa: PLC0415
+    app["worker_log_broker"] = WorkerLogBroker()
 
     # Register routes
     app.router.add_routes(api_module.routes)

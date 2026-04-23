@@ -33,6 +33,7 @@ from protocol import (
     RegisterRequest,
     RegisterResponse,
     SystemInfo,
+    WorkerLogAppend,
 )
 from version_manager import VersionManager
 from sysinfo import collect_system_info
@@ -43,7 +44,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.6.2-dev.20"
+CLIENT_VERSION = "1.6.2-dev.21"
 
 
 def _read_image_version() -> Optional[str]:
@@ -95,6 +96,20 @@ logging.basicConfig(
 # Attach the filter to the root handler so it runs for every log record.
 for _h in logging.getLogger().handlers:
     _h.addFilter(_WorkerContextFilter())
+
+# WL.1: capture every formatted record into a bounded ring buffer so
+# the pull-when-watched pusher (WL.2) has a backlog ready whenever the
+# server's ``stream_logs`` flag flips on. Handler is a tee — the
+# existing StreamHandler to stdout is unchanged.
+from log_capture import LogCaptureHandler  # noqa: E402
+
+_log_capture = LogCaptureHandler()
+_log_capture.setFormatter(
+    logging.Formatter(f"%(asctime)s %(levelname)-8s v{CLIENT_VERSION} %(ctx)s%(name)s: %(message)s")
+)
+_log_capture.addFilter(_WorkerContextFilter())
+logging.getLogger().addHandler(_log_capture)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -349,6 +364,72 @@ def _clean_build_cache() -> None:
     logger.info("Build cache clean complete — removed %d version(s)", removed)
 
 
+# ---------------------------------------------------------------------------
+# WL.2: pull-when-watched log pusher
+# ---------------------------------------------------------------------------
+
+# Set by the heartbeat loop whenever the server's HeartbeatResponse flips
+# ``stream_logs=True``; cleared on False. Owned by the heartbeat loop;
+# read by the pusher thread.
+_stream_logs_event = threading.Event()
+
+
+def _log_pusher_loop(client_id: str, stop_event: threading.Event) -> None:
+    """Drain the LogCaptureHandler ring and POST chunks to the server.
+
+    Runs while ``_stream_logs_event`` is set. Exits cleanly when either
+    that event clears (server told us to stop) or ``stop_event`` is set
+    (process shutdown).
+
+    Retry policy on transport error: do NOT advance ``acked_offset``;
+    the next tick will re-send from the same point. Lines never drop
+    on happy + 5xx paths; a duplicate slipping through on a lost-ack
+    is tolerated by the server (it dedupes when the byte range fully
+    overlaps what it already has).
+    """
+    acked_offset = 0
+    while _stream_logs_event.is_set() and not stop_event.is_set():
+        chunk, new_offset = _log_capture.drain_since(acked_offset)
+        if chunk:
+            try:
+                resp = post(
+                    f"/api/v1/workers/{client_id}/logs",
+                    WorkerLogAppend(offset=acked_offset, lines=chunk).model_dump(),
+                    timeout=10,
+                )
+                if resp.ok:
+                    acked_offset = new_offset
+                # else: transient server-side error, retry next tick.
+            except requests.RequestException:
+                # Network hiccup — retry next tick without advancing.
+                pass
+        # 1 Hz push cadence matches the approved design; fast enough
+        # to feel like tail -f without generating much traffic.
+        stop_event.wait(1.0)
+
+
+def _update_log_streaming(client_id: str, stream_logs: Optional[bool],
+                          stop_event: threading.Event) -> None:
+    """Start or stop the pusher thread on heartbeat-flag transitions.
+
+    None means "unchanged — default state pre-WL, absent field in
+    response"; only explicit True/False drive state changes.
+    """
+    if stream_logs is None:
+        return
+    if stream_logs and not _stream_logs_event.is_set():
+        _stream_logs_event.set()
+        t = threading.Thread(
+            target=_log_pusher_loop,
+            args=(client_id, stop_event),
+            name="log-pusher",
+            daemon=True,
+        )
+        t.start()
+    elif not stream_logs and _stream_logs_event.is_set():
+        _stream_logs_event.clear()
+
+
 def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
     """Send heartbeats to the server until stop_event is set."""
     global _image_upgrade_logged
@@ -409,6 +490,11 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                 if data.clean_build_cache:
                     logger.info("Server requested build cache clean — clearing esphome-versions")
                     _clean_build_cache()
+                # WL.2: start/stop the log pusher thread based on the
+                # server's watch state. The heartbeat is the single
+                # signal source; pusher never polls the server for
+                # this flag on its own.
+                _update_log_streaming(client_id, data.stream_logs, stop_event)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             _on_server_unreachable(exc)
         except Exception as exc:
