@@ -87,6 +87,24 @@ The UI is at `http://your-host:8765`. `--network host` is required so the server
 
 To test pre-release builds, use `:develop` instead of `:latest` — that tag advances on every push to `develop` and isn't meant for production.
 
+#### What works and what doesn't without Home Assistant
+
+The server auto-detects its deployment shape via the `SUPERVISOR_TOKEN` env var (set by HA when running as an add-on, absent otherwise) and logs the result on startup (`Running in standalone mode (no HA Supervisor detected)` vs `Running as HA add-on (Supervisor detected)`). Override with `HA_MODE=standalone` or `HA_MODE=addon` if auto-detection is wrong for your environment.
+
+**Full functionality in standalone**: compile queue, build workers, OTA upgrade, firmware archive + download, device poller + mDNS discovery, live device logs, git versioning of `/config/esphome/`, in-browser YAML editor with autocomplete, scheduled upgrades, settings drawer, entire Web UI.
+
+**Unavailable without HA** (all fail-soft — server keeps running; the relevant UI affordances disable or return a 503 with a hint):
+- HA auto-discovery of the companion custom integration (obvious — there's no HA to be discovered by).
+- The Devices-tab "HA connectivity" column (reads HA's entity registry).
+- The Restart button's HA-service fallback (native-API restart still works; the fallback is only reached when the device is offline).
+- Supervisor-driven ESPHome version auto-detection. In standalone the server falls back to "latest stable from PyPI" on first boot; change via the version dropdown in the Web UI header.
+
+**Configuration differences**:
+- Settings live in `/data/settings.json` instead of Supervisor options. Edit via the in-app Settings drawer (gear icon, top-right).
+- `require_ha_auth` defaults to **off** for standalone Docker. If `:8765` is reachable from an untrusted network, turn it on in Settings → Authentication and hand out the bearer token; browsers without a token land on a styled 401 page explaining both recovery paths.
+
+See `dev-plans/HA-COUPLING-AUDIT.md` in the repo for the per-site audit of HA-coupled code paths.
+
 ## A tour of the UI
 
 - **Devices** — every ESPHome config you have. One-click Upgrade on any row; Upgrade dropdown for bulk actions (upgrade all outdated, upgrade selected, upgrade everything). Edit YAML inline with autocomplete and validation. Pin a device to a specific ESPHome version. Open a live device log. Deep-link to the HA device page.

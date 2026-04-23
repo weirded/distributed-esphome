@@ -42,7 +42,14 @@ async def register_discovery(port: int, token: str | None = None) -> str | None:
     """
     supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
     if not supervisor_token:
-        logger.debug("No SUPERVISOR_TOKEN — skipping Supervisor discovery (#26)")
+        # SI (WORKITEMS-1.6.2): INFO (not DEBUG) so standalone operators
+        # see a single, grep-able line explaining why HA didn't auto-
+        # discover the custom integration. Previously silent at DEBUG
+        # and operators had to read source to figure out the dependency.
+        logger.info(
+            "Skipping Supervisor auto-discovery (standalone mode — no SUPERVISOR_TOKEN). "
+            "The HA custom integration can still be added manually."
+        )
         return None
 
     # Supervisor routes to this host by its internal Docker name,

@@ -1405,6 +1405,22 @@ def create_app() -> web.Application:
     async def on_startup(app: web.Application) -> None:
         logger.info("Starting ESPHome Fleet")
         logger.info("Config dir: %s", cfg.config_dir)
+        # SI (WORKITEMS-1.6.2): one-shot deployment-shape banner so
+        # operators grep one line to confirm whether HA coupling is
+        # active, instead of reading the absence/presence of nine
+        # downstream "skipped — no SUPERVISOR_TOKEN" log lines.
+        from helpers import ha_mode  # noqa: PLC0415
+        mode = ha_mode()
+        if mode == "standalone":
+            logger.info(
+                "Running in standalone mode (no HA Supervisor detected). "
+                "HA-coupled features (auto-discovery, entity-driven device "
+                "state, Supervisor-driven ESPHome version) are disabled; "
+                "the rest of the server runs unchanged. See "
+                "dev-plans/HA-COUPLING-AUDIT.md for the full matrix."
+            )
+        else:
+            logger.info("Running as HA add-on (Supervisor detected)")
         from settings import get_settings as _get_settings_startup  # noqa: PLC0415
         logger.info("Token configured: %s", bool(_get_settings_startup().server_token))
 

@@ -2514,14 +2514,26 @@ async def restart_device(request: web.Request) -> web.Response:
 
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
+        # SI (WORKITEMS-1.6.2): 503 Service Unavailable, not 500.
+        # Native-API restart failed (device offline or no button) AND
+        # the HA-service fallback is unreachable because we're running
+        # standalone — a "feature unavailable" situation, not a server
+        # error. 503 signals that distinction to the UI + any tooling
+        # that treats 5xx as "server broken." Body is unchanged so
+        # operators still see the specific reason in the JSON.
         return web.json_response(
             {
                 "error": "Could not restart device",
                 "native_api_error": native_error,
                 "ha_fallback_error": "no SUPERVISOR_TOKEN",
+                "hint": (
+                    "HA-service fallback requires Home Assistant. "
+                    "Running in standalone mode; restart via the device's "
+                    "physical button or Web UI."
+                ),
                 "candidates_tried": [],
             },
-            status=500,
+            status=503,
         )
 
     try:
