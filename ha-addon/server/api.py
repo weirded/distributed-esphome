@@ -688,6 +688,23 @@ async def append_job_log(request: web.Request) -> web.Response:
     return web.json_response(OkResponse().model_dump())
 
 
+@routes.get("/api/v1/workers/{id}/control")
+async def get_worker_control(request: web.Request) -> web.Response:
+    """WL.2: fast-path control signal the worker polls at 1 Hz.
+
+    Heartbeat also carries ``stream_logs`` but runs every 10 s, which
+    makes the dialog feel dead for up to 10 s after opening before the
+    first line appears. This endpoint is cheap — just the broker's
+    is_watched() boolean — so the worker can poll it every second
+    without the traffic cost of a full heartbeat. Bearer auth (same
+    middleware as the rest of ``/api/v1/*``).
+    """
+    client_id = request.match_info["id"]
+    broker = request.app.get("worker_log_broker")
+    stream_logs = broker.is_watched(client_id) if broker else False
+    return web.json_response({"stream_logs": stream_logs})
+
+
 @routes.post("/api/v1/workers/{id}/logs")
 async def append_worker_log(request: web.Request) -> web.Response:
     """WL.2: receive a worker-log push while ``stream_logs`` is on.

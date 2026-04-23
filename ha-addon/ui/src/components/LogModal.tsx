@@ -77,6 +77,17 @@ export function LogModal({ source, queue, workers, onClose, onRetry, onEdit, onO
   const job = isJob && source ? queue.find(j => j.id === source.jobId) ?? null : null;
   const worker = isWorker && source ? workers.find(w => w.client_id === source.workerId) ?? null : null;
 
+  // Derive a stable string identity for the source so the xterm/WS
+  // effect below only re-runs when the *target* changes, not on every
+  // parent re-render. App.tsx rebuilds the `source={...}` literal on
+  // each SWR poll (1 Hz) — without this, the terminal would tear down
+  // and re-init once a second, flickering the dialog visibly.
+  const sourceKey = source
+    ? source.kind === 'job'
+      ? `job:${source.jobId}`
+      : `worker:${source.workerId}`
+    : null;
+
   useEffect(() => {
     if (!isOpen) return;
     headerTimerRef.current = setInterval(() => forceUpdate(n => n + 1), 1000);
@@ -235,9 +246,11 @@ export function LogModal({ source, queue, workers, onClose, onRetry, onEdit, onO
       stopPolling();
       disposeTerminal();
     };
-    // We deliberately don't re-run when queue changes — only when source/container changes
+    // Deps are the *stable* sourceKey string, NOT the source object —
+    // App.tsx re-creates the object every render so using it here
+    // would tear down xterm 1 Hz.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, containerMounted, startJobPolling]);
+  }, [sourceKey, containerMounted, startJobPolling]);
 
   // Compute header contents from current state
   let modalTitle = '';

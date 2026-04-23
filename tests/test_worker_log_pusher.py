@@ -136,3 +136,76 @@ def test_update_log_streaming_false_clears_event():
         assert client_module._stream_logs_event.is_set() is False
     finally:
         stop.set()
+
+
+# ---------------------------------------------------------------------------
+# Control-poll loop: fast-path 1 Hz signal delivery
+# ---------------------------------------------------------------------------
+
+
+def test_control_poll_flips_stream_logs_on_server_true(monkeypatch):
+    """The 1 Hz control-poll must react to server state faster than
+    the 10 s heartbeat would.
+    """
+    import client as client_module  # noqa: PLC0415
+
+    client_module._stream_logs_event.clear()
+
+    class _FakeResp:
+        ok = True
+        def json(self):
+            return {"stream_logs": True}
+
+    call_count = {"n": 0}
+
+    def fake_get(path, **kwargs):
+        call_count["n"] += 1
+        return _FakeResp()
+
+    monkeypatch.setattr(client_module, "get", fake_get)
+
+    stop = threading.Event()
+    t = threading.Thread(
+        target=client_module._control_poll_loop,
+        args=("cid", stop),
+        daemon=True,
+    )
+    t.start()
+    try:
+        # One tick of 1.0 s; give a bit of slack.
+        deadline = threading.Event()
+        for _ in range(30):
+            if client_module._stream_logs_event.is_set():
+                break
+            deadline.wait(0.1)
+        assert client_module._stream_logs_event.is_set() is True
+        assert call_count["n"] >= 1
+    finally:
+        stop.set()
+        t.join(timeout=2)
+        client_module._stream_logs_event.clear()
+
+
+def test_control_poll_tolerates_transport_errors(monkeypatch):
+    """Connection errors during the poll must not crash the loop."""
+    import client as client_module  # noqa: PLC0415
+    import requests as _requests  # noqa: PLC0415
+
+    def fake_get(path, **kwargs):
+        raise _requests.exceptions.ConnectionError("simulated")
+
+    monkeypatch.setattr(client_module, "get", fake_get)
+
+    stop = threading.Event()
+    t = threading.Thread(
+        target=client_module._control_poll_loop,
+        args=("cid", stop),
+        daemon=True,
+    )
+    t.start()
+    try:
+        stop.wait(0.3)  # let the loop spin a couple of times
+        assert t.is_alive()  # didn't crash
+    finally:
+        stop.set()
+        t.join(timeout=2)

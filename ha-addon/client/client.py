@@ -44,7 +44,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.6.2-dev.21"
+CLIENT_VERSION = "1.6.2-dev.22"
 
 
 def _read_image_version() -> Optional[str]:
@@ -405,6 +405,31 @@ def _log_pusher_loop(client_id: str, stop_event: threading.Event) -> None:
                 pass
         # 1 Hz push cadence matches the approved design; fast enough
         # to feel like tail -f without generating much traffic.
+        stop_event.wait(1.0)
+
+
+def _control_poll_loop(client_id: str, stop_event: threading.Event) -> None:
+    """Poll /api/v1/workers/{id}/control at 1 Hz for fast watch-state updates.
+
+    The heartbeat also carries ``stream_logs`` but runs every 10 s — too
+    slow for a "tail -f" UX. This lightweight GET (body is just
+    ``{"stream_logs": bool}``) lets the worker react within ~1 s of a
+    UI user opening or closing the log dialog.
+    """
+    while not stop_event.is_set():
+        try:
+            resp = get(f"/api/v1/workers/{client_id}/control", timeout=5)
+            if resp.ok:
+                data = resp.json()
+                stream_logs = data.get("stream_logs")
+                if isinstance(stream_logs, bool):
+                    _update_log_streaming(client_id, stream_logs, stop_event)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            # Same reachability dedup as heartbeat — don't spam warnings
+            # when the server is briefly unavailable. Next tick retries.
+            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("control-poll unexpected error: %s", exc)
         stop_event.wait(1.0)
 
 
@@ -1662,30 +1687,26 @@ def main() -> None:
     # Check for available update before accepting any work
     _initial_version_check(client_id)
 
-    # Start heartbeat thread
-    stop_heartbeat = threading.Event()
-    hb_thread = threading.Thread(
-        target=heartbeat_loop,
-        args=(client_id, stop_heartbeat),
-        daemon=True,
-        name="heartbeat",
-    )
-    hb_thread.start()
+    # Start heartbeat + control-poll threads. Both share one stop event
+    # so re-register / upgrade paths can tear them down together.
+    def _start_bg_threads(cid: str) -> tuple[threading.Event, threading.Thread, threading.Thread]:
+        ev = threading.Event()
+        hb = threading.Thread(target=heartbeat_loop, args=(cid, ev), daemon=True, name="heartbeat")
+        cp = threading.Thread(target=_control_poll_loop, args=(cid, ev), daemon=True, name="control-poll")
+        hb.start()
+        cp.start()
+        return ev, hb, cp
+
+    stop_heartbeat, hb_thread, cp_thread = _start_bg_threads(client_id)
 
     # Apply update immediately if detected (before starting workers)
     if _update_available.is_set():
         stop_heartbeat.set()
         hb_thread.join(timeout=2)
+        cp_thread.join(timeout=2)
         _apply_update(client_id)  # may os.execv — never returns on success
-        # Update failed — restart heartbeat
-        stop_heartbeat = threading.Event()
-        hb_thread = threading.Thread(
-            target=heartbeat_loop,
-            args=(client_id, stop_heartbeat),
-            daemon=True,
-            name="heartbeat",
-        )
-        hb_thread.start()
+        # Update failed — restart both
+        stop_heartbeat, hb_thread, cp_thread = _start_bg_threads(client_id)
 
     logger.info("Starting %d worker(s), polling every %ds", MAX_PARALLEL_JOBS, POLL_INTERVAL)
     worker_stop, worker_threads = _launch_workers(client_id, version_manager)
@@ -1699,17 +1720,11 @@ def main() -> None:
                 _stop_workers(worker_stop, worker_threads)
                 stop_heartbeat.set()
                 hb_thread.join(timeout=2)
+                cp_thread.join(timeout=2)
 
                 client_id = register()
 
-                stop_heartbeat = threading.Event()
-                hb_thread = threading.Thread(
-                    target=heartbeat_loop,
-                    args=(client_id, stop_heartbeat),
-                    daemon=True,
-                    name="heartbeat",
-                )
-                hb_thread.start()
+                stop_heartbeat, hb_thread, cp_thread = _start_bg_threads(client_id)
                 worker_stop, worker_threads = _launch_workers(client_id, version_manager)
 
             # Apply pending update only when all workers are idle
@@ -1717,16 +1732,10 @@ def main() -> None:
                 _stop_workers(worker_stop, worker_threads)
                 stop_heartbeat.set()
                 hb_thread.join(timeout=2)
+                cp_thread.join(timeout=2)
                 _apply_update(client_id)  # may os.execv — never returns on success
-                # Update failed — restart heartbeat and workers
-                stop_heartbeat = threading.Event()
-                hb_thread = threading.Thread(
-                    target=heartbeat_loop,
-                    args=(client_id, stop_heartbeat),
-                    daemon=True,
-                    name="heartbeat",
-                )
-                hb_thread.start()
+                # Update failed — restart heartbeat + control-poll and workers
+                stop_heartbeat, hb_thread, cp_thread = _start_bg_threads(client_id)
                 worker_stop, worker_threads = _launch_workers(client_id, version_manager)
 
             time.sleep(1)
@@ -1736,6 +1745,7 @@ def main() -> None:
         worker_stop.set()
         stop_heartbeat.set()
         hb_thread.join(timeout=2)
+        cp_thread.join(timeout=2)
         deregister(client_id)
 
 

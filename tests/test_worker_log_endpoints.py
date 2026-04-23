@@ -275,6 +275,53 @@ async def test_ws_subscriber_receives_live_push(tmp_path):
         await _close(client)
 
 
+async def test_control_endpoint_false_when_no_watchers(tmp_path):
+    """GET /api/v1/workers/{id}/control is the fast path the worker
+    polls at 1 Hz to learn about watch transitions without waiting
+    for its 10 s heartbeat.
+    """
+    client = await _make_app(tmp_path)
+    try:
+        client_id = await _register(client)
+        resp = await client.get(
+            f"/api/v1/workers/{client_id}/control",
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body == {"stream_logs": False}
+    finally:
+        await _close(client)
+
+
+async def test_control_endpoint_true_when_subscriber_attached(tmp_path):
+    client = await _make_app(tmp_path)
+    try:
+        client_id = await _register(client)
+        broker: WorkerLogBroker = client.app["worker_log_broker"]
+        broker.subscribe(client_id, object())
+
+        resp = await client.get(
+            f"/api/v1/workers/{client_id}/control",
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body == {"stream_logs": True}
+    finally:
+        await _close(client)
+
+
+async def test_control_endpoint_requires_auth(tmp_path):
+    client = await _make_app(tmp_path)
+    try:
+        client_id = await _register(client)
+        resp = await client.get(f"/api/v1/workers/{client_id}/control")
+        assert resp.status == 401
+    finally:
+        await _close(client)
+
+
 async def test_ws_open_flips_is_watched(tmp_path):
     client = await _make_app(tmp_path)
     try:
