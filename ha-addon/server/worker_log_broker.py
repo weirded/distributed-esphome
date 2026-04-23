@@ -63,6 +63,28 @@ class WorkerLogBroker:
         if task is not None and not task.done():
             task.cancel()
 
+    def subscribe_and_snapshot(self, client_id: str, ws: Any) -> str:
+        """Subscribe ``ws`` and return the buffer snapshot, atomically.
+
+        Both operations run in the same sync block — no ``await``
+        between them — so under asyncio's cooperative scheduling no
+        concurrent ``append_async`` call can interleave and cause the
+        UI to see a chunk twice (once in the snapshot and once in the
+        live WS stream). Callers MUST send the returned string as the
+        first frame on ``ws`` before awaiting anything else.
+        """
+        # Read buffer first so the snapshot reflects "state up to now".
+        # Subscribe second so any append that happens after this line
+        # fans out to ``ws`` — and will arrive *after* the snapshot
+        # frame because aiohttp's WS writer serialises send_str calls.
+        buf = self._buffers.get(client_id)
+        snapshot = "".join(buf) if buf else ""
+        self._subscribers.setdefault(client_id, set()).add(ws)
+        task = self._evict_tasks.pop(client_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        return snapshot
+
     def unsubscribe(self, client_id: str, ws: Any) -> None:
         subs = self._subscribers.get(client_id)
         if not subs:

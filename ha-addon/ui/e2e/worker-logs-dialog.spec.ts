@@ -34,18 +34,6 @@ async function openActions(page: import('@playwright/test').Page, hostname: stri
 }
 
 test('View logs opens a dialog titled with the worker hostname', async ({ page }) => {
-  await page.route('**/ui/api/workers/*/logs', route => {
-    if (route.request().method() === 'GET') {
-      route.fulfill({
-        status: 200,
-        contentType: 'text/plain; charset=utf-8',
-        body: '2026-04-23 INFO worker starting\n',
-      });
-      return;
-    }
-    route.continue();
-  });
-
   await openActions(page, 'build-server-1');
   const viewLogsItem = page.getByRole('menuitem', { name: 'View logs' });
   await expect(viewLogsItem).toBeVisible();
@@ -57,51 +45,25 @@ test('View logs opens a dialog titled with the worker hostname', async ({ page }
   await expect(dialog.getByText('build-server-1', { exact: true })).toBeVisible();
 });
 
-test('View logs hydrates xterm with the server snapshot', async ({ page }) => {
-  const hostname = 'build-server-1';
-  let snapshotRequested = false;
-  await page.route('**/ui/api/workers/*/logs', route => {
-    if (route.request().method() === 'GET') {
-      snapshotRequested = true;
-      route.fulfill({
-        status: 200,
-        contentType: 'text/plain; charset=utf-8',
-        body: 'SENTINEL-HYDRATED-OK\n',
-      });
-      return;
-    }
-    route.continue();
-  });
+test('View logs opens a WS to the worker-logs endpoint', async ({ page }) => {
+  // Hydration and live tail both flow through the same WS — no
+  // separate GET snapshot. This test asserts the WS is opened to
+  // the right URL; backend coverage (test_worker_log_broker.py's
+  // TestSubscribeAndSnapshot) proves the first frame is the buffer.
+  const wsUrls: string[] = [];
+  page.on('websocket', ws => wsUrls.push(ws.url()));
 
-  await openActions(page, hostname);
-  await page.getByRole('menuitem', { name: 'View logs' }).click();
+  await openActions(page, 'build-server-1');
+  const viewLogsItem = page.getByRole('menuitem', { name: 'View logs' });
+  await expect(viewLogsItem).toBeVisible();
+  await viewLogsItem.click();
 
-  await expect.poll(() => snapshotRequested).toBe(true);
-
-  // xterm renders each character into its own span; assert the
-  // content via textContent of the xterm viewport so we don't depend
-  // on rendering specifics.
-  const viewport = page.locator('.xterm-container').first();
-  await expect(viewport).toBeVisible();
   await expect.poll(
-    async () => (await viewport.textContent()) || '',
-    { timeout: 5_000 },
-  ).toContain('SENTINEL-HYDRATED-OK');
+    () => wsUrls.find(u => u.includes('/ui/api/workers/worker-1/logs/ws')) ?? '',
+  ).toContain('/ui/api/workers/worker-1/logs/ws');
 });
 
 test('Download log exports a worker-specific filename', async ({ page }) => {
-  await page.route('**/ui/api/workers/*/logs', route => {
-    if (route.request().method() === 'GET') {
-      route.fulfill({
-        status: 200,
-        contentType: 'text/plain; charset=utf-8',
-        body: 'line1\nline2\n',
-      });
-      return;
-    }
-    route.continue();
-  });
-
   await openActions(page, 'build-server-1');
   const viewLogsItem = page.getByRole('menuitem', { name: 'View logs' });
   await expect(viewLogsItem).toBeVisible();

@@ -1258,9 +1258,16 @@ async def get_worker_logs_snapshot(request: web.Request) -> web.Response:
 async def ws_worker_logs(request: web.Request) -> web.WebSocketResponse:
     """WL.3 live tail: open WS == 'user is watching this worker'.
 
-    The subscriber count maintained by the broker is exactly what drives
-    ``stream_logs`` in the heartbeat response. Closing this WS decrements
-    the count, which flips the worker's pusher off within one heartbeat.
+    The first frame sent is the broker's current buffer snapshot
+    (hydration). Every subsequent frame is a live push fanned out by
+    the broker. Combining hydration and live tail into one ordered
+    stream removes the race where a separate GET snapshot and a
+    parallel WS subscribe both observed the same chunk — the UI
+    would then write those lines twice.
+
+    The subscriber count drives ``stream_logs`` in the control-poll /
+    heartbeat response. Closing this WS decrements the count, which
+    flips the worker's pusher off within ~1 s.
     """
     client_id = request.match_info["id"]
     broker = request.app.get("worker_log_broker")
@@ -1272,8 +1279,13 @@ async def ws_worker_logs(request: web.Request) -> web.WebSocketResponse:
         await ws.close()
         return ws
 
-    broker.subscribe(client_id, ws)
+    # Atomic subscribe + snapshot — no await between reading the
+    # buffer and adding ws to subscribers, so no concurrent
+    # append_async can interleave.
+    snapshot = broker.subscribe_and_snapshot(client_id, ws)
     try:
+        if snapshot:
+            await ws.send_str(snapshot)
         async for msg in ws:
             if msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
                 break

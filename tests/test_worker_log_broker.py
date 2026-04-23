@@ -155,6 +155,34 @@ class _FakeWS:
         self.sent.append(data)
 
 
+class TestSubscribeAndSnapshot:
+    def test_subscribe_and_snapshot_returns_current_buffer(self) -> None:
+        broker = WorkerLogBroker()
+        broker.append("w1", offset=0, lines="past\n")
+        snap = broker.subscribe_and_snapshot("w1", object())
+        assert snap == "past\n"
+
+    def test_subscribe_and_snapshot_empty_when_no_buffer(self) -> None:
+        broker = WorkerLogBroker()
+        assert broker.subscribe_and_snapshot("w1", object()) == ""
+
+    def test_subscribe_and_snapshot_adds_subscriber(self) -> None:
+        broker = WorkerLogBroker()
+        ws = object()
+        broker.subscribe_and_snapshot("w1", ws)
+        assert broker.is_watched("w1") is True
+
+    def test_subscribe_and_snapshot_cancels_eviction(self) -> None:
+        # Same fast-path cancellation as plain subscribe.
+        broker = WorkerLogBroker(evict_after_seconds=3600)
+        ws_a = object()
+        broker.subscribe("w1", ws_a)
+        broker.unsubscribe("w1", ws_a)  # schedules eviction
+        # Re-subscribe via the snapshot variant cancels it.
+        broker.subscribe_and_snapshot("w1", object())
+        assert "w1" not in broker._evict_tasks or broker._evict_tasks["w1"].cancelled()
+
+
 class TestFanout:
     async def test_append_fans_out_to_subscribers(self) -> None:
         broker = WorkerLogBroker()

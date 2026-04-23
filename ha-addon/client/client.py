@@ -44,7 +44,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.6.2-dev.23"
+CLIENT_VERSION = "1.6.2-dev.25"
 
 
 def _read_image_version() -> Optional[str]:
@@ -368,10 +368,24 @@ def _clean_build_cache() -> None:
 # WL.2: pull-when-watched log pusher
 # ---------------------------------------------------------------------------
 
-# Set by the heartbeat loop whenever the server's HeartbeatResponse flips
-# ``stream_logs=True``; cleared on False. Owned by the heartbeat loop;
-# read by the pusher thread.
+# Set by the control-poll / heartbeat loops whenever the server reports
+# ``stream_logs=True``; cleared on False. Read by the pusher thread.
 _stream_logs_event = threading.Event()
+
+# Byte-offset the next pusher push should start from. Module-scoped so
+# it survives the pusher thread exiting when a user closes the dialog —
+# otherwise a close+reopen would respawn the pusher with
+# ``acked_offset=0`` and re-send the whole ring buffer. The server
+# treats that as a worker restart (offset=0 after next_offset>0), emits
+# its "--- worker restarted ---" separator, and the UI sees every line
+# twice.
+_log_push_acked_offset = 0
+_log_push_lock = threading.Lock()
+
+# Guards the check-then-spawn in _update_log_streaming so the control-
+# poll thread and the heartbeat thread can't race into spawning two
+# pushers.
+_streaming_start_lock = threading.Lock()
 
 
 def _log_pusher_loop(client_id: str, stop_event: threading.Event) -> None:
@@ -381,14 +395,18 @@ def _log_pusher_loop(client_id: str, stop_event: threading.Event) -> None:
     that event clears (server told us to stop) or ``stop_event`` is set
     (process shutdown).
 
-    Retry policy on transport error: do NOT advance ``acked_offset``;
-    the next tick will re-send from the same point. Lines never drop
-    on happy + 5xx paths; a duplicate slipping through on a lost-ack
-    is tolerated by the server (it dedupes when the byte range fully
-    overlaps what it already has).
+    Acked offset lives in the module-level ``_log_push_acked_offset``
+    so a dialog close+reopen picks up where the previous pusher left
+    off — no re-sending chunks the server already has.
+
+    Retry policy on transport error: do NOT advance the ack; the next
+    tick will re-send from the same point. Lines never drop on happy
+    + 5xx paths.
     """
-    acked_offset = 0
+    global _log_push_acked_offset
     while _stream_logs_event.is_set() and not stop_event.is_set():
+        with _log_push_lock:
+            acked_offset = _log_push_acked_offset
         chunk, new_offset = _log_capture.drain_since(acked_offset)
         if chunk:
             try:
@@ -398,7 +416,8 @@ def _log_pusher_loop(client_id: str, stop_event: threading.Event) -> None:
                     timeout=10,
                 )
                 if resp.ok:
-                    acked_offset = new_offset
+                    with _log_push_lock:
+                        _log_push_acked_offset = new_offset
                 # else: transient server-side error, retry next tick.
             except requests.RequestException:
                 # Network hiccup — retry next tick without advancing.
@@ -435,24 +454,29 @@ def _control_poll_loop(client_id: str, stop_event: threading.Event) -> None:
 
 def _update_log_streaming(client_id: str, stream_logs: Optional[bool],
                           stop_event: threading.Event) -> None:
-    """Start or stop the pusher thread on heartbeat-flag transitions.
+    """Start or stop the pusher thread on watch-state transitions.
 
-    None means "unchanged — default state pre-WL, absent field in
-    response"; only explicit True/False drive state changes.
+    Called from both the control-poll loop (1 Hz) and the heartbeat
+    loop (10 s). None means "unchanged — default state pre-WL, absent
+    field in response"; only explicit True/False drive state changes.
+
+    Guarded by ``_streaming_start_lock`` so the two callers can't race
+    into spawning two pusher threads for the same transition.
     """
     if stream_logs is None:
         return
-    if stream_logs and not _stream_logs_event.is_set():
-        _stream_logs_event.set()
-        t = threading.Thread(
-            target=_log_pusher_loop,
-            args=(client_id, stop_event),
-            name="log-pusher",
-            daemon=True,
-        )
-        t.start()
-    elif not stream_logs and _stream_logs_event.is_set():
-        _stream_logs_event.clear()
+    with _streaming_start_lock:
+        if stream_logs and not _stream_logs_event.is_set():
+            _stream_logs_event.set()
+            t = threading.Thread(
+                target=_log_pusher_loop,
+                args=(client_id, stop_event),
+                name="log-pusher",
+                daemon=True,
+            )
+            t.start()
+        elif not stream_logs and _stream_logs_event.is_set():
+            _stream_logs_event.clear()
 
 
 def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:

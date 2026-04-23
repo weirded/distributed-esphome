@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { buildWsUrl, getJobLog, getWorkerLogSnapshot } from '../api/client';
+import { buildWsUrl, getJobLog } from '../api/client';
 import { useVersioningEnabled } from '../hooks/useVersioning';
 import { copyTerminalText, downloadTerminalText } from '../utils/terminal';
 import type { Job, Worker } from '../types';
@@ -213,28 +213,29 @@ export function LogModal({ source, queue, workers, onClose, onRetry, onEdit, onO
         startJobPolling(source.jobId);
       }
     } else {
-      // WL.3 worker-log path: one-shot hydration then WS for live tail.
-      // No HTTP polling fallback — the snapshot GET covers offline state,
-      // and a WS failure just leaves the dialog with whatever the snapshot
-      // contained.
+      // WL.3 worker-log path: hydration snapshot AND live tail flow
+      // through the same WS connection. Server sends the current
+      // buffer as the first frame, then every subsequent push. That
+      // removes the hydration/live race a separate GET would create.
       const workerId = source.workerId;
-      (async () => {
-        try {
-          const snapshot = await getWorkerLogSnapshot(workerId);
-          if (!mountedRef.current || !termRef.current) return;
-          if (snapshot) {
-            termRef.current.write(snapshot);
-          } else {
-            // Dim hint so the user knows they're not staring at a dead
-            // dialog during the up-to-10-s wait for the next heartbeat
-            // to pick up stream_logs=true.
-            termRef.current.write('\x1b[2mWaiting for worker to start streaming… (up to 10 s)\x1b[0m\r\n');
-          }
-        } catch { /* ignore */ }
-      })();
+      // Dim hint while the WS handshake is in flight so the user
+      // isn't staring at a blank terminal for a beat.
+      if (termRef.current) {
+        termRef.current.write('\x1b[2mConnecting to worker…\x1b[0m\r\n');
+      }
+      let firstFrameReceived = false;
       try {
         const ws = new WebSocket(buildWsUrl(`ui/api/workers/${workerId}/logs/ws`));
-        ws.onmessage = (e) => { if (termRef.current) termRef.current.write(e.data as string); };
+        ws.onmessage = (e) => {
+          if (!termRef.current) return;
+          if (!firstFrameReceived) {
+            // Replace the dim "Connecting…" line with the real content
+            // on the first frame so the hint doesn't persist at the top.
+            termRef.current.reset();
+            firstFrameReceived = true;
+          }
+          termRef.current.write(e.data as string);
+        };
         ws.onclose = () => { wsRef.current = null; };
         wsRef.current = ws;
       } catch { /* ignore */ }
