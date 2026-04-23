@@ -439,7 +439,7 @@ def test_pick_latest_stable_accepts_short_versions():
 # Bug #11 (1.6.1): reseed after ensure_esphome_installed completes
 # ---------------------------------------------------------------------------
 
-def test_reseed_device_poller_refreshes_after_install(tmp_path):
+async def test_reseed_device_poller_refreshes_after_install(tmp_path):
     """On first boot the ESPHome venv hasn't been installed yet, so
     ``build_name_to_target_map`` returns empty encryption keys — every
     YAML whose ``esphome.name`` needs the substitution pass comes back
@@ -450,7 +450,12 @@ def test_reseed_device_poller_refreshes_after_install(tmp_path):
     tail of the install task so the poller catches up without waiting
     for the next 30-second config-scanner tick. This test simulates
     the narrow invariant: an empty-first-seed poller is re-populated
-    with real keys on the second call."""
+    with real keys on the second call.
+
+    Async because the helper is async (#84 moved the heavy
+    ``build_name_to_target_map`` into an executor so the full
+    ESPHome validator doesn't block the event loop — see main.py).
+    """
     from main import reseed_device_poller_from_config
 
     # Stand up a minimal ESPHome fixture inside tmp_path so the
@@ -486,14 +491,14 @@ def test_reseed_device_poller_refreshes_after_install(tmp_path):
 
     # First call — stands in for the in-flight install window: the
     # poller now sees whatever the scanner resolved.
-    reseed_device_poller_from_config(app, reason="test-initial")
+    await reseed_device_poller_from_config(app, reason="test-initial")
     first_keys = dict(captured["enc_keys"])
     assert "my-device.yaml" in captured["targets"]
 
     # Second call mirrors what runs after ``ensure_esphome_installed``
     # completes — same inputs, same outputs, but the code path at
     # least executes cleanly and re-issues update_compile_targets.
-    reseed_device_poller_from_config(app, reason="esphome install complete")
+    await reseed_device_poller_from_config(app, reason="esphome install complete")
     assert captured["enc_keys"] == first_keys
     # Bug #11 belt-and-braces: encryption keys carry both hyphenated
     # and underscore-normalised aliases after reseed.
@@ -501,7 +506,7 @@ def test_reseed_device_poller_refreshes_after_install(tmp_path):
     assert "my_device" in captured["enc_keys"]
 
 
-def test_reseed_device_poller_no_op_when_poller_absent(tmp_path):
+async def test_reseed_device_poller_no_op_when_poller_absent(tmp_path):
     """No device_poller in app — the helper returns without raising."""
     from main import reseed_device_poller_from_config
 
@@ -510,4 +515,4 @@ def test_reseed_device_poller_no_op_when_poller_absent(tmp_path):
 
     app = {"config": _Cfg()}
     # Should just return; no assertion needed beyond "didn't raise".
-    reseed_device_poller_from_config(app, reason="no poller")
+    await reseed_device_poller_from_config(app, reason="no poller")

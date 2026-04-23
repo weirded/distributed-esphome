@@ -710,7 +710,7 @@ async def ha_entity_poller(app: web.Application) -> None:
             first_poll = False
 
 
-def reseed_device_poller_from_config(app: web.Application, *, reason: str) -> None:
+async def reseed_device_poller_from_config(app: web.Application, *, reason: str) -> None:
     """Bug #11 (1.6.1): re-run ``build_name_to_target_map`` and re-seed
     the device poller's name_map, encryption_keys, and address overrides.
 
@@ -726,6 +726,14 @@ def reseed_device_poller_from_config(app: web.Application, *, reason: str) -> No
 
     *reason* is a short string logged alongside the reseed so operators
     can trace which trigger fired.
+
+    Runs on a thread executor because ``build_name_to_target_map`` calls
+    ESPHome's full validator per target (#84), which is CPU-bound
+    (voluptuous schemas + component tree) and at ~67 targets blocks the
+    event loop for tens of seconds on a shared-core HAOS box. Long
+    enough to trip Supervisor's healthcheck and trigger a container
+    restart. Keeping the work off the event loop is what makes the
+    server stay reachable during a rescan.
     """
     from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
     cfg: AppConfig = app["config"]
@@ -733,9 +741,10 @@ def reseed_device_poller_from_config(app: web.Application, *, reason: str) -> No
     if device_poller is None:
         return
     try:
-        targets = scan_configs(cfg.config_dir)
-        name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(
-            cfg.config_dir, targets,
+        loop = asyncio.get_running_loop()
+        targets = await loop.run_in_executor(None, scan_configs, cfg.config_dir)
+        name_map, enc_keys, addr_overrides, addr_sources = await loop.run_in_executor(
+            None, build_name_to_target_map, cfg.config_dir, targets,
         )
         device_poller.update_compile_targets(
             targets, name_map, enc_keys, addr_overrides, addr_sources,
@@ -749,21 +758,30 @@ def reseed_device_poller_from_config(app: web.Application, *, reason: str) -> No
 
 
 async def config_scanner(app: web.Application) -> None:
-    """Background task: re-scan config dir every 30s and update device poller targets."""
+    """Background task: re-scan config dir every 30s and update device poller targets.
+
+    ``build_name_to_target_map`` runs in an executor because it calls
+    ESPHome's full validator per target (#84), which is CPU-bound and,
+    at ~67 targets, blocks long enough to trip Supervisor's container
+    healthcheck if run on the event loop.
+    """
     from scanner import scan_configs, build_name_to_target_map  # noqa: PLC0415
 
     cfg: AppConfig = app["config"]
     device_poller = app.get("device_poller")
     prev_targets: list[str] = []
+    loop = asyncio.get_running_loop()
 
     while True:
         await asyncio.sleep(30)
         try:
-            targets = scan_configs(cfg.config_dir)
+            targets = await loop.run_in_executor(None, scan_configs, cfg.config_dir)
             if targets != prev_targets:
                 logger.info("Config change detected: %d targets (was %d)", len(targets), len(prev_targets))
                 if device_poller:
-                    name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(cfg.config_dir, targets)
+                    name_map, enc_keys, addr_overrides, addr_sources = await loop.run_in_executor(
+                        None, build_name_to_target_map, cfg.config_dir, targets,
+                    )
                     device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides, addr_sources)
                 prev_targets = targets
         except Exception:
@@ -1173,7 +1191,7 @@ async def pypi_version_refresher(app: web.Application) -> None:
                                 "SE.4: ensure_esphome_installed(%s) raised", ver,
                             )
                             return
-                        reseed_device_poller_from_config(
+                        await reseed_device_poller_from_config(
                             app, reason=f"esphome version change → {ver}",
                         )
 
@@ -1486,12 +1504,17 @@ def create_app() -> web.Application:
             # YAML needs substitution-pass resolution returned None.
             # Now that the venv is ready, reseed the poller so live
             # logs + OTA can actually reach encrypted devices.
-            reseed_device_poller_from_config(app, reason="esphome install complete")
+            await reseed_device_poller_from_config(app, reason="esphome install complete")
         app["esphome_install_task"] = asyncio.create_task(_install_esphome_background())
 
-        # Update device poller with known targets
+        # Update device poller with known targets. Runs in executor —
+        # see reseed_device_poller_from_config for the rationale (full
+        # ESPHome validation is CPU-bound and blocks the event loop).
+        startup_loop = asyncio.get_running_loop()
         targets = scan_configs(cfg.config_dir)
-        name_map, enc_keys, addr_overrides, addr_sources = build_name_to_target_map(cfg.config_dir, targets)
+        name_map, enc_keys, addr_overrides, addr_sources = await startup_loop.run_in_executor(
+            None, build_name_to_target_map, cfg.config_dir, targets,
+        )
         device_poller.update_compile_targets(targets, name_map, enc_keys, addr_overrides, addr_sources)
 
         # Start device poller
