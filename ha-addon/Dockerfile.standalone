@@ -1,6 +1,13 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y gcc libffi-dev libssl-dev && rm -rf /var/lib/apt/lists/*
+# Match ha-addon/Dockerfile's apt layer. `git` is load-bearing for the
+# server's git_versioning module (on-disk history of config edits);
+# without it the feature silently errors out at startup ("git binary
+# not found on PATH; auto-versioning disabled") and every save is
+# dropped from history. Exposed by HT.14 — bug #104.
+# `iputils-ping` keeps the server-spawned local worker's OTA network-
+# diagnostics probe functional, same as the add-on image (bug #6).
+RUN apt-get update && apt-get install -y gcc libffi-dev libssl-dev git iputils-ping && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY server/requirements.txt .

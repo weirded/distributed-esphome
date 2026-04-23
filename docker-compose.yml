@@ -1,0 +1,70 @@
+# ESPHome Fleet — standalone Docker deployment.
+#
+# This compose file is the supported shape for running the server
+# outside Home Assistant. `scripts/push-to-standalone.sh` uses it to
+# provision a fresh test host for the HT.14 regression guard; end
+# users can copy it as-is for their own deployments.
+#
+# Usage:
+#   SERVER_TOKEN=$(openssl rand -hex 32) docker compose up -d
+#   # UI: http://<host>:8765
+#
+# Environment variables:
+#   SERVER_TOKEN    required — bearer token shared by server and worker
+#   TAG             optional — GHCR image tag (default: latest)
+#
+# Both services use host networking: the server's mDNS device discovery
+# and the worker's OTA uploads to ESP devices both need L2 reach to the
+# LAN. Bridge networking breaks both flows.
+#
+# The server-side HA_MODE=standalone is explicit rather than
+# auto-detected so the startup-banner assertion in the smoke suite is
+# deterministic regardless of whatever stray env vars the host may
+# carry.
+
+name: esphome-fleet
+
+services:
+  server:
+    image: ghcr.io/weirded/esphome-dist-server:${TAG:-latest}
+    container_name: esphome-fleet-server
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HA_MODE: standalone
+      SERVER_TOKEN: ${SERVER_TOKEN:?SERVER_TOKEN must be set; see README or scripts/standalone/deploy.sh}
+    volumes:
+      - esphome-dist-data:/data
+      - ./config-esphome:/config/esphome
+    healthcheck:
+      # require_ha_auth defaults to off in standalone, so an unauthed
+      # probe is the right readiness check. Uses python's urllib because
+      # Dockerfile.standalone is slim and ships neither curl nor wget;
+      # python3 is guaranteed to be there as the server runtime.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/ui/api/server-info', timeout=5).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  worker:
+    image: ghcr.io/weirded/esphome-dist-client:${TAG:-latest}
+    container_name: esphome-fleet-worker
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      SERVER_URL: http://127.0.0.1:8765
+      SERVER_TOKEN: ${SERVER_TOKEN:?SERVER_TOKEN must be set}
+      HOSTNAME: ${WORKER_HOSTNAME:-standalone-worker}
+      MAX_PARALLEL_JOBS: ${WORKER_MAX_JOBS:-1}
+    volumes:
+      - esphome-versions:/esphome-versions
+
+volumes:
+  esphome-dist-data:
+    name: esphome-dist-data
+  esphome-versions:
+    name: esphome-versions
