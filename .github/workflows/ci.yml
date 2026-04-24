@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install \
-            pytest pytest-asyncio pytest-cov pytest-xdist \
+            pytest pytest-asyncio pytest-cov pytest-xdist pytest-socket \
             aiohttp aioesphomeapi zeroconf \
             requests psutil pydantic croniter apscheduler \
             esphome
