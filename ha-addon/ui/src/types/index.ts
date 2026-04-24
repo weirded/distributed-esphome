@@ -53,6 +53,14 @@ export interface Target {
   running_version?: string;
   online?: boolean | null;
   needs_update?: boolean;
+  /**
+   * Fallback "config changed locally" signal used when
+   * `config_drifted_since_flash` is null (no past flash, etc). In a git
+   * repo this reflects `git status` (uncommitted local edits). On a
+   * non-repo config dir it falls back to `yaml.mtime > device.compilation_time`.
+   * Prefer the `hasDriftedConfig` helper in `components/devices/drift.ts`
+   * over reading this directly.
+   */
   config_modified?: boolean;
   last_seen?: string;
   compilation_time?: number;
@@ -128,9 +136,11 @@ export interface Target {
    * files that changed in between. Null when the signal is
    * unknown (no last-flashed hash, no git repo, etc).
    *
-   * Distinct from `config_modified` — the latter is mtime-based
-   * and false-positives on `git checkout`. Prefer this flag when
-   * it's non-null; fall back to `config_modified` when it is.
+   * Distinct from `config_modified` — this one is scoped to the
+   * last successful flash; the other is a "has the user edited this
+   * locally" fallback. Prefer this flag when it's non-null; fall back
+   * to `config_modified` when it is. The `hasDriftedConfig` helper in
+   * `components/devices/drift.ts` encapsulates that precedence.
    */
   config_drifted_since_flash?: boolean | null;
   /**

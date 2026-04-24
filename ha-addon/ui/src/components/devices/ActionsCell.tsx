@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { Target } from '../../types';
 import { Button } from '../ui/button';
 import { DeviceContextMenu } from './DeviceContextMenu';
+import { driftTooltip, hasDriftedConfig } from './drift';
 
 /**
  * Row actions cell: Upgrade + Edit + hamburger menu (#4).
@@ -64,21 +65,19 @@ function ActionsCellImpl({
   onCommitChanges,
   onMenuOpenChange,
 }: Props) {
-  // Bug #32: highlight the Upgrade button when the YAML has changed
-  // since the last successful flash. Preferred signal is the git-hash
-  // based `config_drifted_since_flash` (precise — survives mtime-churn
-  // from `git checkout` etc); falls back to the older mtime-based
-  // `config_modified` when drift info isn't available (no past flash
-  // recorded, repo isn't a git repo, etc). `needs_update` remains the
-  // ESPHome-compiler-version signal and also wins the green variant.
-  const configDrifted = t.config_drifted_since_flash === true
-    || (t.config_drifted_since_flash == null && t.config_modified === true);
+  // Bug #32: highlight the Upgrade button when the YAML has drifted.
+  // `hasDriftedConfig` is the single source of truth shared with the
+  // "config changed" badge in useDeviceColumns — see ./drift.ts for the
+  // precedence (git-diff-since-flash > git-status > mtime). `needs_update`
+  // remains the ESPHome-compiler-version signal and also wins the green
+  // variant.
+  const configDrifted = hasDriftedConfig(t);
   const upgradeVariant: 'success' | 'secondary' =
     t.needs_update || configDrifted ? 'success' : 'secondary';
   const upgradeTitle = inFlight
     ? 'A build is already running. Click to queue the next compile (will use the latest YAML at the time it starts).'
     : configDrifted && !t.needs_update
-      ? 'Config has changed since this device was last flashed — Upgrade to apply.'
+      ? (driftTooltip(t) ?? 'Config has changed since this device was last flashed — Upgrade to apply.')
       : undefined;
 
   return (

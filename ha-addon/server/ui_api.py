@@ -671,19 +671,29 @@ async def get_targets(request: web.Request) -> web.Response:
     for target in targets:
         dev = devices_by_target.get(target)
         meta = get_device_metadata(cfg.config_dir, target)
-        # Detect config changes since last compile
-        config_modified = None
-        if dev and dev.compilation_time:
-            try:
-                from datetime import datetime  # noqa: PLC0415
-                # compilation_time format: "Mar 29 2026, 17:00:00"
-                compile_dt = datetime.strptime(dev.compilation_time, "%b %d %Y, %H:%M:%S")
-                config_path = Path(cfg.config_dir) / target
-                if config_path.exists():
-                    mtime_dt = datetime.fromtimestamp(config_path.stat().st_mtime)
-                    config_modified = mtime_dt > compile_dt
-            except Exception:
-                pass
+        # Detect "config changed locally" — the fallback shown when the
+        # precise drift signal (``config_drifted_since_flash``, scoped to
+        # the last successful flash) isn't available. Prefer `git status`
+        # when the config dir is a git repo: a user's mental model of
+        # "changed locally" is "`git status` shows it dirty", and mtime
+        # false-positives whenever something touches the file without
+        # editing it (editor autosave, `git checkout`, etc.). mtime is
+        # kept only as a last resort for non-repo config dirs.
+        if head_hash:
+            config_modified: bool | None = target in dirty_set
+        else:
+            config_modified = None
+            if dev and dev.compilation_time:
+                try:
+                    from datetime import datetime  # noqa: PLC0415
+                    # compilation_time format: "Mar 29 2026, 17:00:00"
+                    compile_dt = datetime.strptime(dev.compilation_time, "%b %d %Y, %H:%M:%S")
+                    config_path = Path(cfg.config_dir) / target
+                    if config_path.exists():
+                        mtime_dt = datetime.fromtimestamp(config_path.stat().st_mtime)
+                        config_modified = mtime_dt > compile_dt
+                except Exception:
+                    pass
         # Determine if this target has an API encryption key in its config
         has_api_key = False
         if device_poller and device_poller._encryption_keys:
@@ -789,7 +799,9 @@ async def get_targets(request: web.Request) -> web.Response:
             # flash; drift is True when that file has changed between
             # that hash and current HEAD. Null when either side is
             # unknown (no git repo, no past flash, or the target is
-            # uncommitted) — UI falls back to `config_modified`.
+            # uncommitted) — UI falls back to `config_modified`, which
+            # in a git repo reflects `git status` (dirty set) rather than
+            # file mtime.
             "last_flashed_config_hash": last_flashed_by_target.get(target),
             "config_drifted_since_flash": (
                 None if not head_hash or target not in last_flashed_by_target

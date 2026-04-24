@@ -7,6 +7,7 @@ import { getJobBadge } from '../../utils/jobState';
 import { StatusDot } from '../StatusDot';
 import { SortHeader } from '../ui/sort-header';
 import { ActionsCell } from './ActionsCell';
+import { driftTooltip, hasDriftedConfig } from './drift';
 
 /**
  * TanStack column defs for the Devices tab (QS.17).
@@ -464,7 +465,9 @@ export function useDeviceColumns(options: Options) {
               <Pin className="size-3" aria-label="Pinned ESPHome version" />
             </span>
           )}
-          {t.config_modified && <div className="config-modified">config changed</div>}
+          {hasDriftedConfig(t) && (
+            <div className="config-modified" title={driftTooltip(t)}>config changed</div>
+          )}
         </span>
       ),
       sortingFn: 'alphanumeric',
