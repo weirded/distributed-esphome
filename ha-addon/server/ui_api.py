@@ -2152,6 +2152,34 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _PENDING_PREFIX = ".pending."
 
 
+def _ensure_config_dir(config_dir: Path) -> bool:
+    """Lazy-create the config dir the first time a UI write needs it.
+
+    Complements #86 (scanner stays silent on missing dir — no poll
+    spam) — fixes #190 — a truly-empty install where the HA ESPHome
+    builder add-on was never installed and the user clicks
+    **Add Device**, the staged-file write would 500 with ``[Errno 2]
+    No such file or directory`` because the parent dir doesn't exist.
+
+    Creating is idempotent + logged once so operators see "first ever
+    write landed" in the boot log, and a pre-existing dir is a no-op.
+    Returns ``True`` if we actually created the dir so the caller can
+    re-run ``init_repo`` (versioning=on + fresh dir → fresh repo).
+    """
+    if config_dir.exists():
+        return False
+    config_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("Created %s on first UI write (#190)", config_dir)
+    try:
+        from settings import get_settings  # noqa: PLC0415
+        if get_settings().versioning_enabled == "on":
+            from git_versioning import init_repo  # noqa: PLC0415
+            init_repo(config_dir)
+    except Exception:
+        logger.exception("Post-mkdir init_repo raised unexpectedly (#190)")
+    return True
+
+
 @routes.post("/ui/api/targets")
 async def create_target(request: web.Request) -> web.Response:
     """Create a new device YAML file (CD.3).
@@ -2195,6 +2223,12 @@ async def create_target(request: web.Request) -> web.Response:
         return json_error("filename too long (max 64 characters)")
 
     new_filename = f"{name}.yaml"
+    # #190: first-install path — the user may be creating the very
+    # first device on a box that has no ``/config/esphome/`` yet
+    # (HAOS without the ESPHome builder add-on, standalone Docker
+    # without a pre-mounted config dir). Create the dir now and
+    # fire init_repo if versioning is on.
+    _ensure_config_dir(config_dir)
     # Check for collision with the FINAL name (not the staging name)
     final_dest = safe_resolve(config_dir, new_filename)
     if final_dest is None:

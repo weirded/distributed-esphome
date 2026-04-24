@@ -189,7 +189,7 @@ COPYFILE_DISABLE=1 tar cf "$TARBALL" -C "$ADDON_DIR" \
   --exclude="__pycache__" --exclude=".pytest_cache" --exclude=".mypy_cache" \
   --exclude=".ruff_cache" --exclude="._*" --exclude=".DS_Store" \
   --exclude="ui" \
-  "${GHCR_EXCLUDES[@]}" \
+  ${GHCR_EXCLUDES[@]+"${GHCR_EXCLUDES[@]}"} \
   .
 log "Tarball size: $(du -h "$TARBALL" | awk '{print $1}')"
 

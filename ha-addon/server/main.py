@@ -1349,12 +1349,24 @@ def create_app() -> web.Application:
     # default — pre-existing repo → off by default (Pat-with-git),
     # fresh-init → on by default (Pat-no-git). Sync call here is fine;
     # the event loop hasn't started yet.
-    try:
-        from git_versioning import init_repo  # noqa: PLC0415
-        fresh_repo = init_repo(Path(cfg.config_dir))
-    except Exception:
-        logger.exception("git auto-init raised unexpectedly")
-        fresh_repo = None  # "don't override the default"
+    #
+    # #191: if ``/config/esphome`` doesn't exist at all (truly-empty
+    # first install — no HA ESPHome builder add-on, no pre-existing
+    # Fleet data), ``init_repo`` used to return False which
+    # ``init_settings`` read as "pre-existing repo" and logged
+    # accordingly. Gate on directory existence so we pass ``None``
+    # ("don't classify") instead — matches the semantics used by
+    # tests / non-Supervisor harnesses.
+    config_dir_path = Path(cfg.config_dir)
+    if not config_dir_path.is_dir():
+        fresh_repo = None
+    else:
+        try:
+            from git_versioning import init_repo  # noqa: PLC0415
+            fresh_repo = init_repo(config_dir_path)
+        except Exception:
+            logger.exception("git auto-init raised unexpectedly")
+            fresh_repo = None  # "don't override the default"
 
     # SP.1/SP.2: load in-app settings (/data/settings.json) — created on
     # first boot after 1.6 upgrade and seeded from the current options.json
