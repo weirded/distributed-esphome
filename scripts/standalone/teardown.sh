@@ -37,10 +37,11 @@ echo "==> Tearing down $STANDALONE_HOST:$STANDALONE_COMPOSE_DIR ..."
 # the named volumes in one shot. `|| true` because a fresh host where
 # the compose dir doesn't even exist yet should still be a successful
 # no-op teardown.
-rsh bash <<REMOTE
+rsh bash -s "$STANDALONE_COMPOSE_DIR" <<'REMOTE'
 set -eu
-if [[ -f '$STANDALONE_COMPOSE_DIR/docker-compose.yml' ]]; then
-  cd '$STANDALONE_COMPOSE_DIR'
+compose_dir="$1"
+if [[ -f "$compose_dir/docker-compose.yml" ]]; then
+  cd "$compose_dir"
   docker compose down -v --remove-orphans 2>&1 || true
   rm -rf config-esphome .env
 fi

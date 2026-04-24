@@ -24,7 +24,7 @@ No new UX regressions against 1.6.1. Three lightweight observations for 1.6.3 pi
 
 - **UX.2 — Empty Devices tab on a truly-first-install lacks CTA.** After #190 fixed the underlying Add Device failure, a fresh HAOS user lands on an empty Devices table with the same "No devices yet" copy an unhelpful "scroll looking for a button" experience. A prominent **Add your first device** button (or "Get started" card) at the empty-state would solve the "what do I click first" problem the HAOS first-install flow still presents. Not a 1.6.2 regression — the empty state was equally bare on 1.6.1 — but #105's PyPI fallback newly exposes this state to the HAOS install path.
 
-- **UX.3 — Request diagnostics downloads name collide across repeated clicks in the same second.** Filename pattern is `server-diagnostics-<HH:MM:SS>.txt`. Two clicks in the same second produce two files with identical basenames; Chrome appends ` (1)` but the reader sees two files with the same timestamp in the name. Add millisecond precision, or a short random suffix.
+- **UX.3 — ~~Request diagnostics downloads name collide across repeated clicks in the same second.~~** Resolved during review cycle: `terminal.ts` timestamp suffix extended to millisecond precision (`slice(0, 23)` instead of `slice(0, 19)`) for both `downloadTerminalText` and `downloadTextFile`. PR #87 Copilot thread.
 
 No blocker-class findings. 1.6.2 ships.
 
