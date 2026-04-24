@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Capture a Python thread dump from the running ESPHome Fleet add-on.
 #
+# **Normally you don't need this script.** Since 1.6.2 (#189) the
+# add-on UI has a first-class "Request diagnostics" action (Settings
+# → Advanced → Diagnostics, and Workers tab → Actions → Request
+# diagnostics) that produces the same thread-dump output via a
+# pure-Python frame walk with no privileged capabilities required.
+# Use it first.
+#
+# This script stays as the last-resort triage tool for the
+# pathological case the UI can't serve: the Python interpreter is so
+# deadlocked the HTTP endpoint never answers. py-spy walks frames
+# externally via ptrace, so it can still dump a process whose event
+# loop is frozen.
+#
 # Runs py-spy in a throwaway sidecar container that shares the add-on's
 # PID namespace. Does not modify the add-on or require a restart, so it
 # is safe to run while a "stuck at 100% CPU" reproduction is live.
@@ -8,7 +21,8 @@
 # Requires Docker on the host (HAOS: SSH & Web Terminal add-on with
 # Protection Mode OFF; Supervised: the host shell). No extra packages to
 # install — the sidecar pulls python:3.11-slim and `pip install py-spy`
-# on the fly (~15s first time, cached after).
+# on the fly (~15s first time, cached after). The add-on image itself
+# no longer ships py-spy (removed in #189 when the UI path landed).
 #
 # Usage:
 #   ./threaddump-addon.sh              # dump the server process

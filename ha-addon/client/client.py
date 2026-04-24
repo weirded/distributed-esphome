@@ -45,7 +45,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.6.2-dev.38"
+CLIENT_VERSION = "1.6.2-dev.39"
 
 
 def _read_image_version() -> Optional[str]:
@@ -505,45 +505,55 @@ def _maybe_handle_diagnostics_request(client_id: str, request_id: str) -> None:
     threading.Thread(target=_runner, name="diag-upload", daemon=True).start()
 
 
-def _produce_thread_dump() -> tuple[bool, str]:
-    """Run ``py-spy dump`` against our own pid and return ``(ok, text)``.
+def _in_process_thread_dump() -> str:
+    """Walk every live Python thread's stack and format the result as
+    plain text. Mirror of ``diagnostics.in_process_thread_dump`` on
+    the server side — duplicated here because the client image
+    doesn't include server-only modules (same reason protocol.py has
+    two byte-identical copies).
 
-    Lives in the client rather than the shared ``diagnostics`` module
-    (which only the server imports) because the client Dockerfile's
-    copy step doesn't include server-only modules.
+    Pure-Python frame walk via :func:`sys._current_frames` and
+    :func:`threading.enumerate`: no ``py-spy``, no subprocess, no
+    ``ptrace``. Works under any container constraints (HA add-on with
+    dropped ``CAP_SYS_PTRACE``, HAOS / Supervised sidecars, etc.) —
+    added in #189, supersedes #108's py-spy-subprocess path.
     """
-    import shutil  # noqa: PLC0415
-    binary = shutil.which("py-spy")
-    if binary is None:
-        return False, (
-            "py-spy is not installed on this worker. Expected to be bundled\n"
-            "in the client Docker image since 1.6.2 (IMAGE_VERSION=8+). If\n"
-            "you're seeing this message, `docker pull` a fresh\n"
-            "ghcr.io/weirded/esphome-dist-client image and restart."
-        )
-    cmd = [binary, "dump", "--pid", str(os.getpid())]
-    logger.info("diagnostics: running %s", " ".join(cmd))
-    try:
-        proc = subprocess.run(  # noqa: PLW1510 — explicit check=False below
-            cmd, capture_output=True, text=True, timeout=20.0, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False, "py-spy dump exceeded 20 s wall-clock — process likely deadlocked at the kernel boundary."
-    except OSError as exc:
-        return False, f"py-spy failed to launch: {exc}"
-    if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()
-        if "Permission Denied" in stderr or "SYS_PTRACE" in stderr:
-            return False, (
-                "py-spy was denied ptrace access by the container runtime.\n"
-                "Start the worker with `--cap-add SYS_PTRACE` (or use the\n"
-                "sidecar approach from scripts/threaddump-addon.sh in the\n"
-                "weirded/distributed-esphome repo).\n"
-                "\n"
-                f"py-spy stderr:\n{stderr}"
-            )
-        return False, f"py-spy exited with code {proc.returncode}:\n{stderr or '(no stderr)'}"
-    return True, proc.stdout
+    import platform  # noqa: PLC0415 — lazy import, only on diagnostics path
+    import traceback  # noqa: PLC0415
+
+    frames = sys._current_frames()
+    threads_by_ident = {t.ident: t for t in threading.enumerate()}
+
+    lines: list[str] = [
+        "ESPHome Fleet worker thread dump",
+        f"Process: pid={os.getpid()}  v{CLIENT_VERSION}  image={IMAGE_VERSION}",
+        f"Python {platform.python_version()} on {sys.platform}",
+        f"{len(frames)} thread(s)",
+        "",
+    ]
+    for tid, frame in frames.items():
+        thread = threads_by_ident.get(tid)
+        if thread is not None:
+            name = thread.name
+            daemon = "daemon=True" if thread.daemon else "daemon=False"
+        else:
+            name = "<unknown>"
+            daemon = "daemon=?"
+        lines.append(f'Thread {tid} "{name}" ({daemon}):')
+        for chunk in traceback.format_stack(frame):
+            for subline in chunk.rstrip("\n").splitlines():
+                lines.append(f"  {subline}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _produce_thread_dump() -> tuple[bool, str]:
+    """Capture a thread dump of this worker's own process. Returns
+    ``(ok, text)``; ``ok`` is always True on this code path since the
+    in-process frame walk can't fail under container constraints.
+    The bool is retained in the signature for protocol compatibility
+    with :class:`WorkerDiagnosticsUpload`."""
+    return True, _in_process_thread_dump()
 
 
 def _update_log_streaming(client_id: str, stream_logs: Optional[bool],

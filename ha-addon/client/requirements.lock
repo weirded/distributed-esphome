@@ -170,16 +170,6 @@ psutil==7.2.2 \
     --hash=sha256:eed63d3b4d62449571547b60578c5b2c4bcccc5387148db46e0c2313dad0ee00 \
     --hash=sha256:fd04ef36b4a6d599bbdb225dd1d3f51e00105f6d48a28f006da7f9822f2606d8
     # via -r ha-addon/client/requirements.txt
-py-spy==0.4.1 \
-    --hash=sha256:1fb8bf71ab8df95a95cc387deed6552934c50feef2cf6456bc06692a5508fd0c \
-    --hash=sha256:4972c21890b6814017e39ac233c22572c4a61fd874524ebc5ccab0f2237aee0a \
-    --hash=sha256:532d3525538254d1859b49de1fbe9744df6b8865657c9f0e444bf36ce3f19226 \
-    --hash=sha256:6a80ec05eb8a6883863a367c6a4d4f2d57de68466f7956b6367d4edd5c61bb29 \
-    --hash=sha256:809094208c6256c8f4ccadd31e9a513fe2429253f48e20066879239ba12cd8cc \
-    --hash=sha256:d92e522bd40e9bf7d87c204033ce5bb5c828fca45fa28d970f58d71128069fdc \
-    --hash=sha256:e53aa53daa2e47c2eef97dd2455b47bb3a7e7f962796a86cc3e7dbde8e6f4db4 \
-    --hash=sha256:ee776b9d512a011d1ad3907ed53ae32ce2f3d9ff3e1782236554e22103b5c084
-    # via -r ha-addon/client/requirements.txt
 pydantic==2.12.5 \
     --hash=sha256:4d351024c75c0f085a9febbb665ce8c0c6ec5d30e903bdb6394b7ede26aebb49 \
     --hash=sha256:e561593fccf61e8a20fc46dfc2dfe075b8be7d0188df33f221ad1f0139180f9d

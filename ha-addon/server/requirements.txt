@@ -13,9 +13,10 @@ pyyaml>=6.0
 # invisible until re-bump) in one go. The image is ~200 MB smaller.
 requests>=2.31
 icmplib>=3.0
-# #108: py-spy gives us `docker exec <container> py-spy dump --pid 1` for
-# thread dumps of a running server/worker, and `py-spy top` / `py-spy
-# record` for live sampling. ~5 MB, pre-built wheel, no Python-side
-# overhead until invoked — worth the image footprint for emergency
-# triage of a hung install.
-py-spy>=0.3
+# #108 briefly added py-spy here for external `docker exec` thread
+# dumps. #189 replaced the py-spy path with an in-process frame walk
+# (``diagnostics.in_process_thread_dump``) that works inside every
+# HA install variant without privileged capabilities, so py-spy was
+# removed to save ~5 MB/image. ``scripts/threaddump-addon.sh`` still
+# ``pip install py-spy`` inside its own throwaway sidecar for the
+# deadlocked-interpreter edge case, so that path is unaffected.

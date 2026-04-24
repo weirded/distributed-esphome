@@ -19,7 +19,7 @@ SECRETS_YAML = "secrets.yaml"
 # fix a stale image (missing system packages, old Python, old requirements).
 # Bump this when a change in the client Dockerfile requires workers to rebuild
 # their image (e.g. adding a new system dep or Python library).
-MIN_IMAGE_VERSION = "8"
+MIN_IMAGE_VERSION = "9"
 
 # Minimum ESPHome version the server is willing to lazy-install into its
 # per-version venv (BD.2 — WORKITEMS-1.6.2). Landing below this floor is

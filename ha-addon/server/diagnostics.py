@@ -2,10 +2,19 @@
 
 Two independent flows share this module's state:
 
-* **Server self-dump** — ``run_self_thread_dump()`` runs ``py-spy dump
-  --pid 1`` in a subprocess against the server's own process and returns
-  the text. Called directly from the UI endpoint; no broker state needed
-  because the request is synchronous.
+* **Server self-dump** — ``run_self_thread_dump()`` walks the server's
+  own Python frames via :func:`sys._current_frames` and returns a
+  py-spy-ish text dump. Synchronous but fast (frame walking is pure
+  Python + no syscalls); the async wrapper still runs it off the
+  event loop so a few hundred threads doesn't stall other UI traffic.
+
+  Originally (#108, 1.6.2-dev.28) this shelled out to ``py-spy dump``
+  in a subprocess. #189 replaced that with the in-process walk after
+  we found ``py-spy`` couldn't attach inside HA add-on / HAOS /
+  Supervised variants (Supervisor drops ``CAP_SYS_PTRACE``, and the
+  sidecar workaround from ``scripts/threaddump-addon.sh`` is
+  rejected by those variants too). The in-process path has no
+  privileged-capability requirement whatsoever.
 
 * **Worker round-trip** — a UI client asks the server to collect a dump
   from a specific worker. The worker only ever polls us (no inbound
@@ -30,10 +39,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
-import subprocess
+import os
+import platform
+import sys
 import threading
 import time
+import traceback
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -45,15 +56,9 @@ logger = logging.getLogger(__name__)
 # what the user is looking at anyway.
 RESULT_TTL: float = 600.0
 
-# Hard cap on subprocess wall-clock for py-spy. `py-spy dump` is
-# sample-free (just walks Python frames once) so it's fast — 20 s is
-# comfortable even for a process pinned at 100 % CPU.
-PY_SPY_TIMEOUT: float = 20.0
-
-# Cap on dump size we'll accept from a worker upload. py-spy dumps are
-# ~10 KB per hundred threads; 2 MB leaves room for absurd edge cases
-# while still protecting us from a malicious/runaway worker trying to
-# push a gigabyte.
+# Cap on dump size we'll accept from a worker upload. In-process dumps
+# run ~5-15 KB for our typical thread count; 2 MB leaves room for
+# absurd edge cases while still protecting us from a runaway worker.
 MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024
 
 
@@ -131,77 +136,88 @@ class DiagnosticsBroker:
                 del self._results[rid]
 
 
-def _py_spy_binary() -> Optional[str]:
-    """Resolve the ``py-spy`` binary on the current host, or ``None``
-    when it isn't installed. Using ``shutil.which`` rather than a fixed
-    ``/usr/local/bin/py-spy`` because pip wheels land the binary in
-    whatever venv ``pip install`` was run against, which varies between
-    the add-on image, the standalone image, and hand-installed setups.
+def _read_server_version() -> str:
+    """Best-effort version string for the dump header. Mirrors the
+    same /app/VERSION lookup ``main.py`` uses."""
+    try:
+        with open("/app/VERSION", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return "unknown"
+
+
+def in_process_thread_dump() -> str:
+    """Walk every live Python thread's stack and format the result as
+    plain text.
+
+    This is the entire diagnostics mechanism — no ``py-spy``, no
+    subprocess, no ``ptrace``. Works inside any container regardless
+    of capabilities or AppArmor profile because it never crosses a
+    syscall boundary the kernel would mediate.
+
+    Uses :func:`sys._current_frames` (the officially-supported
+    introspection hook, same API thread-dumpers have relied on for
+    15 years) plus :func:`threading.enumerate` for thread names.
+    Format is intentionally close to ``py-spy dump`` output so a
+    reader used to the previous format recognises the shape.
     """
-    return shutil.which("py-spy")
+    # Snapshot both views up front. ``threading.enumerate`` and
+    # ``sys._current_frames`` are documented to return a consistent
+    # snapshot; the GIL guarantees no thread finishes mid-walk.
+    frames = sys._current_frames()
+    threads_by_ident = {t.ident: t for t in threading.enumerate()}
+
+    # Header — process metadata + counts. Matches py-spy's info box
+    # closely enough that operators who've seen the old format
+    # recognise it on sight.
+    lines: list[str] = [
+        "ESPHome Fleet thread dump",
+        f"Process: pid={os.getpid()}  v{_read_server_version()}",
+        f"Python {platform.python_version()} on {sys.platform}",
+        f"{len(frames)} thread(s)",
+        "",
+    ]
+
+    for tid, frame in frames.items():
+        thread = threads_by_ident.get(tid)
+        if thread is not None:
+            name = thread.name
+            daemon = "daemon=True" if thread.daemon else "daemon=False"
+        else:
+            # Very short window where a thread finished between the
+            # two snapshots — still dump its frames, just without a
+            # friendly name.
+            name = "<unknown>"
+            daemon = "daemon=?"
+        lines.append(f'Thread {tid} "{name}" ({daemon}):')
+        # ``format_stack`` returns the call chain outermost-first (main
+        # → current), matching py-spy's order. Indent two spaces under
+        # the thread header.
+        for chunk in traceback.format_stack(frame):
+            # Each chunk is already multi-line (`  File "…", line N, in fn\n    <source>\n`).
+            # Re-indent so it aligns under the thread header.
+            for subline in chunk.rstrip("\n").splitlines():
+                lines.append(f"  {subline}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def run_self_thread_dump() -> tuple[bool, str]:
-    """Run ``py-spy dump --pid 1`` against the current container's
-    process 1 and return ``(ok, text)``.
+    """Capture a thread dump of the server's own process.
 
-    Returns the text of the dump on success. On failure (missing
-    binary, dropped ``CAP_SYS_PTRACE``, subprocess timeout) returns
-    ``(False, "<human-readable explanation>")`` — never raises. The
-    UI surfaces the returned string verbatim either way so operators
-    get a useful error instead of a 500.
+    Returns ``(ok, text)``. ``ok`` is always ``True`` on this code path
+    since :func:`in_process_thread_dump` is pure-Python and cannot
+    fail under container constraints. The ``bool`` is retained in the
+    signature so the worker-upload protocol (``WorkerDiagnosticsUpload``)
+    stays source-compatible and so a future capture mechanism that can
+    fail has a place to report that.
     """
-    binary = _py_spy_binary()
-    if binary is None:
-        return False, (
-            "py-spy is not installed on this host. It should be bundled in\n"
-            "ESPHome Fleet's Docker images since 1.6.2; if you're seeing\n"
-            "this message, verify you're running the current image with\n"
-            "`docker pull ghcr.io/weirded/esphome-dist-server:latest`."
-        )
-    cmd = [binary, "dump", "--pid", "1"]
-    logger.info("diagnostics: running %s", " ".join(cmd))
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=PY_SPY_TIMEOUT,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False, (
-            f"py-spy dump exceeded {int(PY_SPY_TIMEOUT)} s wall-clock. The\n"
-            "target process is likely deadlocked at the kernel boundary or\n"
-            "spawning subprocesses faster than py-spy can walk frames."
-        )
-    except OSError as exc:
-        return False, f"py-spy failed to launch: {exc}"
-
-    if proc.returncode != 0:
-        # py-spy prints the reason ("Permission Denied", "It looks like
-        # you are running in a docker container...", etc.) to stderr
-        # and exits non-zero. Hand that back verbatim — it's already
-        # aimed at humans.
-        stderr = (proc.stderr or "").strip()
-        if "Permission Denied" in stderr or "SYS_PTRACE" in stderr:
-            return False, (
-                "py-spy was denied ptrace access by the container runtime.\n"
-                "This is the expected result when running inside a Home\n"
-                "Assistant add-on (Supervisor drops CAP_SYS_PTRACE). Use\n"
-                "scripts/threaddump-addon.sh from the repo to capture a\n"
-                "dump via a throwaway sidecar container instead.\n"
-                "\n"
-                f"py-spy stderr:\n{stderr}"
-            )
-        return False, f"py-spy exited with code {proc.returncode}:\n{stderr or '(no stderr)'}"
-
-    return True, proc.stdout
+    return True, in_process_thread_dump()
 
 
 async def run_self_thread_dump_async() -> tuple[bool, str]:
-    """Asyncio-friendly wrapper around :func:`run_self_thread_dump` —
-    runs the subprocess off the event loop so a slow dump doesn't
-    block every other UI request."""
+    """Asyncio-friendly wrapper — runs the frame walk off the event
+    loop so a large thread count doesn't stall other UI requests."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, run_self_thread_dump)

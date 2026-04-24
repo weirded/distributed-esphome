@@ -26,15 +26,15 @@ A hardening release on top of 1.6.1.
 
 **Smaller changes.**
 
-- New **Request diagnostics** action. Click it in the Workers tab's per-worker Actions menu (online workers only) to pull a live Python thread dump from any remote worker, or in Settings → Advanced → Diagnostics to capture one from the add-on's own server process. The dump downloads as a timestamped `.txt` file you can attach to a bug report. Useful when a compile hangs or a worker pegs at 100 % CPU — the dump shows exactly which line each thread is sitting on.
+- New **Request diagnostics** action. Click it in the Workers tab's per-worker Actions menu (online workers only) to pull a live Python thread dump from any remote worker, or in Settings → Advanced → Diagnostics to capture one from the add-on's own server process. The dump downloads as a timestamped `.txt` file you can attach to a bug report. Useful when a compile hangs or a worker pegs at 100 % CPU — the dump shows exactly which line each thread is sitting on. Works on every install variant out of the box — Home Assistant add-on, HAOS, Supervised, and standalone Docker — with no special container capabilities or shell access required on your part.
 - Remote workers now receive only the files needed for the target being compiled, not the entire `/config/esphome/` tree. `.git/` (with remote URLs and any push credentials), every other device's YAML, unrelated packages, and any in-place PlatformIO cache no longer ship with the job. `secrets.yaml` is filtered down to just the `!secret` keys the bundled target actually references. Requires ESPHome 2026.4 or newer; pinning a device to an older version is refused with a clear error.
 
 **Under the hood.**
 
 - Integration config-flow hardening: the Reconfigure and Reauth flows have gained end-to-end tests against a real Home Assistant fixture. The new tests caught a latent bug where a successful reconfigure would raise `TypeError: object dict can't be used in 'await' expression` on Home Assistant 2024.11+, now fixed.
-- Both the add-on and the standalone worker image now ship `py-spy`, so triage of a hung or runaway Python process is a single `docker exec <container> py-spy dump --pid 1` away. ~5 MB overhead, no cost when not in use.
+- The **Request diagnostics** path captures thread stacks via an in-process frame walk — no external profiler, no ptrace, no privileged container capability. Works inside the Home Assistant add-on sandbox without any of the usual `CAP_SYS_PTRACE` / AppArmor dance.
 
-**Note for standalone worker users.** The worker Docker image bumped from version 7 to 8 (adds `py-spy`). Old-image workers are flagged in the Workers tab — run `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` to refresh.
+**Note for standalone worker users.** The worker Docker image bumped from version 7 to 9. Old-image workers are flagged in the Workers tab — run `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` to refresh.
 
 ## 1.6.1
 
