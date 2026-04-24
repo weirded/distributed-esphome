@@ -9,7 +9,12 @@ set -uo pipefail
 # live in the repo. Fail fast with a clear message if either's missing.
 : "${SERVER_URL:?set SERVER_URL (e.g. http://hass-4.local:8765)}"
 : "${SERVER_TOKEN:?set SERVER_TOKEN (fleet server bearer from /data/settings.json on the add-on host)}"
-IMAGE="ghcr.io/weirded/esphome-dist-client:latest"
+# IMAGE_TAG defaults to `latest` (stable) so end users copying this
+# out of the repo get the stable image. For dev-loop refreshes, invoke
+# with IMAGE_TAG=develop so workers match the develop-branch server
+# instead of lagging on the previous stable.
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+IMAGE="ghcr.io/weirded/esphome-dist-client:${IMAGE_TAG}"
 CONTAINER="esphome-dist-client"
 
 SSH_OPTS=(-o ConnectTimeout=5 -o BatchMode=yes -o LogLevel=ERROR -o StrictHostKeyChecking=accept-new)
