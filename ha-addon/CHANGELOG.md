@@ -17,6 +17,7 @@ A hardening release on top of 1.6.1.
 
 **Smaller changes.**
 
+- New **Request diagnostics** action. Click it in the Workers tab's per-worker Actions menu (online workers only) to pull a live Python thread dump from any remote worker, or in Settings → Advanced → Diagnostics to capture one from the add-on's own server process. The dump downloads as a timestamped `.txt` file you can attach to a bug report. Useful when a compile hangs or a worker pegs at 100 % CPU — the dump shows exactly which line each thread is sitting on.
 - Remote workers now receive only the files needed for the target being compiled, not the entire `/config/esphome/` tree. `.git/` (with remote URLs and any push credentials), every other device's YAML, unrelated packages, and any in-place PlatformIO cache no longer ship with the job. `secrets.yaml` is filtered down to just the `!secret` keys the bundled target actually references. Requires ESPHome 2026.4 or newer; pinning a device to an older version is refused with a clear error.
 
 **Under the hood.**

@@ -2952,3 +2952,90 @@ async def cancel_jobs(request: web.Request) -> web.Response:
     cancelled = await queue.cancel(job_ids)
     logger.info("Cancelled %d of %d job(s)%s", cancelled, len(job_ids), _who(request))
     return web.json_response({"cancelled": cancelled})
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics (#109) — "Request diagnostics" in the UI.
+# ---------------------------------------------------------------------------
+
+
+@routes.post("/ui/api/diagnostics/server")
+async def request_server_diagnostics(request: web.Request) -> web.StreamResponse:
+    """Run ``py-spy dump --pid 1`` against the server's own process and
+    return the text as an ``attachment`` download. Synchronous because
+    the dump itself is fast (<1 s); running it in the request makes the
+    UI code trivial (no polling loop for the server side).
+
+    On failure (ptrace denied inside the add-on, py-spy missing, etc.)
+    still returns 200 with ``X-Diagnostics-Ok: 0`` so the UI can render
+    the returned text as a visible error without treating this as a
+    generic 5xx.
+    """
+    from diagnostics import run_self_thread_dump_async  # noqa: PLC0415
+
+    ok, text = await run_self_thread_dump_async()
+    filename = "server-diagnostics.txt"
+    logger.info("diagnostics: server self-dump ok=%s len=%d%s", ok, len(text), _who(request))
+    return web.Response(
+        text=text,
+        content_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Diagnostics-Ok": "1" if ok else "0",
+        },
+    )
+
+
+@routes.post("/ui/api/workers/{id}/request-diagnostics")
+async def request_worker_diagnostics(request: web.Request) -> web.Response:
+    """Mint a diagnostics request for the named worker and return its
+    ``request_id``. The UI then polls
+    ``GET /ui/api/workers/{id}/diagnostics/{request_id}`` until the
+    worker has uploaded the dump.
+    """
+    client_id = request.match_info["id"]
+    registry = request.app["registry"]
+    worker = registry.get(client_id)
+    if worker is None:
+        return json_error("Worker not found", 404)
+    diag = request.app.get("diagnostics_broker")
+    if diag is None:
+        return json_error("Diagnostics broker unavailable", 500)
+    request_id = diag.request_for_worker(client_id)
+    logger.info(
+        "diagnostics: requested from worker %s (hostname=%s) request=%s%s",
+        client_id, worker.hostname, request_id, _who(request),
+    )
+    return web.json_response({"request_id": request_id})
+
+
+@routes.get("/ui/api/workers/{id}/diagnostics/{request_id}")
+async def get_worker_diagnostics(request: web.Request) -> web.StreamResponse:
+    """Poll endpoint — 202 while the worker hasn't uploaded yet, 200
+    with the dump text as an attachment download when it has.
+
+    Mirrors ``/ui/api/diagnostics/server``'s ``X-Diagnostics-Ok`` header
+    so the UI can distinguish a real dump from a worker-side error
+    (e.g. the worker's own ``py-spy`` attach was denied) without
+    parsing text.
+    """
+    client_id = request.match_info["id"]
+    request_id = request.match_info["request_id"]
+    diag = request.app.get("diagnostics_broker")
+    if diag is None:
+        return json_error("Diagnostics broker unavailable", 500)
+    result = diag.get_result(request_id)
+    if result is None:
+        return web.json_response({"pending": True}, status=202)
+    registry = request.app["registry"]
+    worker = registry.get(client_id)
+    host_tag = (worker.hostname if worker else client_id).replace("/", "_")
+    filename = f"worker-diagnostics-{host_tag}.txt"
+    return web.Response(
+        text=result.dump,
+        content_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Diagnostics-Ok": "1" if result.ok else "0",
+        },
+    )

@@ -40,3 +40,18 @@ export function downloadTerminalText(term: Terminal | null, filename: string): v
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/** Trigger a browser download of an in-memory text string. Timestamp
+ * is appended so repeated downloads don't collide in the browser's
+ * downloads folder. (#109 — used by Request diagnostics.) */
+export function downloadTextFile(text: string, filename: string): void {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const base = filename.replace(/\.txt$/, '');
+  a.href = url;
+  a.download = `${base}-${ts}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

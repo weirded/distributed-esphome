@@ -33,6 +33,7 @@ from protocol import (
     RegisterRequest,
     RegisterResponse,
     SystemInfo,
+    WorkerDiagnosticsUpload,
     WorkerLogAppend,
 )
 from version_manager import VersionManager
@@ -44,7 +45,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.6.2-dev.30"
+CLIENT_VERSION = "1.6.2-dev.31"
 
 
 def _read_image_version() -> Optional[str]:
@@ -387,6 +388,14 @@ _log_push_lock = threading.Lock()
 # pushers.
 _streaming_start_lock = threading.Lock()
 
+# #109: id of the diagnostics request currently being serviced (or
+# just handed off to a worker thread). The heartbeat and the 1-Hz
+# control poll both see the same request id for up to 10 s until the
+# server clears the pending slot, so we dedupe on this to avoid
+# running `py-spy dump` three times for one click.
+_diagnostics_in_flight: set[str] = set()
+_diagnostics_in_flight_lock = threading.Lock()
+
 
 def _log_pusher_loop(client_id: str, stop_event: threading.Event) -> None:
     """Drain the LogCaptureHandler ring and POST chunks to the server.
@@ -443,6 +452,13 @@ def _control_poll_loop(client_id: str, stop_event: threading.Event) -> None:
                 stream_logs = data.get("stream_logs")
                 if isinstance(stream_logs, bool):
                     _update_log_streaming(client_id, stream_logs, stop_event)
+                # #109: fast-path diagnostics pickup — same request id
+                # rides both the heartbeat (every 10 s) and this 1 Hz
+                # poll, so a "Request diagnostics" click lands a dump
+                # in the UI within a second or two.
+                diag_req = data.get("diagnostics_request_id")
+                if isinstance(diag_req, str) and diag_req:
+                    _maybe_handle_diagnostics_request(client_id, diag_req)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             # Same reachability dedup as heartbeat — don't spam warnings
             # when the server is briefly unavailable. Next tick retries.
@@ -450,6 +466,84 @@ def _control_poll_loop(client_id: str, stop_event: threading.Event) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.debug("control-poll unexpected error: %s", exc)
         stop_event.wait(1.0)
+
+
+def _maybe_handle_diagnostics_request(client_id: str, request_id: str) -> None:
+    """Fire-and-forget a worker thread that runs ``py-spy dump --pid
+    <self>`` and POSTs the result. Deduplicated on ``request_id`` so
+    the heartbeat + 1-Hz control poll firing the same id don't trigger
+    parallel dumps (#109).
+    """
+    with _diagnostics_in_flight_lock:
+        if request_id in _diagnostics_in_flight:
+            return
+        _diagnostics_in_flight.add(request_id)
+
+    def _runner() -> None:
+        try:
+            ok, dump = _produce_thread_dump()
+            try:
+                payload = WorkerDiagnosticsUpload(
+                    request_id=request_id, ok=ok, dump=dump,
+                ).model_dump(exclude_none=True)
+                resp = post(
+                    f"/api/v1/workers/{client_id}/diagnostics",
+                    payload,
+                    timeout=30,
+                )
+                if not resp.ok:
+                    logger.warning(
+                        "diagnostics upload failed: HTTP %s — %s",
+                        resp.status_code, resp.text[:200],
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("diagnostics upload unexpected error: %s", exc)
+        finally:
+            with _diagnostics_in_flight_lock:
+                _diagnostics_in_flight.discard(request_id)
+
+    threading.Thread(target=_runner, name="diag-upload", daemon=True).start()
+
+
+def _produce_thread_dump() -> tuple[bool, str]:
+    """Run ``py-spy dump`` against our own pid and return ``(ok, text)``.
+
+    Lives in the client rather than the shared ``diagnostics`` module
+    (which only the server imports) because the client Dockerfile's
+    copy step doesn't include server-only modules.
+    """
+    import shutil  # noqa: PLC0415
+    binary = shutil.which("py-spy")
+    if binary is None:
+        return False, (
+            "py-spy is not installed on this worker. Expected to be bundled\n"
+            "in the client Docker image since 1.6.2 (IMAGE_VERSION=8+). If\n"
+            "you're seeing this message, `docker pull` a fresh\n"
+            "ghcr.io/weirded/esphome-dist-client image and restart."
+        )
+    cmd = [binary, "dump", "--pid", str(os.getpid())]
+    logger.info("diagnostics: running %s", " ".join(cmd))
+    try:
+        proc = subprocess.run(  # noqa: PLW1510 — explicit check=False below
+            cmd, capture_output=True, text=True, timeout=20.0, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "py-spy dump exceeded 20 s wall-clock — process likely deadlocked at the kernel boundary."
+    except OSError as exc:
+        return False, f"py-spy failed to launch: {exc}"
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()
+        if "Permission Denied" in stderr or "SYS_PTRACE" in stderr:
+            return False, (
+                "py-spy was denied ptrace access by the container runtime.\n"
+                "Start the worker with `--cap-add SYS_PTRACE` (or use the\n"
+                "sidecar approach from scripts/threaddump-addon.sh in the\n"
+                "weirded/distributed-esphome repo).\n"
+                "\n"
+                f"py-spy stderr:\n{stderr}"
+            )
+        return False, f"py-spy exited with code {proc.returncode}:\n{stderr or '(no stderr)'}"
+    return True, proc.stdout
 
 
 def _update_log_streaming(client_id: str, stream_logs: Optional[bool],
@@ -544,6 +638,12 @@ def heartbeat_loop(client_id: str, stop_event: threading.Event) -> None:
                 # signal source; pusher never polls the server for
                 # this flag on its own.
                 _update_log_streaming(client_id, data.stream_logs, stop_event)
+                # #109: the UI asked us for a thread dump. Run py-spy
+                # on our own PID and POST the result. Done off-thread
+                # so a stuck py-spy (or a long dump) doesn't stall
+                # heartbeat cadence.
+                if data.diagnostics_request_id is not None:
+                    _maybe_handle_diagnostics_request(client_id, data.diagnostics_request_id)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             _on_server_unreachable(exc)
         except Exception as exc:

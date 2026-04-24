@@ -32,6 +32,7 @@ from protocol import (
     ProtocolError,
     RegisterRequest,
     RegisterResponse,
+    WorkerDiagnosticsUpload,
     WorkerLogAppend,
 )
 from scanner import create_bundle, get_esphome_version
@@ -192,6 +193,16 @@ async def _heartbeat_handler(request: web.Request) -> web.Response:
     broker = request.app.get("worker_log_broker")
     if broker is not None:
         resp.stream_logs = broker.is_watched(msg.client_id)
+
+    # #109: if the UI has asked for a thread dump from this worker,
+    # surface the pending request id. The worker will POST the dump to
+    # /api/v1/workers/{id}/diagnostics and we'll clear the slot once
+    # it arrives (see `receive_worker_diagnostics`).
+    diag = request.app.get("diagnostics_broker")
+    if diag is not None:
+        pending = diag.pending_for_worker(msg.client_id)
+        if pending is not None:
+            resp.diagnostics_request_id = pending
 
     return web.json_response(resp.model_dump(exclude_none=True))
 
@@ -702,7 +713,15 @@ async def get_worker_control(request: web.Request) -> web.Response:
     client_id = request.match_info["id"]
     broker = request.app.get("worker_log_broker")
     stream_logs = broker.is_watched(client_id) if broker else False
-    return web.json_response({"stream_logs": stream_logs})
+    body: dict[str, object] = {"stream_logs": stream_logs}
+    # #109: piggyback any outstanding diagnostics request on the same
+    # 1-Hz poll so the worker reacts within a second of a UI click.
+    diag = request.app.get("diagnostics_broker")
+    if diag is not None:
+        pending = diag.pending_for_worker(client_id)
+        if pending is not None:
+            body["diagnostics_request_id"] = pending
+    return web.json_response(body)
 
 
 @routes.post("/api/v1/workers/{id}/logs")
@@ -739,6 +758,44 @@ async def append_worker_log(request: web.Request) -> web.Response:
         return _protocol_error("worker_log_broker_unavailable", status=500)
 
     await broker.append_async(client_id, msg.offset, msg.lines)
+    return web.json_response(OkResponse().model_dump())
+
+
+@routes.post("/api/v1/workers/{id}/diagnostics")
+async def receive_worker_diagnostics(request: web.Request) -> web.Response:
+    """#109: receive a py-spy thread dump a worker produced in response
+    to an outstanding diagnostics request.
+
+    The body is the typed :class:`WorkerDiagnosticsUpload` — ``request_id``
+    matches the id the server handed out on heartbeat / control; ``ok``
+    distinguishes a real dump from an error message; ``dump`` carries
+    either. Stored in the diagnostics broker keyed by ``request_id`` so
+    the UI's polling endpoint can hand it back.
+    """
+    client_id = request.match_info["id"]
+
+    # Cap the body size so a misbehaving worker can't push an
+    # unbounded string. py-spy dumps are well under 2 MB in practice.
+    from diagnostics import MAX_UPLOAD_BYTES  # noqa: PLC0415
+    content_length = request.content_length
+    if content_length is not None and content_length > MAX_UPLOAD_BYTES:
+        return _protocol_error(
+            "diagnostics_payload_too_large",
+            f"body {content_length} bytes exceeds cap {MAX_UPLOAD_BYTES}",
+            status=413,
+        )
+
+    msg, err = await _parse_body(request, WorkerDiagnosticsUpload)
+    if err is not None:
+        return err
+    assert msg is not None
+
+    diag = request.app.get("diagnostics_broker")
+    if diag is None:
+        return _protocol_error("diagnostics_broker_unavailable", status=500)
+
+    diag.store_result(msg.request_id, ok=msg.ok, dump=msg.dump)
+    diag.claim_pending(client_id, msg.request_id)
     return web.json_response(OkResponse().model_dump())
 
 

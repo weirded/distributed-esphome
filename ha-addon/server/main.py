@@ -1447,6 +1447,12 @@ def create_app() -> web.Application:
     from worker_log_broker import WorkerLogBroker  # noqa: PLC0415
     app["worker_log_broker"] = WorkerLogBroker()
 
+    # #109: diagnostics broker — holds pending thread-dump requests per
+    # worker + a small cache of uploaded results keyed by request id
+    # so the UI's polling endpoint has somewhere to find them.
+    from diagnostics import DiagnosticsBroker  # noqa: PLC0415
+    app["diagnostics_broker"] = DiagnosticsBroker()
+
     # Register routes
     app.router.add_routes(api_module.routes)
     app.router.add_routes(ui_api_module.routes)

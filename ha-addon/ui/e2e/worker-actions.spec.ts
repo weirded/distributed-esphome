@@ -106,6 +106,50 @@ test('Connect Worker button opens the modal', async ({ page }) => {
   await expect(dialog.getByRole('heading', { name: /Connect a Build Worker/i })).toBeVisible();
 });
 
+// #109 regression guard: the Actions menu exposes "Request diagnostics"
+// for online workers and clicking it hits the round-trip endpoints
+// (request → poll → download). Mocked endpoints here — real py-spy
+// path is covered by the e2e-hass-4 suite.
+test('Actions dropdown shows Request diagnostics for online workers and fires the round-trip', async ({ page }) => {
+  let requestedFor: string | null = null;
+  let polledWith: string | null = null;
+  await page.route(/\/ui\/api\/workers\/([^/]+)\/request-diagnostics$/, async route => {
+    const m = route.request().url().match(/\/workers\/([^/]+)\/request-diagnostics/);
+    requestedFor = m ? m[1] : null;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ request_id: 'req-abc' }),
+    });
+  });
+  await page.route(/\/ui\/api\/workers\/([^/]+)\/diagnostics\/req-abc$/, async route => {
+    const m = route.request().url().match(/\/workers\/([^/]+)\/diagnostics\/req-abc/);
+    polledWith = m ? m[1] : null;
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      headers: {
+        'X-Diagnostics-Ok': '1',
+        'Content-Disposition': 'attachment; filename="worker-diagnostics-build-server-1.txt"',
+      },
+      body: 'Thread 1 (idle): MainThread\n    select (selectors.py:468)\n',
+    });
+  });
+
+  await openActions(page, 'build-server-1');
+  const item = page.getByRole('menuitem', { name: 'Request diagnostics' });
+  await expect(item).toBeVisible();
+  await item.click();
+
+  await expect.poll(() => requestedFor, { timeout: 3_000 }).toBe('worker-1');
+  await expect.poll(() => polledWith, { timeout: 3_000 }).toBe('worker-1');
+});
+
+test('Actions dropdown hides Request diagnostics for offline workers', async ({ page }) => {
+  await openActions(page, 'build-server-2');
+  await expect(page.getByRole('menuitem', { name: 'Request diagnostics' })).toHaveCount(0);
+});
+
 // TR.4 regression guard: the bash + powershell branches must include
 // `--network host`, otherwise a user pasting the command onto a LAN
 // docker host gets a worker on the default bridge that can't OTA to

@@ -26,6 +26,8 @@ import {
   setWorkerParallelJobs,
   retryAllFailed,
   retryJobs,
+  requestServerDiagnostics,
+  requestWorkerDiagnostics,
   setEsphomeVersion,
   setInitialAddonVersion,
   validateConfig,
@@ -65,6 +67,7 @@ import {
 import { WorkersTab } from './components/WorkersTab';
 import type { Device, Job, Target, Worker } from './types';
 import { setTimeFormatPref, stripYaml } from './utils';
+import { downloadTextFile } from './utils/terminal';
 import esphomeLogoUrl from './assets/esphome-logo.svg';
 import './theme.css';
 
@@ -553,6 +556,41 @@ export default function App() {
     }
   }
 
+  // #109: "Request diagnostics" — fires either the server self-dump
+  // path or the round-trip worker path, downloads the resulting text
+  // file, and surfaces worker-side failures (py-spy denied, etc.)
+  // inline in the toast rather than blowing up the whole action.
+  async function handleRequestWorkerDiagnostics(id: string) {
+    const workerName = workers.find(w => w.client_id === id)?.hostname || id;
+    addToast(`Requesting diagnostics from ${workerName}…`, 'info');
+    try {
+      const { ok, filename, body } = await requestWorkerDiagnostics(id);
+      downloadTextFile(body, filename);
+      if (ok) {
+        addToast(`Diagnostics downloaded from ${workerName}`, 'success');
+      } else {
+        addToast(`Diagnostics request returned an error — see the downloaded file for details`, 'error');
+      }
+    } catch (err) {
+      addToast('Diagnostics failed: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleRequestServerDiagnostics() {
+    addToast('Requesting server diagnostics…', 'info');
+    try {
+      const { ok, filename, body } = await requestServerDiagnostics();
+      downloadTextFile(body, filename);
+      if (ok) {
+        addToast('Server diagnostics downloaded', 'success');
+      } else {
+        addToast('Server diagnostics returned an error — see the downloaded file for details', 'error');
+      }
+    } catch (err) {
+      addToast('Server diagnostics failed: ' + (err as Error).message, 'error');
+    }
+  }
+
   async function handleSetParallelJobs(id: string, count: number) {
     try {
       await setWorkerParallelJobs(id, count);
@@ -795,6 +833,7 @@ export default function App() {
             onCleanAllCaches={handleCleanAllCaches}
             onConnectWorker={(preset) => { setConnectModalPreset(preset ?? null); setConnectModalOpen(true); }}
             onViewLogs={setLogWorkerId}
+            onRequestDiagnostics={handleRequestWorkerDiagnostics}
           />
         )}
         {activeTab === 'schedules' && (
@@ -924,6 +963,7 @@ export default function App() {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         dirtyTargets={targets.filter(t => t.has_uncommitted_changes).map(t => t.target)}
+        onRequestServerDiagnostics={handleRequestServerDiagnostics}
       />
 
       {/* JH.5: per-device Compile History drawer. Mounted once;

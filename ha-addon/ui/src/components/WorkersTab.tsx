@@ -31,6 +31,9 @@ interface Props {
   onCleanAllCaches: () => void;
   onConnectWorker: (preset?: import('../types').WorkerPreset | null) => void;
   onViewLogs: (clientId: string) => void;
+  // #109: "Request diagnostics" runs py-spy on the worker and downloads
+  // the thread dump. Online-workers only (offline workers can't reply).
+  onRequestDiagnostics: (id: string) => void;
 }
 
 function workerPlatformHtml(si: SystemInfo): React.ReactNode {
@@ -237,7 +240,7 @@ function getWorkerSortValue(w: Worker, colId: string): string {
 
 const columnHelper = createColumnHelper<Worker>();
 
-export function WorkersTab({ workers, queue, serverClientVersion, minImageVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker, onViewLogs }: Props) {
+export function WorkersTab({ workers, queue, serverClientVersion, minImageVersion, onRemove, onSetParallelJobs, onCleanCache, onCleanAllCaches, onConnectWorker, onViewLogs, onRequestDiagnostics }: Props) {
   // WL.3: lift the actions-dropdown open state out of the TanStack row
   // cell so the 1 Hz SWR poll doesn't tear it down mid-click (bug #2
   // / #71 class — see Design Judgment in CLAUDE.md). Keyed by
@@ -423,6 +426,11 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
                     <DropdownMenuItem onClick={() => onViewLogs(c.client_id)}>
                       View logs
                     </DropdownMenuItem>
+                    {c.online && (
+                      <DropdownMenuItem onClick={() => onRequestDiagnostics(c.client_id)}>
+                        Request diagnostics
+                      </DropdownMenuItem>
+                    )}
                     {c.online && (
                       <DropdownMenuItem onClick={() => onCleanCache(c.client_id)}>
                         Clean cache

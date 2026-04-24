@@ -485,6 +485,60 @@ export async function removeWorker(id: string): Promise<void> {
   );
 }
 
+// #109: diagnostics — return type mirrors the backend's
+// `X-Diagnostics-Ok: 1|0` header so the UI can surface a real dump
+// vs. an error string using the same download path.
+export interface DiagnosticsResponse {
+  ok: boolean;
+  filename: string;
+  body: string;
+}
+
+async function readDiagnosticsResponse(resp: Response): Promise<DiagnosticsResponse> {
+  const ok = resp.headers.get('X-Diagnostics-Ok') === '1';
+  const disp = resp.headers.get('Content-Disposition') || '';
+  const match = disp.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : 'diagnostics.txt';
+  const body = await resp.text();
+  return { ok, filename, body };
+}
+
+/** Run py-spy on the server process and return the thread dump text. */
+export async function requestServerDiagnostics(): Promise<DiagnosticsResponse> {
+  const resp = await apiFetch('./ui/api/diagnostics/server', { method: 'POST' });
+  await expectOk(resp, 'requesting server diagnostics');
+  return readDiagnosticsResponse(resp);
+}
+
+/**
+ * Ask the server to pull a thread dump from a worker, then poll until
+ * the worker uploads it. Workers reply via heartbeat/control poll so
+ * the round-trip lands in under ~2 s for online workers. `timeoutMs`
+ * caps the total wait for a reply — 30 s covers a worker that has to
+ * wait out the 10 s heartbeat window plus a slow py-spy.
+ */
+export async function requestWorkerDiagnostics(
+  id: string,
+  { timeoutMs = 30_000, pollIntervalMs = 500 }: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<DiagnosticsResponse> {
+  const reqResp = await apiFetch(`./ui/api/workers/${id}/request-diagnostics`, { method: 'POST' });
+  await expectOk(reqResp, 'starting worker diagnostics request');
+  const { request_id } = (await reqResp.json()) as { request_id: string };
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await apiFetch(`./ui/api/workers/${id}/diagnostics/${request_id}`);
+    if (r.status === 200) {
+      return readDiagnosticsResponse(r);
+    }
+    if (r.status !== 202) {
+      await expectOk(r, 'polling worker diagnostics');
+    }
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+  throw new Error(`Worker did not return a diagnostics dump within ${Math.round(timeoutMs / 1000)} s.`);
+}
+
 export async function getJobLog(jobId: string, offset: number): Promise<JobLogResponse> {
   return parseResponse<JobLogResponse>(
     await apiFetch(`./ui/api/jobs/${jobId}/log?offset=${offset}`),

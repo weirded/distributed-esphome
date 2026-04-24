@@ -46,9 +46,12 @@ interface SettingsDrawerProps {
    * offering to commit them first. Empty array when everything's
    * clean or the repo isn't a git repo at all. */
   dirtyTargets?: string[];
+  /** #109: the host App owns the toast flow + download trigger for
+   * "Request diagnostics", so the drawer just invokes this. */
+  onRequestServerDiagnostics?: () => void;
 }
 
-export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: SettingsDrawerProps) {
+export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [], onRequestServerDiagnostics }: SettingsDrawerProps) {
   const { data, error, isLoading, mutate } = useSWR<AppSettings>(
     open ? 'settings' : null,
     getSettings,
@@ -301,6 +304,25 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [] }: Settin
                   device-lifecycle concern, not a server-settings one.
                   Section removed here to avoid two entry points with
                   the same list (which would diverge). */}
+              {/* #109: Diagnostics — one-click thread dump of the
+                  server process. Intentionally plain — no knobs, no
+                  tabs-within-tabs; the whole flow is click → download
+                  a .txt file. */}
+              {onRequestServerDiagnostics && (
+                <Section title="Diagnostics">
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Capture a Python thread dump of the server process and download it as a text file.
+                      Useful when reporting a hang or runaway-CPU issue.
+                    </p>
+                    <div>
+                      <Button variant="secondary" size="sm" onClick={() => onRequestServerDiagnostics()}>
+                        Request diagnostics
+                      </Button>
+                    </div>
+                  </div>
+                </Section>
+              )}
               <Section title="About">
                 <p className="text-xs text-[var(--text-muted)]">
                   Settings are stored in <code className="rounded bg-[var(--surface2)] px-1 py-0.5">/data/settings.json</code>{' '}
