@@ -34,6 +34,12 @@ refresh() {
         HOSTNAME_VAL=$(printf '%q' "$hostname")
         HOST_PLATFORM=$(printf '%q' "$host_platform")
 
+        # Non-interactive ssh gets a minimal PATH. Docker Desktop on macOS
+        # installs at /usr/local/bin/docker (Intel) or /opt/homebrew/bin/docker
+        # (Apple Silicon) — both missing from the default PATH, which would
+        # otherwise make \`command -v docker\` wrongly report docker absent.
+        export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
+
         if ! command -v docker >/dev/null 2>&1; then
             echo "  skipping — docker not installed"
             exit 20
