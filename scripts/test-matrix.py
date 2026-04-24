@@ -489,7 +489,13 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
         # building. Deploy then pulls the stale digest. Require BOTH the
         # tag to exist AND the corresponding publish workflow for this
         # commit's head-sha to be `completed/success` before marking an
-        # image "published." Unknown/not_started/in_progress → keep waiting.
+        # image "published." ``not_started`` for >NOT_STARTED_GRACE_S
+        # means the workflow's path filter didn't match this commit
+        # (e.g. a scripts/-only change) — fall back to tag-only there,
+        # since no new image is coming. ``unknown`` (gh unauthed / offline)
+        # also falls back so a misconfig doesn't block the run.
+        NOT_STARTED_GRACE_S = 45
+        elapsed_now = time.monotonic() - start
         tag_checks = await asyncio.gather(*[
             _tag_exists(img, version) for img in EXPECTED_IMAGES if img not in published
         ])
@@ -497,15 +503,21 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
             short = img.rsplit("/", 1)[-1]
             wf = workflows.get(short, {})
             wf_done = wf.get("status") == "completed" and wf.get("conclusion") == "success"
-            # ``unknown`` status (gh not authed / offline) → fall back to
-            # tag-only check so we don't block forever on a misconfig.
             wf_unavailable = wf.get("status") == "unknown"
-            if ok and (wf_done or wf_unavailable):
+            wf_skipped_by_paths = (
+                wf.get("status") == "not_started" and elapsed_now >= NOT_STARTED_GRACE_S
+            )
+            if ok and (wf_done or wf_unavailable or wf_skipped_by_paths):
                 published.add(img)
-                reason = "workflow+tag" if wf_done else "tag-only (workflow status unavailable)"
+                if wf_done:
+                    reason = "workflow+tag"
+                elif wf_unavailable:
+                    reason = "tag-only (workflow status unavailable)"
+                else:
+                    reason = "tag-only (workflow path filter didn't match this commit)"
                 tprint(color(
                     "build",
-                    f"[ghcr          ] ✔ {short}:{version} ({fmt_duration(time.monotonic() - start)}) [{reason}]",
+                    f"[ghcr          ] ✔ {short}:{version} ({fmt_duration(elapsed_now)}) [{reason}]",
                 ), flush=True)
         snapshot("waiting")
 
