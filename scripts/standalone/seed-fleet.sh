@@ -34,7 +34,11 @@ STANDALONE_HOST="${STANDALONE_HOST:-docker-pve}"
 STANDALONE_COMPOSE_DIR="${STANDALONE_COMPOSE_DIR:-/opt/esphome-fleet}"
 FLEET_SOURCE_HOST="${FLEET_SOURCE_HOST:-hass-4}"
 FLEET_SOURCE_DIR="${FLEET_SOURCE_DIR:-/usr/share/hassio/homeassistant/esphome}"
-FLEET_TARGETS="${FLEET_TARGETS:-cyd-world-clock.yaml garage-door-big.yaml .common.yaml secrets.yaml}"
+# `fonts` is a directory — tar recurses. cyd-world-clock.yaml references
+# fonts/Arimo-Regular.ttf + fonts/JetBrainsMono-Bold.ttf; without them
+# the server-side validator rejects the bundle and the compile is marked
+# failed before the worker ever sees it (#192).
+FLEET_TARGETS="${FLEET_TARGETS:-cyd-world-clock.yaml garage-door-big.yaml .common.yaml secrets.yaml fonts}"
 
 # SSH multiplexing on both ends — see deploy.sh / haos/install-addon.sh
 # for why. Two control sockets, one per remote.

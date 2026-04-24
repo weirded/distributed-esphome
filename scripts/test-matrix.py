@@ -13,9 +13,6 @@ Targets (see dev-plans/HOME-LAB.md):
   hass-4               always-on HAOS box at 192.168.225.112
   haos-pve             throwaway HAOS VM on the `pve` Proxmox host
   standalone-pve       plain Docker host `docker-pve` running docker-compose
-  standalone-optiplex  plain Docker host `docker-optiplex-5` (second
-                       standalone — keeps the secondary homelab worker
-                       from freezing on a stale `:develop` digest)
 
 Image flow: GitHub Actions (publish-addon.yml / publish-server.yml /
 publish-client.yml) already builds and pushes the three GHCR images on
@@ -75,9 +72,6 @@ COLORS = {
     "hass-4":              "\033[38;5;42m",   # green
     "haos-pve":            "\033[38;5;39m",   # blue
     "standalone-pve":      "\033[38;5;170m",  # magenta
-    "standalone-optiplex": "\033[38;5;141m",  # purple — close to magenta so
-                                              # the eye groups the two
-                                              # standalone targets together
     "build":               "\033[38;5;214m",  # orange
 }
 RESET = "\033[0m"
@@ -265,37 +259,6 @@ def make_targets(version: str) -> dict[str, Target]:
             deploy_cmd=["bash", "scripts/standalone/deploy.sh"],
             deploy_env={"TAG": tag, "STANDALONE_HOST": "docker-pve"},
             token_cache=home / ".config" / "distributed-esphome" / "standalone-token",
-            playwright_env={
-                "FLEET_TARGET": "cyd-world-clock.yaml",
-            },
-            playwright_args=["--grep-invert=@requires-ha"],
-        ),
-        # Second standalone host, same install path as standalone-pve.
-        # Not a coverage win — this is the *same* docker-compose flow —
-        # but without a regular deploy the box drifts: docker-compose
-        # pulls a floating ``:develop`` tag at first bring-up and then
-        # freezes the container on that image digest forever. 1.6.2 hit
-        # this: docker-optiplex-5's worker stayed on dev.19 for 11 hours
-        # of turns while every other target ran current code. Parallel
-        # slot, so adding this costs ~0 wall-clock.
-        "standalone-optiplex": Target(
-            name="standalone-optiplex",
-            # IP, not the ``docker-optiplex-5`` ssh alias — Playwright's
-            # Node client doesn't read ~/.ssh/config. See the same
-            # comment on standalone-pve's base_url.
-            base_url="http://192.168.225.193:8765",
-            deploy_cmd=["bash", "scripts/standalone/deploy.sh"],
-            # ``STANDALONE_TOKEN_FILE`` must differ from standalone-pve's
-            # or the two parallel deploys race on the same cache file
-            # and the second-to-finish overwrites the first's token.
-            deploy_env={
-                "TAG": tag,
-                "STANDALONE_HOST": "docker-optiplex-5",
-                "STANDALONE_TOKEN_FILE": str(
-                    home / ".config" / "distributed-esphome" / "standalone-optiplex-token"
-                ),
-            },
-            token_cache=home / ".config" / "distributed-esphome" / "standalone-optiplex-token",
             playwright_env={
                 "FLEET_TARGET": "cyd-world-clock.yaml",
             },

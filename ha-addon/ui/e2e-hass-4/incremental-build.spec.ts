@@ -60,10 +60,33 @@ function isTerminal(state: string): boolean {
   return state === 'success' || state === 'failed' || state === 'timed_out';
 }
 
+/**
+ * Retry transient kernel-level socket errors that laptop dual-homed
+ * NICs produce during long polls — specifically `EADDRNOTAVAIL`,
+ * `EHOSTUNREACH`, `ECONNRESET`, and `ECONNREFUSED`. These are
+ * client-side flakes, not product bugs: MacOS returns EADDRNOTAVAIL
+ * when the source interface's address churns mid-read (common when
+ * two interfaces compete for the default route). One retry with a
+ * short delay is enough — real product outages persist past it and
+ * still fail the containing `expect.poll`.
+ */
+const TRANSIENT = /EADDRNOTAVAIL|EHOSTUNREACH|ECONNRESET|ECONNREFUSED/;
+
 async function getQueue(request: APIRequestContext): Promise<QueueJob[]> {
-  const resp = await request.get('/ui/api/queue');
-  if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
-  return resp.json();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const resp = await request.get('/ui/api/queue');
+      if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
+      return resp.json();
+    } catch (err) {
+      const msg = String(err);
+      if (attempt < 3 && TRANSIENT.test(msg)) {
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 async function getJob(request: APIRequestContext, id: string): Promise<QueueJob | null> {

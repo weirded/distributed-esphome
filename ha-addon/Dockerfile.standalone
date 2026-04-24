@@ -15,8 +15,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server/ .
 COPY VERSION /app/VERSION
 
-# Bundle client code so the server can serve it to remote clients for auto-update
+# Bundle client code so the server can serve it to remote clients for
+# auto-update AND so main.py can spawn it as the embedded local-worker
+# inside this same container. The embedded worker imports client deps
+# (psutil via client/sysinfo.py); without this install step it crashes
+# at import with ModuleNotFoundError and dies as a zombie — visible to
+# users as "local-worker missing" in the Workers tab, silent in logs
+# because main.py redirects the child's stderr. Bug #193.
 COPY client/ /app/client/
+RUN pip install --no-cache-dir -r /app/client/requirements.txt
 
 VOLUME /data
 VOLUME /config/esphome

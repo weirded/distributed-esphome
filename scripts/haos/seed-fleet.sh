@@ -57,7 +57,10 @@ FLEET_SOURCE_HOST="${FLEET_SOURCE_HOST:-hass-4}"
 FLEET_SOURCE_DIR="${FLEET_SOURCE_DIR:-/usr/share/hassio/homeassistant/esphome}"
 # Default set pinned to what cyd-office-info.spec.ts + the 4 TARGET_FILENAME
 # specs need when HASS4_TARGET=cyd-world-clock.yaml. Extend as specs grow.
-FLEET_TARGETS="${FLEET_TARGETS:-cyd-world-clock.yaml garage-door-big.yaml .common.yaml secrets.yaml}"
+# `fonts` is a directory — tar recurses. cyd-world-clock.yaml references
+# fonts/Arimo-Regular.ttf + fonts/JetBrainsMono-Bold.ttf; without them
+# the server-side validator rejects the bundle (#192).
+FLEET_TARGETS="${FLEET_TARGETS:-cyd-world-clock.yaml garage-door-big.yaml .common.yaml secrets.yaml fonts}"
 GUEST_ESPHOME_DIR="${GUEST_ESPHOME_DIR:-/mnt/data/supervisor/homeassistant/esphome}"
 
 if [[ "$FLEET_SOURCE" != "repo" && "$FLEET_SOURCE" != "hass-4" ]]; then

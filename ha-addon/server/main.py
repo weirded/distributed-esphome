@@ -9,7 +9,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 
 import aiohttp
 from aiohttp import web
@@ -1658,14 +1658,29 @@ def create_app() -> web.Application:
                 "ESPHOME_VERSIONS_DIR": "/data/esphome-versions",
                 "HOSTNAME": "local-worker",
             }
+            # Capture the embedded worker's stderr to a rotating-ish
+            # tail file under /data so next-time-this-breaks is
+            # diagnosable. #193: previously DEVNULL'd both streams, so
+            # a ModuleNotFoundError at import turned the worker into a
+            # silent zombie and the server logged "Started local worker"
+            # as if everything was fine. stdout stays DEVNULL — the
+            # worker already logs to its own logger via SERVER_URL.
+            local_worker_log = Path("/data/local-worker.stderr.log")
+            stderr_fh: int | IO[bytes]
+            try:
+                local_worker_log.parent.mkdir(parents=True, exist_ok=True)
+                stderr_fh = local_worker_log.open("ab")
+            except OSError:
+                logger.warning("Couldn't open %s for local-worker stderr; falling back to DEVNULL", local_worker_log)
+                stderr_fh = sp.DEVNULL
             proc = sp.Popen(
                 [sys.executable, str(local_worker_script)],
                 env=local_env,
                 stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
+                stderr=stderr_fh,
             )
             app["local_worker_proc"] = proc
-            logger.info("Started local worker (PID %d, %s slots)", proc.pid, local_slots)
+            logger.info("Started local worker (PID %d, %s slots); stderr → %s", proc.pid, local_slots, local_worker_log)
 
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down ESPHome Fleet")
