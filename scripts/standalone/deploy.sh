@@ -173,3 +173,41 @@ rsh "docker rm -f esphome-fleet-worker 2>/dev/null || true" >/dev/null
 echo ""
 echo "==> docker compose up -d worker ..."
 rsh "cd '$STANDALONE_COMPOSE_DIR' && docker compose up -d --force-recreate worker"
+
+# -----------------------------------------------------------------------
+# 7. Wait for the worker to register with the server. The e2e-hass-4
+#    suite's compile / pinned-compile / live-log tests all assume at
+#    least one online worker exists; launching Playwright before the
+#    worker's first heartbeat arrives flakes them with "local-worker
+#    must be online". ~10s is normally enough for the worker container
+#    to boot + send its first heartbeat.
+# -----------------------------------------------------------------------
+echo ""
+echo "==> Waiting for worker to register ..."
+for i in $(seq 1 20); do
+  N=$(rsh "curl -sf --max-time 3 -H 'Authorization: Bearer $REAL_TOKEN' http://127.0.0.1:8765/ui/api/workers 2>/dev/null | python3 -c \"import sys,json; print(sum(1 for w in json.load(sys.stdin) if w.get('online')))\" 2>/dev/null" || echo 0)
+  if [[ "$N" -ge 1 ]]; then
+    echo "    $N worker(s) online."
+    break
+  fi
+  if [[ "$i" -eq 20 ]]; then
+    echo "    WARNING: no worker registered after 20s — compile tests may flake" >&2
+  fi
+  sleep 1
+done
+
+# -----------------------------------------------------------------------
+# 8. Seed the ESPHome fixture fleet so the e2e-hass-4 suite has real
+#    device YAMLs to compile against. Skip with SKIP_SEED=1 on repeat
+#    runs when you know the fleet is already there.
+# -----------------------------------------------------------------------
+if [[ "${SKIP_SEED:-0}" != "1" ]]; then
+  echo ""
+  echo "==> Seeding fixture fleet from ${FLEET_SOURCE_HOST:-hass-4} ..."
+  STANDALONE_HOST="$STANDALONE_HOST" \
+  STANDALONE_COMPOSE_DIR="$STANDALONE_COMPOSE_DIR" \
+  FLEET_SOURCE_HOST="${FLEET_SOURCE_HOST:-hass-4}" \
+    "$REPO_ROOT/scripts/standalone/seed-fleet.sh"
+else
+  echo "==> SKIP_SEED=1 — skipping fleet seed"
+fi

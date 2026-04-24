@@ -30,7 +30,11 @@ const ADDON_TOKEN = process.env.FLEET_TOKEN || process.env.HASS4_ADDON_TOKEN || 
 
 const PROTECTED_PATHS = ['/', '/index.html', '/ui/api/server-info'] as const;
 
-test.describe('#82 direct-port auth covers the SPA shell', () => {
+// @requires-ha — toggles `require_ha_auth` and asserts unauth requests
+// 401. Standalone mode always runs with require_ha_auth=false, so the
+// entire premise doesn't apply; the standalone target filters this
+// spec out via --grep-invert=@requires-ha.
+test.describe('#82 direct-port auth covers the SPA shell', { tag: ['@requires-ha'] }, () => {
   // Dedicated no-auth APIRequestContext for the 401 assertions. The
   // default `request` fixture inherits playwright.config.ts's
   // `extraHTTPHeaders` which carries a Bearer — that would mask the
