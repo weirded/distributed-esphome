@@ -483,16 +483,29 @@ async def wait_for_ghcr_tags(version: str, timeout_s: int = 600) -> bool:
         for name, result in zip(short_names, wf_results):
             workflows[name] = result
 
+        # Tag-existence alone is racy: the ``1.6.2`` tag carries over
+        # from the previous push and resolves True the moment the matrix
+        # starts, even though the current commit's CI workflow is still
+        # building. Deploy then pulls the stale digest. Require BOTH the
+        # tag to exist AND the corresponding publish workflow for this
+        # commit's head-sha to be `completed/success` before marking an
+        # image "published." Unknown/not_started/in_progress → keep waiting.
         tag_checks = await asyncio.gather(*[
             _tag_exists(img, version) for img in EXPECTED_IMAGES if img not in published
         ])
         for img, ok in zip([i for i in EXPECTED_IMAGES if i not in published], tag_checks):
-            if ok:
+            short = img.rsplit("/", 1)[-1]
+            wf = workflows.get(short, {})
+            wf_done = wf.get("status") == "completed" and wf.get("conclusion") == "success"
+            # ``unknown`` status (gh not authed / offline) → fall back to
+            # tag-only check so we don't block forever on a misconfig.
+            wf_unavailable = wf.get("status") == "unknown"
+            if ok and (wf_done or wf_unavailable):
                 published.add(img)
-                short = img.rsplit("/", 1)[-1]
+                reason = "workflow+tag" if wf_done else "tag-only (workflow status unavailable)"
                 tprint(color(
                     "build",
-                    f"[ghcr          ] ✔ {short}:{version} ({fmt_duration(time.monotonic() - start)})",
+                    f"[ghcr          ] ✔ {short}:{version} ({fmt_duration(time.monotonic() - start)}) [{reason}]",
                 ), flush=True)
         snapshot("waiting")
 
