@@ -1,0 +1,131 @@
+name: AppArmor profile smoke
+
+# CI.2 — syntax-check `ha-addon/apparmor.txt` and prove it actually
+# loads on a running container without breaking the entrypoint. Does
+# NOT prove the profile confines the container effectively — that
+# belongs to an SS.1 tightening pass — only that it parses and a
+# container launched with `--security-opt apparmor=esphome_dist_server`
+# reaches a liveness endpoint.
+#
+# Prereq for any future narrowing of the profile (SS.1 / TP.2): without
+# this gate, every tightening attempt's only feedback loop is
+# "deploy to hass-4 Sunday and see what breaks."
+
+on:
+  pull_request:
+    paths:
+      - "ha-addon/apparmor.txt"
+      - "ha-addon/Dockerfile"
+      - "ha-addon/server/**"
+      - "ha-addon/client/**"
+      - ".github/workflows/apparmor.yml"
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - "ha-addon/apparmor.txt"
+      - "ha-addon/Dockerfile"
+      - "ha-addon/server/**"
+      - "ha-addon/client/**"
+      - ".github/workflows/apparmor.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parse:
+    name: apparmor_parser -N
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install apparmor-utils
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends apparmor-utils
+
+      - name: Syntax-check ha-addon/apparmor.txt
+        # `-N` = parse and print the profile name(s) without loading.
+        # Fails non-zero on any syntax error — that's the gate.
+        run: |
+          sudo apparmor_parser -N ha-addon/apparmor.txt
+          echo "Profile(s) parsed cleanly."
+
+  load-smoke:
+    name: container launches under profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: parse
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install apparmor-utils
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends apparmor-utils
+
+      - name: Load profile into the kernel
+        # `-r` replaces an existing profile of the same name if one is
+        # already loaded; harmless when the profile is fresh. Required
+        # before `docker run --security-opt apparmor=<name>` will work
+        # — Docker looks up the profile by name from the host's loaded
+        # set, not from any file path.
+        run: |
+          sudo apparmor_parser -r ha-addon/apparmor.txt
+          sudo aa-status | grep -F "esphome_dist_server" || {
+            echo "Profile loaded but aa-status doesn't list it." >&2
+            exit 1
+          }
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build add-on image (linux/amd64)
+        uses: docker/build-push-action@ba8c5e9f64b0415d77f35ed4075e8b3d8b4c1d7a # v6.15.0
+        with:
+          context: ha-addon
+          file: ha-addon/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: esphome-dist-server:apparmor-smoke
+          cache-from: type=gha,scope=apparmor
+          cache-to: type=gha,mode=max,scope=apparmor
+
+      - name: Launch under profile + probe health
+        run: |
+          set -euo pipefail
+          # Run the server with the profile attached, pointing at a
+          # throwaway /data so we don't collide with anything else.
+          # The real container on Supervisor gets SUPERVISOR_TOKEN +
+          # OPTIONS_FROM_SUPERVISOR injected; without those the server
+          # still boots but has no way to reach a Supervisor API.
+          # That's fine — we only need to prove the process starts
+          # and serves HTTP under the profile.
+          cid=$(docker run -d --rm \
+            --name esphome-fleet-apparmor-smoke \
+            --security-opt apparmor=esphome_dist_server \
+            -p 18765:8765 \
+            -e SERVER_TOKEN=smoke-token \
+            esphome-dist-server:apparmor-smoke)
+          trap "docker logs $cid || true; docker rm -f $cid >/dev/null 2>&1 || true" EXIT
+
+          # Wait up to 60 s for /ui/api/server-info to answer. The
+          # server boots, imports ESPHome lazily (#30/#105 path), and
+          # starts the aiohttp server — no ESPHome install is needed
+          # for the HTTP layer to respond.
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null -m 2 "http://127.0.0.1:18765/ui/api/server-info" \
+                 -H "Authorization: Bearer smoke-token"; then
+              echo "Server responsive under apparmor=esphome_dist_server after ${i}s."
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Server never responded to /ui/api/server-info within 60 s." >&2
+          exit 1

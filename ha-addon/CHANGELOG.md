@@ -4,6 +4,13 @@
 
 A hardening release on top of 1.6.1.
 
+**Corrections to 1.6.1.** A handful of things 1.6.1 claimed or shipped weren't quite right; 1.6.2 is where they get honest.
+
+- **AppArmor confinement is real now.** 1.6.1 added an AppArmor profile and lit up the Supervisor security-star badge, but the profile was permissive enough that it didn't meaningfully confine the running container. 1.6.2's profile keeps the badge and adds a handful of explicit `deny` rules that actually close concrete paths (`/etc/shadow*`, `/run/secrets/**`, `/proc/<pid>/mem`, kernel sysctl writes, cross-container ptrace).
+- **Integration quality-scale claim corrected.** 1.6.1's `manifest.json` declared `silver`, but the audit file (`quality_scale.yaml`) hadn't been reconciled against the Silver rules. 1.6.2 honestly retreats to `bronze` — which is hassfest-validated and accurately reflects what's in the repo today. The `gold` tier-flip moves to 1.6.3 where every rule gets walked to `done`/`exempt` with a reason.
+- **Install paths that were documented to work but didn't.** Fresh HAOS installs could get stuck on "Installing ESPHome…" forever, standalone Docker installs required an HA Bearer token the user had no way to obtain, and OTA failed outright on any device with a non-`.local` mDNS domain. Each of those is fixed in this release — see Bug fixes below for the specifics.
+- **Remote workers stop shipping the whole config directory.** 1.6.1's worker bundle tar+gzipped every file under `/config/esphome/`, including `.git/` (with push credentials baked into remote URLs), every unrelated device's YAML, and in-place PlatformIO caches. The bundle now contains only what the target being compiled actually needs. Upgrading in place is enough — no action required.
+
 **Bug fixes.**
 
 - Add-on install no longer fails with `Image docker.io/library/docker:<version>-cli does not exist` when Docker Hub is rate-limiting or briefly unreachable. The add-on now ships as a prebuilt multi-architecture image on GitHub Container Registry, so fresh installs pull in seconds instead of building locally through the Docker-in-Docker builder image that was the source of the failure.

@@ -1,7 +1,7 @@
 # Integration quality-scale declaration per
 # https://developers.home-assistant.io/docs/core/integration-quality-scale/
 #
-# manifest.json's `quality_scale: silver` is the *claim*; this file is
+# manifest.json's `quality_scale: bronze` is the *claim*; this file is
 # the *audit* that hassfest reads to verify the claim rule-by-rule. If
 # a rule here says `status: done` but the code doesn't satisfy it,
 # hassfest fails the build. If a rule should be exempt, spell out why

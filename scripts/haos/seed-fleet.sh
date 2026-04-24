@@ -24,13 +24,25 @@
 #
 # Usage:
 #   scripts/haos/seed-fleet.sh                          # defaults
+#   FLEET_SOURCE=repo scripts/haos/seed-fleet.sh        # use repo-committed
+#                                                         scrubbed fixture
+#                                                         (HT.13c)
 #   FLEET_SOURCE_HOST=other-hass scripts/haos/seed-fleet.sh
 #   FLEET_TARGETS='cyd-world-clock.yaml' scripts/haos/seed-fleet.sh  # minimal
 #
 # Env overrides:
 #   PVE_HOST           (default pve)
 #   VMID               (default 106)
-#   FLEET_SOURCE_HOST  (default hass-4)            — ssh alias of source
+#   FLEET_SOURCE       (default hass-4)            — 'hass-4' pulls live
+#                                                    via ssh; 'repo' uses
+#                                                    tests/fixtures/haos-fleet/
+#                                                    committed with the repo
+#                                                    (HT.13c — no SSH reach
+#                                                    to hass-4 required, for
+#                                                    CI + contributors)
+#   FLEET_SOURCE_HOST  (default hass-4)            — ssh alias of source,
+#                                                    only used when
+#                                                    FLEET_SOURCE=hass-4
 #   FLEET_SOURCE_DIR   (default /usr/share/hassio/homeassistant/esphome)
 #   FLEET_TARGETS      (default the four files HT.13a needs)
 #   GUEST_ESPHOME_DIR  (default /mnt/data/supervisor/homeassistant/esphome)
@@ -40,6 +52,7 @@ set -euo pipefail
 PVE_HOST="${PVE_HOST:-pve}"
 VMID="${VMID:-106}"
 PVE_NODE="${PVE_NODE:-}"
+FLEET_SOURCE="${FLEET_SOURCE:-hass-4}"
 FLEET_SOURCE_HOST="${FLEET_SOURCE_HOST:-hass-4}"
 FLEET_SOURCE_DIR="${FLEET_SOURCE_DIR:-/usr/share/hassio/homeassistant/esphome}"
 # Default set pinned to what cyd-office-info.spec.ts + the 4 TARGET_FILENAME
@@ -47,17 +60,28 @@ FLEET_SOURCE_DIR="${FLEET_SOURCE_DIR:-/usr/share/hassio/homeassistant/esphome}"
 FLEET_TARGETS="${FLEET_TARGETS:-cyd-world-clock.yaml garage-door-big.yaml .common.yaml secrets.yaml}"
 GUEST_ESPHOME_DIR="${GUEST_ESPHOME_DIR:-/mnt/data/supervisor/homeassistant/esphome}"
 
+if [[ "$FLEET_SOURCE" != "repo" && "$FLEET_SOURCE" != "hass-4" ]]; then
+  echo "FLEET_SOURCE must be 'repo' or 'hass-4' (got '$FLEET_SOURCE')" >&2
+  exit 2
+fi
+
+REPO_FIXTURE_DIR="$(cd "$(dirname "$0")/../.." && pwd)/tests/fixtures/haos-fleet"
+
 command -v python3 >/dev/null || { echo "python3 required locally" >&2; exit 2; }
 
 # SSH multiplexing — one auth, many ops. See install-addon.sh for the
-# history of why we don't leave this to bare `ssh` anymore.
+# history of why we don't leave this to bare `ssh` anymore. The source-
+# host channel is only opened under FLEET_SOURCE=hass-4; FLEET_SOURCE=repo
+# builds the tarball locally and never touches FLEET_SOURCE_HOST.
 SSH_CTRL_PVE="$(mktemp -u -t pve-ssh.XXXXXX)"
 SSH_CTRL_SRC="$(mktemp -u -t src-ssh.XXXXXX)"
 SSH_OPTS_PVE=(-o ControlMaster=auto -o ControlPath="$SSH_CTRL_PVE" -o ControlPersist=60s)
 SSH_OPTS_SRC=(-o ControlMaster=auto -o ControlPath="$SSH_CTRL_SRC" -o ControlPersist=60s)
 cleanup_ssh() {
   ssh "${SSH_OPTS_PVE[@]}" -O exit "$PVE_HOST" 2>/dev/null || true
-  ssh "${SSH_OPTS_SRC[@]}" -O exit "$FLEET_SOURCE_HOST" 2>/dev/null || true
+  if [[ "$FLEET_SOURCE" == "hass-4" ]]; then
+    ssh "${SSH_OPTS_SRC[@]}" -O exit "$FLEET_SOURCE_HOST" 2>/dev/null || true
+  fi
   rm -f "$SSH_CTRL_PVE" "$SSH_CTRL_SRC"
 }
 trap cleanup_ssh EXIT
@@ -74,27 +98,43 @@ if [[ -z "$PVE_NODE" ]]; then
     || { echo "Couldn't auto-detect PVE_NODE; set PVE_NODE explicitly" >&2; exit 3; }
 fi
 
-# Warm the multiplex sockets so later calls don't race.
+# Warm the multiplex sockets so later calls don't race. Only the
+# source-host channel is conditional — the pve channel is always used.
 pve_ssh "$PVE_HOST" true
-src_ssh "$FLEET_SOURCE_HOST" true
+if [[ "$FLEET_SOURCE" == "hass-4" ]]; then
+  src_ssh "$FLEET_SOURCE_HOST" true
+fi
 
-# --- 1. Pull fleet tarball from the source HA host -----------------------
-
-log "Pulling fleet files from $FLEET_SOURCE_HOST:$FLEET_SOURCE_DIR"
-log "  Files: $FLEET_TARGETS"
+# --- 1. Build (or pull) the fleet tarball --------------------------------
 
 TARBALL=$(mktemp -t haos_fleet.XXXXXX).tar
 trap 'rm -f "$TARBALL"; cleanup_ssh' EXIT
 
-# Build the tar on the source host and stream it back. Preserving dot-files
-# (e.g. .common.yaml) is default for explicit file lists — no --wildcards
-# hack needed. --ignore-failed-read gives us a clear error below if a file
-# the test suite expects has been renamed or removed upstream.
-src_ssh "$FLEET_SOURCE_HOST" \
-  "tar cf - -C '$FLEET_SOURCE_DIR' $FLEET_TARGETS" > "$TARBALL"
+if [[ "$FLEET_SOURCE" == "repo" ]]; then
+  log "Packing fleet from repo fixture at $REPO_FIXTURE_DIR"
+  log "  Files: $FLEET_TARGETS"
+  if [[ ! -d "$REPO_FIXTURE_DIR" ]]; then
+    echo "Repo fixture dir missing: $REPO_FIXTURE_DIR" >&2
+    echo "Either check out the tests/fixtures/haos-fleet/ directory from the repo, or rerun with FLEET_SOURCE=hass-4." >&2
+    exit 4
+  fi
+  # Same tar shape as the hass-4 path: explicit file list, dotfiles
+  # preserved, no --wildcards dance.
+  # shellcheck disable=SC2086  # we WANT word-splitting of FLEET_TARGETS
+  tar cf "$TARBALL" -C "$REPO_FIXTURE_DIR" $FLEET_TARGETS
+else
+  log "Pulling fleet files from $FLEET_SOURCE_HOST:$FLEET_SOURCE_DIR"
+  log "  Files: $FLEET_TARGETS"
+  # Build the tar on the source host and stream it back. Preserving dot-files
+  # (e.g. .common.yaml) is default for explicit file lists — no --wildcards
+  # hack needed. --ignore-failed-read gives us a clear error below if a file
+  # the test suite expects has been renamed or removed upstream.
+  src_ssh "$FLEET_SOURCE_HOST" \
+    "tar cf - -C '$FLEET_SOURCE_DIR' $FLEET_TARGETS" > "$TARBALL"
+fi
 
 if [[ ! -s "$TARBALL" ]]; then
-  echo "Fleet tarball is empty — check that $FLEET_SOURCE_DIR exists on $FLEET_SOURCE_HOST and contains: $FLEET_TARGETS" >&2
+  echo "Fleet tarball is empty — source=$FLEET_SOURCE, targets='$FLEET_TARGETS'" >&2
   exit 4
 fi
 log "Tarball size: $(du -h "$TARBALL" | awk '{print $1}')"

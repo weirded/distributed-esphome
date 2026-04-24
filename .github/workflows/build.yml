@@ -1,0 +1,96 @@
+name: Dockerfile buildx smoke
+
+# CI.1 — every PR + push runs `docker buildx build` against both
+# Dockerfiles (add-on + worker client). Doesn't publish; just asserts
+# the builds succeed so a broken Dockerfile lands here rather than
+# silently failing the next time publish-{server,client}.yml runs
+# against main. Buildx with --load keeps the output local — no GHCR
+# write auth required.
+#
+# ~3–4 min extra per push; cheap insurance against the Dockerfile-
+# broken-on-develop-for-hours class of bug that publish-* only
+# surfaces post-merge.
+
+on:
+  pull_request:
+    paths:
+      - "ha-addon/Dockerfile"
+      - "ha-addon/Dockerfile.standalone"
+      - "ha-addon/client/Dockerfile"
+      - "ha-addon/server/requirements.lock"
+      - "ha-addon/server/requirements.txt"
+      - "ha-addon/client/requirements.lock"
+      - "ha-addon/client/requirements.txt"
+      - ".github/workflows/build.yml"
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - "ha-addon/Dockerfile"
+      - "ha-addon/Dockerfile.standalone"
+      - "ha-addon/client/Dockerfile"
+      - "ha-addon/server/requirements.lock"
+      - "ha-addon/server/requirements.txt"
+      - "ha-addon/client/requirements.lock"
+      - "ha-addon/client/requirements.txt"
+      - ".github/workflows/build.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buildx:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Worker client — its Dockerfile FROMs python:3.11-slim, so
+          # buildx builds straight through.
+          - name: client
+            context: ha-addon/client
+            dockerfile: ha-addon/client/Dockerfile
+            build_args: ""
+          # Add-on server — its Dockerfile expects BUILD_FROM from
+          # Supervisor. The default in the Dockerfile points at the
+          # same python:3.11-slim digest build.yaml uses for local
+          # docker-build smokes, so leaving BUILD_FROM unset is fine.
+          - name: server-addon
+            context: ha-addon
+            dockerfile: ha-addon/Dockerfile
+            build_args: ""
+          # Standalone server image — separate entrypoint, no Supervisor
+          # layer.
+          - name: server-standalone
+            context: ha-addon
+            dockerfile: ha-addon/Dockerfile.standalone
+            build_args: ""
+
+    name: buildx (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build (linux/amd64)
+        uses: docker/build-push-action@ba8c5e9f64b0415d77f35ed4075e8b3d8b4c1d7a # v6.15.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          # --load instead of --push: keep the image local, no registry
+          # auth required. Cache layers between runs via the GitHub
+          # Actions cache so the common apt + pip install layers hit
+          # ~10 s instead of ~3 min on reruns that don't touch them.
+          load: true
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          build-args: ${{ matrix.build_args }}

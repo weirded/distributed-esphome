@@ -1,0 +1,62 @@
+esphome:
+  name: "${name}"
+  comment: "${display_name}"
+  friendly_name: "${display_name}"
+
+wifi:
+  reboot_timeout: 5min
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2  
+
+logger:
+
+api:
+  reboot_timeout: 5min
+
+web_server:
+
+captive_portal:
+
+safe_mode:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+# time:
+#   - platform: sntp
+#     # NOTE(2023-03-23): Adding this in order to prevent conflict with time() in 
+#     # emporia_vue_utility.h.
+#     id: sntp_time
+  
+binary_sensor:
+  - platform: status
+    name: "${display_name} Status"
+  
+sensor:
+  - platform: uptime
+    name: "${display_name} Uptime Sensor"
+
+  - platform: wifi_signal
+    name: "${display_name} WiFi Signal"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "${display_name} IP Address"
+    ssid:
+      name: "${display_name} Connected SSID"
+    bssid:
+      name: "${display_name} Connected BSSID"
+    mac_address:
+      name: "${display_name} MAC Address"
+
+button:
+  - platform: restart
+    id: restart_button
+    name: "${display_name} Restart"

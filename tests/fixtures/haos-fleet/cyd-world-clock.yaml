@@ -1,0 +1,535 @@
+esphome:
+  name: cyd-world-clock
+  friendly_name: Office World Clock
+  area: Office
+  on_boot:
+    - light.turn_on:
+        id: backlight
+        brightness: 100%
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: true
+
+psram:
+  mode: quad
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+  - platform: web_server
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: 192.0.2.71
+
+web_server:
+  port: 80
+
+# Fonts
+font:
+  - file:
+      path: fonts/Arimo-Regular.ttf
+      type: local
+    id: heading_font
+    size: 24
+    glyphs:
+      - " -/:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+  - file:
+      path: fonts/Arimo-Regular.ttf
+      type: local
+    id: date_font
+    size: 32
+    glyphs:
+      - " -/:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"      
+  - file:
+      path: fonts/JetBrainsMono-Bold.ttf
+      type: local
+    id: time_font
+    size: 54
+    glyphs:
+      - " :0123456789"
+
+# Images
+image:
+  - file: images/flag_us.png
+    id: flag_us
+    resize: 40x21
+    type: RGB565
+  - file: images/flag_in.png
+    id: flag_in
+    resize: 40x27
+    type: RGB565
+  - file: images/flag_eu.png
+    id: flag_eu
+    resize: 40x27
+    type: RGB565
+
+# Colors - Solarized Dark theme
+color:
+  - id: room_bg_color
+    hex: "002b36"  # base03 - darkest background
+  - id: timezone_bg_color
+    hex: "073642"  # base02 - timezone card background
+  - id: timezone_border_color
+    hex: "586e75"  # base01 - timezone card border
+  - id: default_button_bg_color
+    hex: "073642"  # base02
+  - id: default_button_pressed_bg_color
+    hex: "586e75"  # base01
+  - id: clock_color
+    hex: "268bd2"  # blue - heading accent
+  - id: date_color
+    hex: "b58900"  # yellow - date accent
+  - id: time_color
+    hex: "fdf6e3"  # base3 - daytime time
+  - id: time_color_night
+    hex: "93a1a1"  # base1 - nighttime time
+
+# Single UTC time source for reliable timezone calculations
+time:
+  - platform: sntp
+    id: utc_time
+    timezone: "UTC"
+    on_time_sync:
+      - logger.log: "UTC time synchronized from NTP"
+    servers:
+     - 0.pool.ntp.org
+     - 1.pool.ntp.org
+     - 2.pool.ntp.org
+
+# SPI configuration for display - exactly like working example
+spi:
+  - id: spi_tft
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+
+# Touchscreen - exactly like working example
+# touchscreen:
+#   - platform: xpt2046
+#     id: my_touch
+#     display: my_display
+#     spi_id: spi_tft
+#     cs_pin: GPIO33
+#     interrupt_pin: GPIO36
+#     update_interval: 50ms
+#     transform:
+#       swap_xy: true
+#       mirror_x: true
+#       mirror_y: true
+#     calibration:
+#       x_min: 200
+#       x_max: 3900
+#       y_min: 200
+#       y_max: 3900
+#     on_release:
+#       then:
+#         - if:
+#             condition: lvgl.is_paused
+#             then:
+#               - lvgl.resume
+#               - lvgl.widget.redraw
+
+# Display - migrated from ili9xxx to mipi_spi
+display:
+  - platform: mipi_spi
+    id: my_display
+    model: ST7796
+    spi_id: spi_tft
+    dc_pin: GPIO2
+    cs_pin: GPIO15
+    dimensions:
+      width: 320
+      height: 480
+    data_rate: 80MHz
+    color_order: BGR
+    invert_colors: false
+    update_interval: never
+    auto_clear_enabled: false
+    show_test_card: false
+    transform:
+      swap_xy: false
+      mirror_y: true
+      mirror_x: false
+    
+# LVGL - exactly like working example structure
+lvgl:
+  displays:
+    - my_display
+  #touchscreens: my_touch
+  buffer_size: 10%
+  rotation: 0
+  default_font: heading_font
+  theme:
+    button:
+      bg_color: 0x000000
+      bg_opa: COVER
+      border_color: 0x000000
+      border_width: 1
+      text_color: 0xFFFFFF
+      pressed:
+        bg_color: 0xC0C0C0
+        bg_grad_color: 0xC0C0C0
+        bg_opa: COVER
+      checked:
+        bg_color: 0x000000
+        bg_grad_color: 0x000000
+        bg_opa: COVER
+        text_color: 0x800080
+  pages:
+    - id: main_page
+      pad_all: 0
+      widgets:
+        - obj:
+            width: 100%
+            height: 100%
+            border_width: 0
+            radius: 0
+            align: CENTER
+            bg_color: room_bg_color
+            bg_opa: COVER
+            layout:
+              type: grid
+              grid_columns: [fr(1)]
+              grid_rows: [fr(1), fr(1), fr(1)]
+            pad_all: 0px
+            widgets:
+              # PST Time Zone
+              - obj:
+                  grid_cell_column_pos: 0
+                  grid_cell_row_pos: 0
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  width: 100%
+                  bg_color: timezone_bg_color
+                  bg_opa: COVER
+                  border_color: timezone_border_color
+                  border_width: 2
+                  radius: 16
+                  pad_all: 0
+                  layout:
+                    type: FLEX
+                    flex_flow: COLUMN
+                    flex_align_main: CENTER
+                    flex_align_cross: CENTER
+                    flex_align_track: CENTER
+                  widgets:
+                    - obj:
+                        height: 40
+                        width: 100%
+                        bg_opa: TRANSP
+                        border_width: 0
+                        layout:
+                          type: FLEX
+                          flex_flow: ROW
+                          flex_align_main: CENTER
+                          flex_align_cross: CENTER
+                        widgets:
+                          - image:
+                              src: flag_us
+                              align: CENTER
+                          - label:
+                              text: " Here"
+                              text_color: clock_color
+                              text_font: heading_font
+                              text_align: CENTER
+                    - label:
+                        id: pst_date
+                        text: "Mon 01/01/70"
+                        text_color: date_color
+                        text_font: date_font
+                        text_align: CENTER
+                    - label:
+                        id: pst_time
+                        text: "00:00:00"
+                        text_font: time_font
+                        text_align: CENTER
+
+              # IST Time Zone
+              - obj:
+                  grid_cell_column_pos: 0
+                  grid_cell_row_pos: 1
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  width: 100%
+                  bg_color: timezone_bg_color
+                  bg_opa: COVER
+                  border_color: timezone_border_color
+                  border_width: 2
+                  radius: 16
+                  pad_all: 0
+                  layout:
+                    type: FLEX
+                    flex_flow: COLUMN
+                    flex_align_main: CENTER
+                    flex_align_cross: CENTER
+                    flex_align_track: CENTER
+                  widgets:
+                    - obj:
+                        height: 40
+                        width: 100%
+                        bg_opa: TRANSP
+                        border_width: 0
+                        layout:
+                          type: FLEX
+                          flex_flow: ROW
+                          flex_align_main: CENTER
+                          flex_align_cross: CENTER
+                        widgets:
+                          - image:
+                              src: flag_in
+                              align: CENTER
+                          - label:
+                              text: " India"
+                              text_color: clock_color
+                              text_font: heading_font
+                              text_align: CENTER
+                    - label:
+                        id: ist_date
+                        text: "Mon 01/01/70"
+                        text_color: date_color
+                        text_font: date_font
+                        text_align: CENTER
+                    - label:
+                        id: ist_time
+                        text: "00:00:00"
+                        text_font: time_font
+                        text_align: CENTER
+
+              # CET Time Zone
+              - obj:
+                  grid_cell_column_pos: 0
+                  grid_cell_row_pos: 2
+                  grid_cell_x_align: STRETCH
+                  grid_cell_y_align: STRETCH
+                  width: 100%
+                  bg_color: timezone_bg_color
+                  bg_opa: COVER
+                  border_color: timezone_border_color
+                  border_width: 2
+                  radius: 16
+                  pad_all: 0
+                  layout:
+                    type: FLEX
+                    flex_flow: COLUMN
+                    flex_align_main: CENTER
+                    flex_align_cross: CENTER
+                    flex_align_track: CENTER
+                  widgets:
+                    - obj:
+                        height: 40
+                        width: 100%
+                        bg_opa: TRANSP
+                        border_width: 0
+                        layout:
+                          type: FLEX
+                          flex_flow: ROW
+                          flex_align_main: CENTER
+                          flex_align_cross: CENTER
+                        widgets:
+                          - image:
+                              src: flag_eu
+                              align: CENTER
+                          - label:
+                              text: " Europe"
+                              text_color: clock_color
+                              text_font: heading_font
+                              text_align: CENTER
+                    - label:
+                        id: cet_date
+                        text: "Mon 01/01/70"
+                        text_color: date_color
+                        text_font: date_font
+                        text_align: CENTER
+                    - label:
+                        id: cet_time
+                        text: "00:00:00"
+                        text_font: time_font
+                        text_align: CENTER
+
+# No globals needed - we'll use C library timezone functions
+
+# Timer to update displays every second
+interval:
+  - interval: 1s
+    then:
+      # Update PST date and time
+      - lvgl.label.update:
+          id: pst_date
+          text: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return std::string("Mon 01/01/70");
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            struct tm *utc_tm = gmtime(&ts);
+            // PST/PDT: DST 2nd Sunday March - 1st Sunday November
+            bool dst = (utc_tm->tm_mon > 2 && utc_tm->tm_mon < 10) || (utc_tm->tm_mon == 2 && utc_tm->tm_mday >= 8) || (utc_tm->tm_mon == 10 && utc_tm->tm_mday <= 7);
+            time_t offset_ts = ts - (dst ? 7 : 8) * 3600;
+            struct tm *now = gmtime(&offset_ts);
+            const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            char buffer[20];
+            sprintf(buffer, "%s %d/%d/%02d",
+                    days[now->tm_wday],
+                    now->tm_mon + 1, now->tm_mday, now->tm_year % 100);
+            return std::string(buffer);
+      - lvgl.label.update:
+          id: pst_time
+          text: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return std::string("00:00:00");
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            struct tm *utc_tm = gmtime(&ts);
+            // PST/PDT: DST 2nd Sunday March - 1st Sunday November
+            bool dst = (utc_tm->tm_mon > 2 && utc_tm->tm_mon < 10) || (utc_tm->tm_mon == 2 && utc_tm->tm_mday >= 8) || (utc_tm->tm_mon == 10 && utc_tm->tm_mday <= 7);
+            time_t offset_ts = ts - (dst ? 7 : 8) * 3600;
+            struct tm *now = gmtime(&offset_ts);
+            char buffer[20];
+            sprintf(buffer, "%02d:%02d:%02d", now->tm_hour, now->tm_min, now->tm_sec);
+            return std::string(buffer);
+      - lvgl.label.update:
+          id: pst_time
+          text_color: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return id(time_color);
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            struct tm *utc_tm = gmtime(&ts);
+            // PST/PDT: DST 2nd Sunday March - 1st Sunday November
+            bool dst = (utc_tm->tm_mon > 2 && utc_tm->tm_mon < 10) || (utc_tm->tm_mon == 2 && utc_tm->tm_mday >= 8) || (utc_tm->tm_mon == 10 && utc_tm->tm_mday <= 7);
+            time_t offset_ts = ts - (dst ? 7 : 8) * 3600;
+            struct tm *now = gmtime(&offset_ts);
+            // Night time is 8pm (20:00) to 6am (06:00)
+            if (now->tm_hour >= 20 || now->tm_hour < 6) {
+              return id(time_color_night);
+            } else {
+              return id(time_color);
+            }
+      
+      # Update IST (India Standard Time)
+      - lvgl.label.update:
+          id: ist_date
+          text: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return std::string("Mon 01/01/70");
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            // IST: UTC+5:30 (no DST)
+            time_t offset_ts = ts + (time_t)(5.5 * 3600);
+            struct tm *now = gmtime(&offset_ts);
+            const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            char buf[20];
+            sprintf(buf, "%s %d/%d/%02d", days[now->tm_wday], now->tm_mon + 1, now->tm_mday, now->tm_year % 100);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: ist_time
+          text: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return std::string("00:00:00");
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            // IST: UTC+5:30 (no DST)
+            time_t offset_ts = ts + (time_t)(5.5 * 3600);
+            struct tm *now = gmtime(&offset_ts);
+            char buf[20];
+            sprintf(buf, "%02d:%02d:%02d", now->tm_hour, now->tm_min, now->tm_sec);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: ist_time
+          text_color: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return id(time_color);
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            // IST: UTC+5:30 (no DST)
+            time_t offset_ts = ts + (time_t)(5.5 * 3600);
+            struct tm *now = gmtime(&offset_ts);
+            // Night time is 8pm (20:00) to 6am (06:00)
+            if (now->tm_hour >= 20 || now->tm_hour < 6) {
+              return id(time_color_night);
+            } else {
+              return id(time_color);
+            }
+      
+      # Update CET/CEST (Central European Time, UTC+1 / UTC+2)
+      - lvgl.label.update:
+          id: cet_date
+          text: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return std::string("Mon 01/01/70");
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            struct tm *utc_tm = gmtime(&ts);
+            // CET/CEST: DST last Sunday March - last Sunday October
+            bool dst = (utc_tm->tm_mon > 2 && utc_tm->tm_mon < 9) || (utc_tm->tm_mon == 2 && utc_tm->tm_mday >= 29) || (utc_tm->tm_mon == 9 && utc_tm->tm_mday <= 25);
+            time_t offset_ts = ts + (dst ? 2 : 1) * 3600;
+            struct tm *now = gmtime(&offset_ts);
+            const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+            char buf[20];
+            sprintf(buf, "%s %d/%d/%02d", days[now->tm_wday], now->tm_mon + 1, now->tm_mday, now->tm_year % 100);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: cet_time
+          text: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return std::string("00:00:00");
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            struct tm *utc_tm = gmtime(&ts);
+            // CET/CEST: DST last Sunday March - last Sunday October
+            bool dst = (utc_tm->tm_mon > 2 && utc_tm->tm_mon < 9) || (utc_tm->tm_mon == 2 && utc_tm->tm_mday >= 29) || (utc_tm->tm_mon == 9 && utc_tm->tm_mday <= 25);
+            time_t offset_ts = ts + (dst ? 2 : 1) * 3600;
+            struct tm *now = gmtime(&offset_ts);
+            char buf[20];
+            sprintf(buf, "%02d:%02d:%02d", now->tm_hour, now->tm_min, now->tm_sec);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: cet_time
+          text_color: !lambda |-
+            if (!id(utc_time).now().is_valid()) {
+              return id(time_color);
+            }
+
+            time_t ts = id(utc_time).now().timestamp;
+            struct tm *utc_tm = gmtime(&ts);
+            // CET/CEST: DST last Sunday March - last Sunday October
+            bool dst = (utc_tm->tm_mon > 2 && utc_tm->tm_mon < 9) || (utc_tm->tm_mon == 2 && utc_tm->tm_mday >= 29) || (utc_tm->tm_mon == 9 && utc_tm->tm_mday <= 25);
+            time_t offset_ts = ts + (dst ? 2 : 1) * 3600;
+            struct tm *now = gmtime(&offset_ts);
+            // Night time is 8pm (20:00) to 6am (06:00)
+            if (now->tm_hour >= 20 || now->tm_hour < 6) {
+              return id(time_color_night);
+            } else {
+              return id(time_color);
+            }
+
+# Backlight control
+output:
+  - platform: ledc
+    pin: GPIO27
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
