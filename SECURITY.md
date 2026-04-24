@@ -4,10 +4,10 @@
 
 | Version  | Supported          |
 |----------|--------------------|
-| 1.6.1.x  | ✅ Current release  |
-| 1.6.0    | ✅ Previous stable — security fixes only if trivially backportable |
-| 1.5.x    | ⚠️ Superseded — upgrade to 1.6.x |
-| < 1.5.0  | ❌ No patches       |
+| 1.6.2.x  | ✅ Current release  |
+| 1.6.1    | ✅ Previous stable — security fixes only if trivially backportable |
+| 1.6.0    | ⚠️ Superseded — upgrade to 1.6.x |
+| < 1.6.0  | ❌ No patches       |
 
 *(Note: the 1.5 release was developed as `1.4.1-dev.N` through dev.72 and renumbered late cycle as scope grew beyond a patch release. Docker tags with the `1.4.1-dev.N` stamp remain pullable from GHCR but are superseded by the 1.5.x stable tags.)*
 

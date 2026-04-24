@@ -1,8 +1,15 @@
 # Security Audit: ESPHome Fleet
 
 **Original audit:** 2026-03-29 (version 0.0.21; at the time of audit the product was called "ESPHome Distributed Build Server", renamed to ESPHome Fleet in 1.4.1, renumbered to 1.5.0 late cycle).
-**Last refreshed:** 2026-04-20 against 1.6.1.
+**Last refreshed:** 2026-04-24 against 1.6.2.
 **Scope:** Server add-on (`ha-addon/server/`), Dockerfile, `run.sh`, `config.yaml`, and the bundled worker (`client/client.py`) as it interacts with the server security model.
+
+> **Refresh note (2026-04-24, 1.6.2):** No F-* status flips this cycle. 1.6.2 is a hardening release focused on install-path correctness (bugs #82, #83, #84, #86, #104, #105, #190), worker-bundle discipline (BD.1), and honest framing of already-shipped security claims (TP.1 AppArmor permissive-caveat, TP.2 AppArmor narrow denies verified, TP.3 quality-scale retreat silver → bronze, TP.4 CHANGELOG retrospective). None of these open, widen, or close a finding in this audit.
+>
+> Minor notes that do NOT require an F-entry change:
+> - **py-spy round-trip (#108 added, #189 removed, net-zero):** the "Request diagnostics" feature briefly shipped a `py-spy` dependency in the add-on + client images (image 7 → 8). It was removed in #189 in favour of a pure-Python in-process thread walk via `sys._current_frames()` because Supervisor drops `CAP_SYS_PTRACE` on add-on containers and the sidecar workaround from `scripts/threaddump-addon.sh` is rejected on HAOS + HA Supervised variants. `IMAGE_VERSION` + `MIN_IMAGE_VERSION` were reverted 8 → 7 (image content is byte-identical to pre-#108), so 1.6.1 workers and briefly-1.6.2 workers are both accepted by the stale-image check. No syscall capability, ptrace, or external profiler is in the final 1.6.2 path. Net effect on the threat model: nil.
+> - **`ptrace,` allow rule stayed denied:** the AppArmor profile's `deny ptrace,` rule from 1.6.1 was considered for a same-profile carve-out during #108 and reverted in the same turn — the carve-out didn't enable anything (py-spy still failed due to Supervisor dropping `CAP_SYS_PTRACE`, which is the binding constraint, not AppArmor). §F-21's caveat is unchanged.
+> - **`docker-compose.yml` + standalone `Dockerfile.standalone`:** bug #104 added missing `git` + `iputils-ping` to the standalone apt layer to match the add-on layer. Pure feature parity; no new surface.
 
 > **Refresh note (2026-04-20, 1.6.1):** Status flips this cycle:
 > - **F-13** (Docker base not digest-pinned) moved OPEN → **FIXED (partial)** via SS.4. Worker Dockerfile pins `python:3.11-slim@sha256:…` fully; server Dockerfile pins the `ARG BUILD_FROM` default digest. The Supervisor-driven production path via `build.yaml` still can't carry a digest (upstream regex rejects `@sha256:…` there) — partial rather than full FIXED for that reason. See §F-13.

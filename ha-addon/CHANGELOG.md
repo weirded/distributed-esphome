@@ -21,7 +21,6 @@ A hardening release on top of 1.6.1.
 - Queue page: the **Clear** dropdown has a new **Clear Selected** option, so you can check a few rows and remove just those. The existing "Clear Succeeded", "Clear All Finished", and "Clear Entire Queue" entries are unchanged.
 - Startup logs no longer flood with a `WARNING` line every scan cycle when `/config/esphome/` doesn't exist. A single informational line now explains what the state means (install the Home Assistant ESPHome builder add-on, or create the directory yourself).
 - **Add Device** now works on a truly-empty first install, even when `/config/esphome/` doesn't exist yet (i.e. you installed Fleet without ever installing the Home Assistant ESPHome builder add-on). The directory is created the moment you create your first device instead of failing with a `No such file or directory` error.
-- Fixed a misleading startup log on truly-empty first installs that claimed `Pre-existing git repo detected on first boot` even though the config directory didn't exist. The message now fires only when there actually is a pre-existing git repo under `/config/esphome/`.
 - The **Connect Worker** modal's **Bash** and **PowerShell** snippets now include `--network host`, matching the **Docker Compose** snippet that already had `network_mode: host`. Without it, a worker started from the copy-pasted command landed on Docker's default bridge network and could not reach ESP devices on the host's LAN, so every OTA failed.
 
 **Smaller changes.**
@@ -32,7 +31,6 @@ A hardening release on top of 1.6.1.
 **Under the hood.**
 
 - Integration config-flow hardening: the Reconfigure and Reauth flows have gained end-to-end tests against a real Home Assistant fixture. The new tests caught a latent bug where a successful reconfigure would raise `TypeError: object dict can't be used in 'await' expression` on Home Assistant 2024.11+, now fixed.
-- The **Request diagnostics** path captures thread stacks via an in-process frame walk — no external profiler, no ptrace, no privileged container capability. Works inside the Home Assistant add-on sandbox without any of the usual `CAP_SYS_PTRACE` / AppArmor dance.
 
 ## 1.6.1
 
