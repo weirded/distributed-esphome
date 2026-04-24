@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { retryTransient } from './retry';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -38,9 +39,11 @@ interface EsphomeVersions {
 }
 
 async function getQueue(request: APIRequestContext): Promise<QueueJob[]> {
-  const resp = await request.get('/ui/api/queue');
-  if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
-  return resp.json();
+  return retryTransient(async () => {
+    const resp = await request.get('/ui/api/queue');
+    if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
+    return resp.json();
+  });
 }
 
 test.describe.serial('pinned bulk compile hass-4 smoke', () => {

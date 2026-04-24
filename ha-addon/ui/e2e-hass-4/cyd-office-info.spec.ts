@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { retryTransient } from './retry';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -385,9 +386,11 @@ function isTerminal(state: string): boolean {
 }
 
 async function getQueue(request: import('@playwright/test').APIRequestContext): Promise<QueueJob[]> {
-  const resp = await request.get('/ui/api/queue');
-  if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
-  return resp.json();
+  return retryTransient(async () => {
+    const resp = await request.get('/ui/api/queue');
+    if (!resp.ok()) throw new Error(`/ui/api/queue returned ${resp.status()}`);
+    return resp.json();
+  });
 }
 
 async function latestJobIdFor(
