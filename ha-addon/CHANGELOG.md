@@ -34,8 +34,6 @@ A hardening release on top of 1.6.1.
 - Integration config-flow hardening: the Reconfigure and Reauth flows have gained end-to-end tests against a real Home Assistant fixture. The new tests caught a latent bug where a successful reconfigure would raise `TypeError: object dict can't be used in 'await' expression` on Home Assistant 2024.11+, now fixed.
 - The **Request diagnostics** path captures thread stacks via an in-process frame walk — no external profiler, no ptrace, no privileged container capability. Works inside the Home Assistant add-on sandbox without any of the usual `CAP_SYS_PTRACE` / AppArmor dance.
 
-**Note for standalone worker users.** The worker Docker image bumped from version 7 to 9. Old-image workers are flagged in the Workers tab — run `docker pull ghcr.io/weirded/esphome-dist-client:latest && docker restart <name>` to refresh.
-
 ## 1.6.1
 
 A bug-fix + polish release on top of 1.6.
