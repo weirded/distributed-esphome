@@ -261,19 +261,24 @@ def make_targets(version: str) -> dict[str, Target]:
             deploy_env={"HAOS_URL": "http://192.168.226.135:8123"},
             token_cache=home / ".config" / "distributed-esphome" / "haos-addon-token",
             playwright_env={
-                # HA long-lived token (already exists on disk; used by
-                # push-to-haos.sh for its own install calls). Passed
-                # through so @requires-ha specs — including ha-services
-                # and direct-port-auth — run end-to-end against the
-                # throwaway VM's HA. The integration installer runs at
-                # add-on boot, so the ``esphome_fleet`` service IS
-                # registered by the time Playwright hits HA.
+                # HA token + URL passed through so non-services
+                # @requires-ha specs (e.g. direct-port-auth) can run.
+                # ha-services.spec.ts itself filters out via
+                # playwright_args below — see comment there.
                 "HASS_URL": "http://192.168.226.135:8123",
                 "HASS_TOKEN": _read_text(
                     home / ".config" / "distributed-esphome" / "haos-token"
                 ) or os.environ.get("HASS_TOKEN", ""),
                 "FLEET_TARGET": "cyd-world-clock.yaml",
             },
+            # Skip the @requires-integration-config slice on the
+            # throwaway VM: the integration installer copies files to
+            # /config/custom_components/ at add-on boot, but no
+            # automated step completes the config flow, so HA never
+            # registers the esphome_fleet.* services. Tracked for
+            # 1.6.3 — automating config-entry creation in
+            # scripts/haos/install-addon.sh would let these run here.
+            playwright_args=["--grep-invert=@requires-integration-config"],
         ),
         "standalone-pve": Target(
             name="standalone-pve",

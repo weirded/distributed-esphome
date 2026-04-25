@@ -55,8 +55,20 @@ async function callHaService(
 
 // @requires-ha — calls HA's /api/services/esphome_fleet/* endpoints,
 // so the standalone-Docker target filters these out via
-// --grep-invert=@requires-ha. The hass-4 and HAOS-VM targets run them.
-test.describe('HA services hass-4 smoke (#64)', { tag: ['@requires-ha'] }, () => {
+// --grep-invert=@requires-ha.
+//
+// @requires-integration-config — also requires a configured
+// esphome_fleet integration entry, not just the integration files
+// being present in custom_components/. The throwaway HAOS VM
+// (haos-pve target) has the files copied by the add-on's
+// integration_installer at boot but no automated step completes
+// the config flow, so the esphome_fleet.* services aren't
+// registered and these specs would 400. The matrix filters this
+// tag out on haos-pve. Hass-4 has a real configured entry so
+// runs them.
+test.describe('HA services hass-4 smoke (#64)', {
+  tag: ['@requires-ha', '@requires-integration-config'],
+}, () => {
   test.skip(
     !HASS_TOKEN,
     'HASS_TOKEN not set — create a Long-Lived Access Token in HA '
