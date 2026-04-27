@@ -219,11 +219,6 @@ export function QueueTab({
       },
       sortingFn: stateSort,
     }),
-    // Bug #101: merged Worker + Routing column. Top line shows where the
-    // job landed (assigned hostname, slot, scheduled/pinned icons); bottom
-    // line shows the routing intent the user picked in the Upgrade modal
-    // (any worker / pinned worker / tag expression). Two surfaces read as
-    // one cell so a glance answers both "where did it go?" and "why?".
     columnHelper.accessor(row => row.assigned_hostname || '', {
       id: 'worker',
       header: ({ column }) => <SortHeader label="Worker" column={column} />,
@@ -248,45 +243,15 @@ export function QueueTab({
         const showPinnedHint =
           pinnedHostname && job.pinned_client_id && job.state === 'pending';
 
-        // Routing intent line (was the standalone Routing column before
-        // bug #101). Suppressed for the unconstrained case so the cell
-        // doesn't grow a line for every row — "Any worker" is the
-        // implicit default and the absence of a constraint reads cleaner
-        // than an italic placeholder. Pin/tag constraints render below.
-        const filter = job.worker_tag_filter;
-        const hasTagFilter = !!filter && filter.tags.length > 0;
-        let intentLine: React.ReactNode = null;
-        if (job.pinned_client_id) {
-          intentLine = (
-            <span
-              className="text-[10px] text-[var(--text-muted)]"
-              title="Pinned to a specific worker via the Upgrade modal — only that worker can claim this job."
-            >
-              specific worker
-            </span>
-          );
-        } else if (hasTagFilter) {
-          const opLabel = filter!.op === 'all_of' ? 'all of' : filter!.op === 'any_of' ? 'any of' : 'none of';
-          intentLine = (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] text-[var(--text-muted)]"
-              title={`Worker tag expression — only workers whose tags satisfy "${opLabel} ${filter!.tags.join(', ')}" can claim this job.`}
-            >
-              <span>{opLabel}</span>
-              <TagChips tags={filter!.tags} />
-            </span>
-          );
-        }
-
         // #17: pushpin icon when the user explicitly pinned the job to a
         // specific worker (UpgradeModal worker selector). Visible on every
         // pinned row regardless of state, so the user can audit history.
         return (
-          <span className="text-[12px] inline-flex items-start gap-1">
+          <span className="text-[12px] inline-flex items-center gap-1">
             {job.scheduled && (
               <span
                 title={job.schedule_kind === 'once' ? 'Triggered by one-time schedule' : 'Triggered by recurring schedule'}
-                className="inline-flex text-[var(--accent)] mt-[2px]"
+                className="inline-flex text-[var(--accent)]"
               >
                 {job.schedule_kind === 'once'
                   ? <Calendar className="size-3" aria-label="one-time scheduled run" />
@@ -300,7 +265,7 @@ export function QueueTab({
                     ? `Pinned to ${pinnedHostname} via Upgrade modal`
                     : 'Pinned to a specific worker via Upgrade modal'
                 }
-                className="inline-flex text-[var(--accent)] mt-[2px]"
+                className="inline-flex text-[var(--accent)]"
               >
                 <Pin className="size-3" aria-label="pinned to specific worker" />
               </span>
@@ -321,7 +286,6 @@ export function QueueTab({
               {showPinnedHint && !job.assigned_hostname && (
                 <><br /><span className="text-[10px] text-[var(--text-muted)]">→ {pinnedHostname}</span></>
               )}
-              {intentLine && <><br />{intentLine}</>}
             </span>
           </span>
         );
@@ -351,22 +315,66 @@ export function QueueTab({
       },
       sortingFn: 'alphanumeric',
     }),
-    // Bug #8 (1.6.1): surface the worker-selection reason so a user
-    // can answer "why did THIS worker get the job" without reading
-    // the server log. Short label with hover-explanation; dash for
-    // jobs that predate the column.
+    // Bug #8 (1.6.1) + bug #101: combined "Worker selection" column.
+    // Top line shows the routing intent the user picked in the Upgrade
+    // modal (any worker / pinned worker / tag expression — bug #100's
+    // standalone Routing column folded in here so the two never drift).
+    // Bottom line shows the selection reason — why THIS worker won
+    // (Pinned / Only eligible / Least busy / Fastest / First to poll).
+    // The two answer related questions ("what was asked for?" and "why
+    // did this win?") and reading them as one cell makes the routing
+    // story easier to follow without bouncing eyes between columns.
     columnHelper.accessor(row => row.selection_reason || '', {
       id: 'selection_reason',
       header: ({ column }) => <SortHeader label="Worker selection" column={column} />,
       cell: ({ row: { original: job } }) => {
+        // Routing intent — was the standalone Routing column before
+        // bug #101. Suppressed for the unconstrained case so default
+        // rows don't grow a line for a placeholder; "Any worker" is
+        // the implicit default and reads cleaner as absence.
+        const filter = job.worker_tag_filter;
+        const hasTagFilter = !!filter && filter.tags.length > 0;
+        let intentLine: React.ReactNode = null;
+        if (job.pinned_client_id) {
+          intentLine = (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)]"
+              title="Pinned to a specific worker via the Upgrade modal — only that worker can claim this job."
+            >
+              <Pin className="size-3" aria-hidden="true" />
+              specific worker
+            </span>
+          );
+        } else if (hasTagFilter) {
+          const opLabel = filter!.op === 'all_of' ? 'all of' : filter!.op === 'any_of' ? 'any of' : 'none of';
+          intentLine = (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)]"
+              title={`Worker tag expression — only workers whose tags satisfy "${opLabel} ${filter!.tags.join(', ')}" can claim this job.`}
+            >
+              <span>{opLabel}</span>
+              <TagChips tags={filter!.tags} />
+            </span>
+          );
+        }
+
         const display = formatSelectionReason(job.selection_reason);
-        if (!display) return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
-        return (
+        const reasonLine = display ? (
           <span
             className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
             title={display.title}
           >
             {display.label}
+          </span>
+        ) : null;
+
+        if (!intentLine && !reasonLine) {
+          return <span className="text-[var(--text-muted)] text-[12px]">—</span>;
+        }
+        return (
+          <span className="inline-flex flex-col gap-0.5">
+            {intentLine}
+            {reasonLine}
           </span>
         );
       },
