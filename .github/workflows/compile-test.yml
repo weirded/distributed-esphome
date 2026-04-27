@@ -69,7 +69,7 @@ jobs:
         run: docker build -t esphome-dist-client ha-addon/client/
 
       - name: Cache PlatformIO
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/esphome-compile-cache
           key: pio-${{ matrix.target }}-${{ matrix.esphome_version }}
@@ -109,7 +109,7 @@ jobs:
         run: docker build -t esphome-dist-server ha-addon/
 
       - name: Cache PlatformIO
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/esphome-compile-cache
           key: pio-server-${{ matrix.target }}-${{ matrix.esphome_version }}
