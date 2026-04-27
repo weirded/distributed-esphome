@@ -94,6 +94,15 @@ class RegisterRequest(_ProtocolMessage):
     client_id: Optional[str] = None  # for re-register across restarts
     max_parallel_jobs: int = 1
     system_info: Optional[SystemInfo] = None
+    # TG.1: worker tags. ``tags`` is the value of WORKER_TAGS (comma-split,
+    # trimmed) on the worker. The server seeds its persistent store from this
+    # on the *first* registration for the worker's identity (hostname, falling
+    # back to client_id); subsequent registrations are server-side-wins so a UI
+    # tag edit isn't clobbered by the next worker restart. ``overwrite_tags``
+    # (set when the worker has WORKER_TAGS_OVERWRITE=1) restores the old "env
+    # always wins" behaviour for scripted multi-worker deployments.
+    tags: Optional[list[str]] = None
+    overwrite_tags: bool = False
     protocol_version: int = PROTOCOL_VERSION
 
 

@@ -8,6 +8,26 @@ import { StatusDot } from '../StatusDot';
 import { SortHeader } from '../ui/sort-header';
 import { ActionsCell } from './ActionsCell';
 import { driftTooltip, hasDriftedConfig } from './drift';
+import { TagChips } from '../ui/tag-chips';
+
+/**
+ * TG.5: parse the comma-separated ``tags`` string from the YAML metadata
+ * comment block into a list. The wire shape stays a string today (one
+ * source of truth, the YAML comment) — the array is purely for rendering
+ * + autocomplete in the UI.
+ */
+function parseDeviceTags(s: string | null | undefined): string[] {
+  if (!s) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of s.split(',')) {
+    const t = raw.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
 
 /**
  * TanStack column defs for the Devices tab (QS.17).
@@ -62,7 +82,7 @@ interface Options {
  * Mirror of the `OptionalColumnId` type in DevicesTab. Exported here so the
  * two stay in sync when columns are added/removed.
  */
-export type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule';
+export type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule' | 'tags';
 
 // --- Small per-cell formatters (kept private to this module) ---------------
 
@@ -491,6 +511,12 @@ export function useDeviceColumns(options: Options) {
         </span>
       ),
       sortingFn: 'alphanumeric',
+    }),
+    columnHelper.accessor(row => row.tags || '', {
+      id: 'tags',
+      header: 'Tags',
+      cell: ({ row: { original: t } }) => <TagChips tags={parseDeviceTags(t.tags)} />,
+      enableSorting: false,
     }),
     columnHelper.accessor(
       row => row.project_name ? (row.project_version ? `${row.project_name} ${row.project_version}` : row.project_name) : '',

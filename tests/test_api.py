@@ -31,6 +31,21 @@ TOKEN = "test-secret-token"
 AUTH_HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
+# pytest-homeassistant-custom-component (installed on some dev boxes but not in
+# the plain CI test env) pulls in pytest-socket, which globally blocks
+# socket() so aiohttp's TestServer can't bind a loopback listener. Tests that
+# need loopback access pull this fixture; the pattern mirrors test_ui_api.py.
+@pytest.fixture
+def _enable_socket():
+    try:
+        import pytest_socket as _pytest_socket  # type: ignore[import-not-found]
+    except ImportError:
+        yield
+        return
+    _pytest_socket.enable_socket()
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -91,6 +106,11 @@ async def _make_app(tmp_path: Path, token: str = TOKEN) -> _App:
     app["queue"] = queue
     app["registry"] = registry
     app["log_subscribers"] = {}
+    # TG.1: every test rig gets a real WorkerTagStore on tmp_path so register
+    # tests exercise the full seed/server-wins/overwrite flow rather than the
+    # graceful-degrade fallback.
+    from worker_tags import WorkerTagStore  # noqa: PLC0415
+    app["worker_tag_store"] = WorkerTagStore(path=tmp_path / "worker-tags.json")
     app.router.add_routes(api_module.routes)
 
     client = TestClient(TestServer(app))
@@ -193,6 +213,81 @@ async def test_register_stores_worker_in_registry(tmp_path):
         assert worker.hostname == "worker1"
         assert worker.platform == "linux/arm64"
         assert worker.client_version == "1.2.3"
+    finally:
+        await ta.close()
+
+
+async def test_register_seeds_tags_first_time(tmp_path, _enable_socket):
+    """TG.1: WORKER_TAGS-equivalent payload on the first registration seeds the store."""
+    ta = await _make_app(tmp_path)
+    try:
+        resp = await ta.post(
+            "/api/v1/workers/register",
+            json={
+                "hostname": "tagged-worker",
+                "platform": "linux/amd64",
+                "tags": ["prod", "linux"],
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status == 200
+        client_id = (await resp.json())["client_id"]
+        worker = ta.registry.get(client_id)
+        assert worker is not None
+        assert worker.tags == ["prod", "linux"]
+        # Persisted by identity (hostname).
+        assert ta.app["worker_tag_store"].get_tags("tagged-worker") == ["prod", "linux"]
+    finally:
+        await ta.close()
+
+
+async def test_register_server_side_wins_after_first(tmp_path, _enable_socket):
+    """TG.1: a worker re-registering with different tags doesn't clobber the persisted entry."""
+    ta = await _make_app(tmp_path)
+    try:
+        resp = await ta.post(
+            "/api/v1/workers/register",
+            json={"hostname": "dup", "platform": "linux/amd64", "tags": ["prod"]},
+            headers=AUTH_HEADERS,
+        )
+        first_id = (await resp.json())["client_id"]
+
+        # New container, new client_id, but same hostname → server keeps "prod".
+        resp = await ta.post(
+            "/api/v1/workers/register",
+            json={"hostname": "dup", "platform": "linux/amd64", "tags": ["staging", "rebuild"]},
+            headers=AUTH_HEADERS,
+        )
+        second_id = (await resp.json())["client_id"]
+        assert second_id != first_id
+        worker = ta.registry.get(second_id)
+        assert worker.tags == ["prod"]
+    finally:
+        await ta.close()
+
+
+async def test_register_overwrite_clobbers(tmp_path, _enable_socket):
+    """TG.1: WORKER_TAGS_OVERWRITE=1 → overwrite_tags=true on the wire → server replaces."""
+    ta = await _make_app(tmp_path)
+    try:
+        await ta.post(
+            "/api/v1/workers/register",
+            json={"hostname": "h1", "platform": "linux/amd64", "tags": ["prod"]},
+            headers=AUTH_HEADERS,
+        )
+        resp = await ta.post(
+            "/api/v1/workers/register",
+            json={
+                "hostname": "h1",
+                "platform": "linux/amd64",
+                "tags": ["staging", "fast"],
+                "overwrite_tags": True,
+            },
+            headers=AUTH_HEADERS,
+        )
+        client_id = (await resp.json())["client_id"]
+        assert ta.registry.get(client_id).tags == ["staging", "fast"]
+        assert ta.app["worker_tag_store"].get_tags("h1") == ["staging", "fast"]
     finally:
         await ta.close()
 

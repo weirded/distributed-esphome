@@ -254,6 +254,13 @@ export interface Worker {
   system_info?: SystemInfo;
   current_job_id?: string;
   last_seen?: string;
+  /**
+   * TG.1: user-managed worker tags. Initially seeded from ``WORKER_TAGS``
+   * env on first registration; thereafter authoritative on the server side
+   * (UI edits via TG.4/TG.6 are not clobbered by worker restarts unless
+   * the worker also sets ``WORKER_TAGS_OVERWRITE=1``).
+   */
+  tags?: string[];
 }
 
 export interface Job {

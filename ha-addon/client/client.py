@@ -45,7 +45,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.7.0-dev.1"
+CLIENT_VERSION = "1.7.0-dev.2"
 
 
 def _read_image_version() -> Optional[str]:
@@ -127,6 +127,17 @@ MAX_ESPHOME_VERSIONS = int(os.environ.get("MAX_ESPHOME_VERSIONS", "3"))
 MAX_PARALLEL_JOBS = int(os.environ.get("MAX_PARALLEL_JOBS", "2"))
 HOSTNAME = os.environ.get("HOSTNAME", socket.gethostname())
 PLATFORM = os.environ.get("PLATFORM", sys.platform)
+# TG.1: comma-separated tag list. Empty / unset → register without seeding.
+# WORKER_TAGS_OVERWRITE=1 forces clobber-on-registration so scripted multi-
+# worker deployments retain the "tags travel with the docker invocation"
+# semantics (server-side wins is the default).
+def _parse_tags_env(raw: Optional[str]) -> Optional[list[str]]:
+    if raw is None:
+        return None
+    parts = [p.strip() for p in raw.split(",")]
+    return [p for p in parts if p]
+WORKER_TAGS = _parse_tags_env(os.environ.get("WORKER_TAGS"))
+WORKER_TAGS_OVERWRITE = os.environ.get("WORKER_TAGS_OVERWRITE", "0").strip().lower() in ("1", "true", "yes")
 ESPHOME_BIN = os.environ.get("ESPHOME_BIN")  # If set, skip version manager
 ESPHOME_SEED_VERSION = os.environ.get("ESPHOME_SEED_VERSION")  # Pre-download on startup
 # Base directory for per-slot PlatformIO core dirs (avoids cross-slot conflicts)
@@ -311,6 +322,8 @@ def register() -> str:
                 client_id=existing_id,
                 max_parallel_jobs=MAX_PARALLEL_JOBS,
                 system_info=SystemInfo.model_validate(sysinfo),
+                tags=WORKER_TAGS,
+                overwrite_tags=WORKER_TAGS_OVERWRITE,
             )
             resp = post("/api/v1/workers/register", req.model_dump(exclude_none=True))
             resp.raise_for_status()

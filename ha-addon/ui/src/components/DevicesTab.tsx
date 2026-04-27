@@ -42,7 +42,7 @@ import {
 } from './ui/dropdown-menu';
 
 /* ---- Column configuration ---- */
-type OptionalColumnId = 'status' | 'ha' | 'ip' | 'mac' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule' | 'last_compiled';
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'mac' | 'running' | 'area' | 'comment' | 'tags' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule' | 'last_compiled';
 
 interface OptionalColumnDef {
   id: OptionalColumnId;
@@ -72,6 +72,10 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'running', label: 'ESPHome', defaultVisible: true },
   { id: 'area', label: 'Area', defaultVisible: false },
   { id: 'comment', label: 'Comment', defaultVisible: false },
+  // TG.5: read-only chip-pill tag column. Default ON so a user adding
+  // tags via YAML (or via TG.4's API) sees them without hunting through
+  // the column-visibility menu first.
+  { id: 'tags', label: 'Tags', defaultVisible: true },
   { id: 'project', label: 'Project', defaultVisible: false },
 ];
 
@@ -318,6 +322,9 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
         t.area,
         t.comment,
         t.project_name,
+        // TG.5: tags participate in the existing search box (substring,
+        // case-insensitive) before the dedicated filter pills land.
+        t.tags,
       )
     );
   }, [targets, filter]);
@@ -726,7 +733,7 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
       {/* #10/#19 — Net/IP Config/AP columns. Unmanaged devices have no YAML
           so we can't know any of this; render dashes. The cell order MUST
           match the columns array order in the columns memo above:
-            status → ha → ip → net → ipconfig → ap → running → area → comment → project */}
+            status → ha → ip → net → ipconfig → ap → running → area → comment → tags → project */}
       {isVisible('net') && <td className="text-[12px]">{dash}</td>}
       {isVisible('ipconfig') && <td className="text-[12px]">{dash}</td>}
       {isVisible('ap') && <td className="text-[12px]">{dash}</td>}
@@ -734,6 +741,7 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
       {isVisible('running') && <td className="text-[12px]">{d.running_version || '—'}</td>}
       {isVisible('area') && <td className="text-[12px]">{dash}</td>}
       {isVisible('comment') && <td className="text-[12px]">{dash}</td>}
+      {isVisible('tags') && <td className="text-[12px]"></td>}
       {isVisible('project') && <td className="text-[12px]">{dash}</td>}
       <td></td>
     </tr>

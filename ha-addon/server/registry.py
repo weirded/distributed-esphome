@@ -38,6 +38,11 @@ class Worker:
     requested_max_parallel_jobs: Optional[int] = None  # set via UI, pushed in heartbeat
     pending_clean: bool = False  # set via UI, pushed in heartbeat
     system_info: Optional[dict] = None
+    # TG.1: user-managed tags. Resolved at registration time by the
+    # WorkerTagStore (hostname, falling back to client_id, is the identity);
+    # this in-memory copy is kept in sync so UI reads off the registry don't
+    # have to round-trip the disk store.
+    tags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -53,6 +58,7 @@ class Worker:
             "requested_max_parallel_jobs": self.requested_max_parallel_jobs,
             "pending_clean": self.pending_clean,
             "system_info": self.system_info,
+            "tags": list(self.tags),
         }
 
 
@@ -71,6 +77,7 @@ class WorkerRegistry:
         max_parallel_jobs: int = 1,
         system_info: Optional[dict] = None,
         image_version: Optional[str] = None,
+        tags: Optional[list[str]] = None,
     ) -> str:
         """Register a worker. Returns client_id.
 
@@ -93,6 +100,8 @@ class WorkerRegistry:
                 worker.last_seen = _utcnow()
                 if system_info is not None:
                     worker.system_info = system_info
+                if tags is not None:
+                    worker.tags = list(tags)
                 logger.info(
                     "Re-registered worker %s (%s / %s / v%s / image=%s / %d slots)",
                     client_id, hostname, platform, client_version or "?",
@@ -112,6 +121,7 @@ class WorkerRegistry:
                     image_version=image_version,
                     max_parallel_jobs=max_parallel_jobs,
                     system_info=system_info,
+                    tags=list(tags) if tags is not None else [],
                 )
                 self._workers[client_id] = worker
                 logger.info(
@@ -132,6 +142,7 @@ class WorkerRegistry:
             image_version=image_version,
             max_parallel_jobs=max_parallel_jobs,
             system_info=system_info,
+            tags=list(tags) if tags is not None else [],
         )
         self._workers[client_id] = worker
         logger.info(
@@ -169,6 +180,20 @@ class WorkerRegistry:
             return False
         elapsed = (_utcnow() - worker.last_seen).total_seconds()
         return elapsed <= threshold_secs
+
+    def set_tags(self, client_id: str, tags: list[str]) -> bool:
+        """Update a worker's in-memory tags. Returns False if unknown.
+
+        TG.1: callers (the UI tag-edit endpoint, the registration handler)
+        also persist via WorkerTagStore so the value survives a restart;
+        this in-memory copy keeps /ui/api/workers responses cheap.
+        """
+        worker = self._workers.get(client_id)
+        if worker is None:
+            return False
+        worker.tags = list(tags)
+        _broadcast_workers_changed()
+        return True
 
     def set_disabled(self, client_id: str, disabled: bool) -> bool:
         """Enable or disable a worker. Returns False if unknown."""

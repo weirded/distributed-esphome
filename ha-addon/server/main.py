@@ -1465,6 +1465,13 @@ def create_app() -> web.Application:
     from diagnostics import DiagnosticsBroker  # noqa: PLC0415
     app["diagnostics_broker"] = DiagnosticsBroker()
 
+    # TG.1: persistent worker-tag store. Keyed by worker identity (hostname,
+    # falling back to client_id). First registration seeds from the worker's
+    # WORKER_TAGS env; later registrations are server-side-wins so a UI tag
+    # edit isn't clobbered by a worker restart.
+    from worker_tags import WorkerTagStore  # noqa: PLC0415
+    app["worker_tag_store"] = WorkerTagStore(path="/data/worker-tags.json")
+
     # Register routes
     app.router.add_routes(api_module.routes)
     app.router.add_routes(ui_api_module.routes)

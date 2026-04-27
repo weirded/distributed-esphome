@@ -42,6 +42,53 @@ def test_register_client_version_none_by_default(reg):
     assert worker.client_version is None
 
 
+def test_register_stores_tags(reg):
+    """TG.1: worker tags ride along with the in-memory Worker record."""
+    client_id = reg.register("host1", "linux/amd64", tags=["prod", "linux"])
+    worker = reg.get(client_id)
+    assert worker.tags == ["prod", "linux"]
+
+
+def test_register_tags_default_empty(reg):
+    client_id = reg.register("host1", "linux/amd64")
+    worker = reg.get(client_id)
+    assert worker.tags == []
+
+
+def test_register_tags_to_dict_includes_tags(reg):
+    client_id = reg.register("host1", "linux/amd64", tags=["fast"])
+    d = reg.get(client_id).to_dict()
+    assert d["tags"] == ["fast"]
+
+
+def test_set_tags_updates_in_memory(reg):
+    client_id = reg.register("host1", "linux/amd64", tags=["prod"])
+    assert reg.set_tags(client_id, ["staging", "fast"]) is True
+    assert reg.get(client_id).tags == ["staging", "fast"]
+
+
+def test_set_tags_unknown_returns_false(reg):
+    assert reg.set_tags("unknown-id", ["a"]) is False
+
+
+def test_register_re_register_with_tags_replaces(reg):
+    """A worker re-registering with the same client_id and new tags keeps
+    them — registration is the funnel through which the persistent
+    WorkerTagStore decides what to write; whatever the registry receives
+    is what the source of truth resolved to."""
+    cid = reg.register("host1", "linux/amd64", tags=["prod"])
+    reg.register("host1", "linux/amd64", existing_client_id=cid, tags=["staging"])
+    assert reg.get(cid).tags == ["staging"]
+
+
+def test_register_re_register_with_tags_none_preserves(reg):
+    """Passing tags=None on re-register means "leave alone" (older worker
+    versions that don't send the field still re-register fine)."""
+    cid = reg.register("host1", "linux/amd64", tags=["prod"])
+    reg.register("host1", "linux/amd64", existing_client_id=cid, tags=None)
+    assert reg.get(cid).tags == ["prod"]
+
+
 def test_register_multiple_clients_unique_ids(reg):
     id1 = reg.register("host1", "linux/amd64")
     id2 = reg.register("host2", "linux/amd64")

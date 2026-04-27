@@ -19,6 +19,7 @@ import {
 import { getJobBadge, stripYaml, timeAgo, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
 import { SortHeader, getAriaSort } from './ui/sort-header';
+import { TagChips } from './ui/tag-chips';
 
 interface Props {
   workers: Worker[];
@@ -263,6 +264,10 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
       || (w.system_info?.os_version || '').toLowerCase().includes(q)
       || (w.system_info?.cpu_model || '').toLowerCase().includes(q)
       || (w.client_version || '').toLowerCase().includes(q)
+      // TG.6: tags participate in the existing search box (substring,
+      // case-insensitive). The chip-pill row + autocomplete-driven filter
+      // pills land in a follow-up turn.
+      || (w.tags ?? []).some(t => t.toLowerCase().includes(q))
     );
   }, [workers, filter]);
 
@@ -287,6 +292,14 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
     // Non-sortable display columns — included so flexRender can handle headers uniformly
     columnHelper.display({ id: 'platform', header: 'Platform' }),
     columnHelper.display({ id: 'currentJob', header: 'Current Job' }),
+    columnHelper.display({
+      id: 'tags',
+      header: () => (
+        <span title="Tags initially seeded from WORKER_TAGS env var; now stored on the server. Edits here will be authoritative.">
+          Tags
+        </span>
+      ),
+    }),
     columnHelper.display({ id: 'slots', header: 'Slots' }),
     columnHelper.display({ id: 'actions', header: '' }),
   ], []);
@@ -402,6 +415,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
               max_parallel_jobs: c.max_parallel_jobs,
               host_platform: c.system_info?.os_version,
             })} /></td>
+            <td><TagChips tags={c.tags ?? []} /></td>
             <td>
               <SlotControl
                 slots={slots}
@@ -460,6 +474,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             <td></td>
             <td></td>
             <td></td>
+            <td></td>
           </tr>
         );
       }
@@ -467,8 +482,8 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
   }
 
   // Build header cells from TanStack column defs in the order we want to render them
-  // Column order: hostname, platform, status, currentJob, version, slots, actions
-  const HEADER_ORDER = ['hostname', 'platform', 'status', 'currentJob', 'version', 'slots', 'actions'];
+  // Column order: hostname, platform, status, currentJob, version, tags, slots, actions
+  const HEADER_ORDER = ['hostname', 'platform', 'status', 'currentJob', 'version', 'tags', 'slots', 'actions'];
   const headerCells = table.getHeaderGroups()[0].headers;
   const headerByid = Object.fromEntries(headerCells.map(h => [h.id, h]));
 
@@ -537,7 +552,7 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             <tbody>
               {workers.length === 0 ? (
                 <tr className="empty-row">
-                  <td colSpan={7}>No workers registered — click &quot;+ Connect Worker&quot; to add one</td>
+                  <td colSpan={8}>No workers registered — click &quot;+ Connect Worker&quot; to add one</td>
                 </tr>
               ) : rows}
             </tbody>

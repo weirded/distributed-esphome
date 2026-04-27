@@ -137,6 +137,23 @@ async def _register_worker_handler(request: web.Request) -> web.Response:
     max_parallel_jobs = clamp(msg.max_parallel_jobs, 0, 32)
     system_info_dict = msg.system_info.model_dump(exclude_none=True) if msg.system_info else None
 
+    # TG.1: resolve tags through the persistent store. Identity is the worker's
+    # hostname (the spec's primary key), falling back to its persistent client_id
+    # when two workers happen to share a hostname. The first registration for an
+    # identity seeds from the worker's WORKER_TAGS env; subsequent ones are
+    # server-side-wins unless the worker also set WORKER_TAGS_OVERWRITE=1.
+    tag_store = request.app.get("worker_tag_store")
+    if tag_store is not None:
+        identity = msg.hostname or msg.client_id or ""
+        resolved_tags: Optional[list[str]] = tag_store.load_or_seed(
+            identity, msg.tags, overwrite=msg.overwrite_tags,
+        )
+    else:
+        # Test rigs that don't construct a tag store still get the in-memory
+        # echo of whatever the worker sent — preserves prior test contracts
+        # for code paths that don't care about persistence.
+        resolved_tags = list(msg.tags) if msg.tags is not None else None
+
     registry = request.app["registry"]
     client_id = registry.register(
         msg.hostname,
@@ -146,6 +163,7 @@ async def _register_worker_handler(request: web.Request) -> web.Response:
         max_parallel_jobs,
         system_info_dict,
         image_version=msg.image_version,
+        tags=resolved_tags,
     )
     return web.json_response(RegisterResponse(client_id=client_id).model_dump(exclude_none=True))
 
