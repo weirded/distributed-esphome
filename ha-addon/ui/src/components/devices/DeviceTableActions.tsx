@@ -8,7 +8,8 @@ import {
 } from '../ui/dropdown-menu';
 import { UpgradeModal } from '../UpgradeModal';
 import { BulkTagsEditDialog } from '../BulkTagsEditDialog';
-import { setTargetSchedule, updateTargetMeta } from '../../api/client';
+import { commitFile, setTargetSchedule, updateTargetMeta } from '../../api/client';
+import { useVersioningEnabled } from '../../hooks/useVersioning';
 import type { Target, Worker } from '../../types';
 
 function parseTags(s: string | null | undefined): string[] {
@@ -52,7 +53,48 @@ interface Props {
 export function DeviceTableActions({ selectedTargets, workers, targets, onToast, onRefresh }: Props) {
   const [bulkScheduleOpen, setBulkScheduleOpen] = useState(false);
   const [bulkTagsOpen, setBulkTagsOpen] = useState(false);
+  const [commitAllBusy, setCommitAllBusy] = useState(false);
   const hasSelection = selectedTargets.length > 0;
+  const versioningEnabled = useVersioningEnabled();
+
+  // Bug #103: surface a fleet-wide "commit any uncommitted YAML" action
+  // for the case where the user edited configs outside the addon (CLI,
+  // file share, another editor) and ended up with a pile of dirty
+  // working-tree files. The per-row hamburger only commits one target
+  // at a time, which is tedious when there are dozens.
+  const dirtyTargets = useMemo(
+    () => targets.filter(t => t.has_uncommitted_changes).map(t => t.target),
+    [targets],
+  );
+
+  async function handleCommitAll() {
+    if (commitAllBusy || dirtyTargets.length === 0) return;
+    setCommitAllBusy(true);
+    try {
+      // Mirrors SettingsDrawer's "turn on auto-commit" flow: one commit
+      // per file, swallow individual failures so a single broken target
+      // doesn't strand the whole batch.
+      const results = await Promise.all(
+        dirtyTargets.map(t =>
+          commitFile(t)
+            .then(r => ({ ok: true as const, target: t, committed: r.committed }))
+            .catch(err => ({ ok: false as const, target: t, err: (err as Error).message })),
+        ),
+      );
+      const committed = results.filter(r => r.ok && r.committed).length;
+      const failed = results.filter(r => !r.ok).length;
+      if (failed === 0 && committed === dirtyTargets.length) {
+        onToast(`Committed ${committed} file${committed === 1 ? '' : 's'}`, 'success');
+      } else if (committed > 0) {
+        onToast(`Committed ${committed}, ${failed} failed`, failed > 0 ? 'error' : 'info');
+      } else {
+        onToast('No files committed', 'error');
+      }
+      onRefresh();
+    } finally {
+      setCommitAllBusy(false);
+    }
+  }
 
   // Bug #8: pre-compute the per-target tag lists, the intersection
   // (tags shared by all selected — bulk-removable), the partial set
@@ -159,6 +201,19 @@ export function DeviceTableActions({ selectedTargets, workers, targets, onToast,
             >
               Edit Tags…
             </DropdownMenuItem>
+            {versioningEnabled && (
+              <DropdownMenuItem
+                onClick={handleCommitAll}
+                disabled={commitAllBusy || dirtyTargets.length === 0}
+                title={
+                  dirtyTargets.length === 0
+                    ? 'No uncommitted YAML changes in the config directory'
+                    : `Commit ${dirtyTargets.length} uncommitted YAML file${dirtyTargets.length === 1 ? '' : 's'} to the config-history git repo`
+                }
+              >
+                Commit all uncommitted{dirtyTargets.length > 0 ? ` (${dirtyTargets.length})` : ''}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>

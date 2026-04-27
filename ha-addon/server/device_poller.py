@@ -107,7 +107,7 @@ class Device:
     ip_address: str
     online: bool = False
     running_version: Optional[str] = None
-    compilation_time: Optional[str] = None  # e.g. "Mar 29 2026, 17:00:00"
+    compilation_time: Optional[str] = None  # e.g. "2026-04-23 06:13:56 -0700"
     last_seen: Optional[datetime] = None
     compile_target: Optional[str] = None  # e.g. "living_room.yaml"
     mac_address: Optional[str] = None  # e.g. "AA:BB:CC:DD:EE:FF"

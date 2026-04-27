@@ -219,6 +219,11 @@ export function QueueTab({
       },
       sortingFn: stateSort,
     }),
+    // Bug #101: merged Worker + Routing column. Top line shows where the
+    // job landed (assigned hostname, slot, scheduled/pinned icons); bottom
+    // line shows the routing intent the user picked in the Upgrade modal
+    // (any worker / pinned worker / tag expression). Two surfaces read as
+    // one cell so a glance answers both "where did it go?" and "why?".
     columnHelper.accessor(row => row.assigned_hostname || '', {
       id: 'worker',
       header: ({ column }) => <SortHeader label="Worker" column={column} />,
@@ -243,15 +248,45 @@ export function QueueTab({
         const showPinnedHint =
           pinnedHostname && job.pinned_client_id && job.state === 'pending';
 
+        // Routing intent line (was the standalone Routing column before
+        // bug #101). Suppressed for the unconstrained case so the cell
+        // doesn't grow a line for every row — "Any worker" is the
+        // implicit default and the absence of a constraint reads cleaner
+        // than an italic placeholder. Pin/tag constraints render below.
+        const filter = job.worker_tag_filter;
+        const hasTagFilter = !!filter && filter.tags.length > 0;
+        let intentLine: React.ReactNode = null;
+        if (job.pinned_client_id) {
+          intentLine = (
+            <span
+              className="text-[10px] text-[var(--text-muted)]"
+              title="Pinned to a specific worker via the Upgrade modal — only that worker can claim this job."
+            >
+              specific worker
+            </span>
+          );
+        } else if (hasTagFilter) {
+          const opLabel = filter!.op === 'all_of' ? 'all of' : filter!.op === 'any_of' ? 'any of' : 'none of';
+          intentLine = (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] text-[var(--text-muted)]"
+              title={`Worker tag expression — only workers whose tags satisfy "${opLabel} ${filter!.tags.join(', ')}" can claim this job.`}
+            >
+              <span>{opLabel}</span>
+              <TagChips tags={filter!.tags} />
+            </span>
+          );
+        }
+
         // #17: pushpin icon when the user explicitly pinned the job to a
         // specific worker (UpgradeModal worker selector). Visible on every
         // pinned row regardless of state, so the user can audit history.
         return (
-          <span className="text-[12px] inline-flex items-center gap-1">
+          <span className="text-[12px] inline-flex items-start gap-1">
             {job.scheduled && (
               <span
                 title={job.schedule_kind === 'once' ? 'Triggered by one-time schedule' : 'Triggered by recurring schedule'}
-                className="inline-flex text-[var(--accent)]"
+                className="inline-flex text-[var(--accent)] mt-[2px]"
               >
                 {job.schedule_kind === 'once'
                   ? <Calendar className="size-3" aria-label="one-time scheduled run" />
@@ -265,7 +300,7 @@ export function QueueTab({
                     ? `Pinned to ${pinnedHostname} via Upgrade modal`
                     : 'Pinned to a specific worker via Upgrade modal'
                 }
-                className="inline-flex text-[var(--accent)]"
+                className="inline-flex text-[var(--accent)] mt-[2px]"
               >
                 <Pin className="size-3" aria-label="pinned to specific worker" />
               </span>
@@ -286,59 +321,8 @@ export function QueueTab({
               {showPinnedHint && !job.assigned_hostname && (
                 <><br /><span className="text-[10px] text-[var(--text-muted)]">→ {pinnedHostname}</span></>
               )}
+              {intentLine && <><br />{intentLine}</>}
             </span>
-          </span>
-        );
-      },
-      sortingFn: 'alphanumeric',
-    }),
-    // Bug #100: surface the per-job routing intent — i.e. which radio
-    // the user picked in the Upgrade modal's "Worker" section (one of
-    // 'any available worker' / 'a specific worker' / 'a tag expression').
-    // The existing Worker column shows where the job *landed*; this
-    // column shows what the user *asked for*. Same operator labels and
-    // tag-chip rendering as the modal so the two surfaces read alike.
-    columnHelper.accessor(
-      row => {
-        if (row.pinned_client_id) return `2-specific`;
-        const f = row.worker_tag_filter;
-        if (f && f.tags.length > 0) return `1-tag:${f.op}:${f.tags.join(',')}`;
-        return `0-any`;
-      },
-      {
-      id: 'routing',
-      header: ({ column }) => <SortHeader label="Routing" column={column} />,
-      cell: ({ row: { original: job } }) => {
-        if (job.pinned_client_id) {
-          return (
-            <span
-              className="inline-flex items-center gap-1 text-[12px]"
-              title="Pinned to a specific worker via the Upgrade modal — only that worker can claim this job."
-            >
-              <Pin className="size-3 text-[var(--accent)]" aria-hidden="true" />
-              Specific worker
-            </span>
-          );
-        }
-        const f = job.worker_tag_filter;
-        if (f && f.tags.length > 0) {
-          const opLabel = f.op === 'all_of' ? 'all of' : f.op === 'any_of' ? 'any of' : 'none of';
-          return (
-            <span
-              className="inline-flex items-center gap-1 text-[12px]"
-              title={`Worker tag expression — only workers whose tags satisfy "${opLabel} ${f.tags.join(', ')}" can claim this job.`}
-            >
-              <span className="text-[var(--text-muted)]">{opLabel}</span>
-              <TagChips tags={f.tags} />
-            </span>
-          );
-        }
-        return (
-          <span
-            className="text-[12px] text-[var(--text-muted)] italic"
-            title="No per-job worker constraint — any online worker that satisfies the global routing rules may claim this job."
-          >
-            Any worker
           </span>
         );
       },

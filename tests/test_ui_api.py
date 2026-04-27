@@ -177,6 +177,40 @@ async def test_targets_lists_yaml_files(tmp_path):
         await ta.close()
 
 
+def test_parse_device_compile_epoch_handles_modern_aioesphomeapi_format():
+    """Bug #102: the dev.18 fallback parser was hard-coded for the older
+    ``"Mar 29 2026, 17:00:00"`` shape, but ``aioesphomeapi`` actually
+    reports the build time as ``"2026-04-23 06:13:56 -0700"`` — so the
+    parser silently returned None for every device and the Devices-tab
+    "Last compiled" column never showed the device-firmware fallback.
+    Round-trip through epoch + UTC ensures the offset is honoured."""
+    from datetime import datetime, timezone, timedelta
+    from ui_api import _parse_device_compile_epoch
+
+    epoch = _parse_device_compile_epoch("2026-04-23 06:13:56 -0700")
+    assert epoch is not None
+    expected = datetime(2026, 4, 23, 6, 13, 56,
+                        tzinfo=timezone(timedelta(hours=-7)))
+    assert epoch == int(expected.timestamp())
+
+
+def test_parse_device_compile_epoch_back_compat_old_format():
+    """The older ``"%b %d %Y, %H:%M:%S"`` form must still parse so that
+    devices running pre-aioesphomeapi-update firmware don't lose their
+    fallback when the new format support lands."""
+    from ui_api import _parse_device_compile_epoch
+    assert _parse_device_compile_epoch("Mar 29 2026, 17:00:00") is not None
+
+
+def test_parse_device_compile_epoch_returns_none_for_unknown_shapes():
+    """Empty / None / unrecognised → None; never raises."""
+    from ui_api import _parse_device_compile_epoch
+    assert _parse_device_compile_epoch(None) is None
+    assert _parse_device_compile_epoch("") is None
+    assert _parse_device_compile_epoch("not a timestamp") is None
+    assert _parse_device_compile_epoch("2026-04-23T06:13:56Z") is None
+
+
 async def test_targets_excludes_secrets_yaml(tmp_path):
     ta = await _make_ui_app(tmp_path)
     try:

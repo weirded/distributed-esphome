@@ -31,6 +31,32 @@ logger = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
 
+def _parse_device_compile_epoch(compilation_time: str | None) -> int | None:
+    """Parse the ESPHome ``compilation_time`` string into epoch seconds.
+
+    Bug #13 / #102: serves as the device-firmware fallback for the
+    Devices-tab "Last compiled" column when the SQLite job history has
+    nothing for a target. ``aioesphomeapi`` reports the build time as
+    ``"2026-04-23 06:13:56 -0700"`` (ISO-with-offset); the dev.18 parser
+    hard-coded the older ``"%b %d %Y, %H:%M:%S"`` form ("Mar 29 2026,
+    17:00:00") which never matched in production, so the fallback
+    silently returned None for every device. We try the modern format
+    first, then the older comma-separated form for back-compat. Tz-aware
+    parses produce a UTC-correct epoch; tz-naive parses fall back to
+    server-local time as the closest defensible interpretation (we don't
+    know the build host's timezone).
+    """
+    if not compilation_time:
+        return None
+    from datetime import datetime  # noqa: PLC0415
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%b %d %Y, %H:%M:%S"):
+        try:
+            return int(datetime.strptime(compilation_time, fmt).timestamp())
+        except (ValueError, OSError):
+            continue
+    return None
+
+
 def _broadcast_ws(event_type: str, **payload: object) -> None:
     """Fire a state-change event on the WebSocket bus (#41).
 
@@ -661,23 +687,9 @@ async def get_targets(request: web.Request) -> web.Response:
             logger.debug("job_history.last_per_target() raised; continuing")
 
     def _device_compile_epoch(dev: Device | None) -> int | None:
-        """Bug #13: parse the ESPHome ``compilation_time`` string ("Mar 29
-        2026, 17:00:00") into epoch seconds so it can serve as a fallback
-        for the Devices-tab "Last compiled" column when the SQLite history
-        has nothing for the target (server is fresh, or the YAML was
-        compiled by a different install). Treats the timestamp as the
-        server's local time — ESPHome embeds it via ``__DATE__``/``__TIME__``
-        which are local to the build host; we don't know that host, so
-        local-on-this-server is the closest defensible interpretation.
-        """
-        if not dev or not dev.compilation_time:
+        if not dev:
             return None
-        try:
-            from datetime import datetime  # noqa: PLC0415
-            dt = datetime.strptime(dev.compilation_time, "%b %d %Y, %H:%M:%S")
-            return int(dt.timestamp())
-        except (ValueError, OSError):
-            return None
+        return _parse_device_compile_epoch(dev.compilation_time)
 
     # Build device lookup by compile_target filename
     devices_by_target: dict[str, Device] = {}
