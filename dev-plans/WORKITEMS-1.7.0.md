@@ -254,3 +254,10 @@ Severity: only `required` accepted by the API in 1.7.0 (`preferred` rejected wit
 - [ ] 4 probably need to figure out how to handle cache, cleaning cache on the worker while compiles are running, meaning we should either prevent it or queue it up. 
 
 - [ ] 5 in addition to the time format, which should also let the user pick a date format 
+
+- [x] **6** *(1.7.0-dev.6)* — hash-based tag chip colors. djb2 hash of the tag text picks one of 12 hues; HSL pastel background (60% S / 88% L) + same-hue dark text (60% S / 22% L) is AA-readable on both the dark `[data-theme="dark"]` and light `[data-theme="light"]` surfaces, so we don't need to branch on theme. Same tag string → same color across rows, tabs, and refreshes — `kitchen` looks the same on a device row as on a worker row. Lives in `ha-addon/ui/src/components/ui/tag-chips.tsx`.
+
+- [ ] 7 anywhere we let users add or edit or remove tags, we should use the little colorful checklists and we should auto-complete. We should also always show a choice of existing tags to be added. 
+
+- [ ] 8 we should allow an option or an action on both devices and workers to tag-select it. When the user ticks the boxes, they can add tags to those options. If all the ticked boxes share any tags in common, we should allow those to be removed. Also, a variation of the editor that basically works on the union of the tags of all of these selected items 
+
