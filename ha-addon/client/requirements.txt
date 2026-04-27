@@ -1,6 +1,6 @@
 requests>=2.31
 psutil>=5.9
-pydantic>=2
+pydantic>=2.13.3
 # #108 briefly added py-spy here. #189 replaced it with an in-process
 # frame walk (``client.py::_in_process_thread_dump``) — see the same
 # note in ``ha-addon/server/requirements.txt``.
