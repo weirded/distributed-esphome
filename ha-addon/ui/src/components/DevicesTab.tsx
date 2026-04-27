@@ -738,6 +738,9 @@ function UnmanagedRow({ device: d, isVisible }: { device: Device; isVisible: (co
         <span className="device-name text-[var(--text-muted)]">{stripYaml(d.name)}</span>
         <div className="device-filename text-[#6b7280]">No config</div>
       </td>
+      {/* Bug #16: tags column moved to position 2 in useDeviceColumns; mirror
+          here. Unmanaged devices have no YAML so no tags — render empty. */}
+      {isVisible('tags') && <td className="text-[12px]"></td>}
       {isVisible('status') && <td>{statusEl}</td>}
       {isVisible('ha') && (
         <td className="text-[12px]">
