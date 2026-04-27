@@ -47,8 +47,11 @@ test('TagsEditDialog footer sits below the chip-input box (#17)', async ({ page 
   await openTagsModal(page);
 
   const dialog = page.locator('[data-slot="dialog-content"]');
-  // The chip-input row is the only element with placeholder "Type a tag…".
-  const input = dialog.locator('input[placeholder*="Type a tag"]');
+  // The TagsEditDialog body contains exactly one bare <input> (the
+  // chip-input). The chip-input's placeholder is suppressed when the
+  // worker already has tags (TG.10 fixture), so locate the input by
+  // position rather than placeholder text.
+  const input = dialog.locator('input').first();
   const footer = dialog.locator('[data-slot="dialog-footer"]');
 
   const inputBox = await input.boundingBox();

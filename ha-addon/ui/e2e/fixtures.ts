@@ -12,6 +12,7 @@ import type {
   Device,
   Worker,
   Job,
+  RoutingRule,
 } from '../src/types';
 
 // --- Mock API data ---
@@ -109,6 +110,10 @@ export const workers: Worker[] = [
     requested_max_parallel_jobs: null,
     client_version: '1.3.0-dev.4',
     image_version: '2',
+    // TG.1/TG.6 — at least one worker carries tags so the Workers tab
+    // renders the filter pill bar and the routing-rule builder's worker
+    // pool autocomplete has something to suggest.
+    tags: ['linux', 'fast'],
     system_info: {
       os_version: 'Debian 12',
       cpu_model: 'Intel i7-12700',
@@ -128,8 +133,30 @@ export const workers: Worker[] = [
     client_version: '1.3.0-dev.3',
     image_version: null, // pre-LIB.0 worker
     last_seen: new Date(Date.now() - 15 * 60_000).toISOString(), // 15 min ago
+    tags: ['macos'],
   },
 ];
+
+// TG.10 — initial seed of routing rules. ``mockApi`` mutates a working
+// copy in place (POST appends, DELETE splices, PUT replaces) so the
+// in-memory state survives a SWR revalidation round-trip within a
+// single test. The working copy is reset at the top of every
+// ``mockApi`` call so specs don't leak state across each other (since
+// ``mockApi`` runs once per ``beforeEach``).
+const routingRulesSeed: readonly RoutingRule[] = [
+  {
+    id: 'kitchen-only',
+    name: 'Kitchen devices need an arm64 worker',
+    severity: 'required',
+    // No online worker has the ``arm64`` tag in our fixtures, so this
+    // rule's worker side is intentionally un-satisfiable — that's what
+    // makes ``job-009`` BLOCKED and gives the click-through test a real
+    // rule to land on in edit mode.
+    device_match: [{ op: 'all_of', tags: ['kitchen'] }],
+    worker_match: [{ op: 'all_of', tags: ['arm64'] }],
+  },
+];
+export const routingRules: RoutingRule[] = [];
 
 // All job states are exercised so a regression in any badge / row class
 // path is caught by the existing Playwright tests. Order: success, failed,
@@ -221,6 +248,20 @@ export const queue: Job[] = [
     finished_at: new Date(Date.now() - 2000_000).toISOString(),
     duration_seconds: 100,
   },
+  // TG.9/TG.10 — BLOCKED job: a kitchen-tagged device with no online
+  // worker that satisfies the kitchen-only rule's worker side. Drives
+  // the QueueTab BLOCKED-badge tooltip + click-through assertion.
+  {
+    id: 'job-009',
+    target: 'living-room.yaml',
+    state: 'blocked',
+    created_at: new Date(Date.now() - 5_000).toISOString(),
+    blocked_reason: {
+      rule_id: 'kitchen-only',
+      rule_name: 'Kitchen devices need an arm64 worker',
+      summary: 'all of [arm64]',
+    },
+  },
 ];
 
 const configContent = `esphome:
@@ -242,6 +283,22 @@ ota:
 // --- Route interceptor ---
 
 export async function mockApi(page: Page) {
+  // TG.10 — reset mutable fixtures so per-test mutations from previous
+  // specs don't leak. Worker tags and routing-rule CRUD both mutate
+  // their fixtures in place; everything else is read-only.
+  routingRules.length = 0;
+  routingRules.push(...routingRulesSeed.map(r => ({
+    ...r,
+    device_match: r.device_match.map(c => ({ ...c, tags: [...c.tags] })),
+    worker_match: r.worker_match.map(c => ({ ...c, tags: [...c.tags] })),
+  })));
+  // Snapshot of the worker tag arrays so a tag-edit spec doesn't bleed
+  // into a later test that expects the seed values.
+  for (const w of workers) {
+    if (w.client_id === 'worker-1') w.tags = ['linux', 'fast'];
+    if (w.client_id === 'worker-2') w.tags = ['macos'];
+  }
+
   await page.route('**/ui/api/server-info', route =>
     route.fulfill({ json: serverInfo }),
   );
@@ -343,6 +400,88 @@ export async function mockApi(page: Page) {
   await page.route('**/ui/api/workers/*/clean', route =>
     route.fulfill({ status: 200, json: {} }),
   );
+  // TG.4 — worker tag edit endpoint. Body shape: ``{tags: [str]}``. We
+  // mutate the in-memory ``workers`` array so a follow-up GET reflects
+  // the edit (matches how the real server's broadcast → SWR refetch
+  // round-trips through the UI). Reset between specs because mockApi
+  // runs once per beforeEach.
+  await page.route('**/ui/api/workers/*/tags', async (route) => {
+    const url = new URL(route.request().url());
+    const m = url.pathname.match(/\/ui\/api\/workers\/([^/]+)\/tags$/);
+    if (!m) return route.fulfill({ status: 400, json: { error: 'bad path' } });
+    const id = decodeURIComponent(m[1]);
+    let body: { tags?: string[] } = {};
+    try {
+      body = JSON.parse(route.request().postData() ?? '{}');
+    } catch {
+      return route.fulfill({ status: 400, json: { error: 'bad json' } });
+    }
+    const w = workers.find(x => x.client_id === id);
+    if (w) w.tags = body.tags ?? [];
+    return route.fulfill({ json: { ok: true, tags: w?.tags ?? [] } });
+  });
+  // TG.4/TG.10 — routing rules CRUD. List + create at the collection
+  // URL; PUT/DELETE on the per-id URL. POST auto-slugs the id from
+  // the name when omitted (matches server-side _slugify).
+  await page.route('**/ui/api/routing-rules', async (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      let body: Partial<RoutingRule> = {};
+      try {
+        body = JSON.parse(route.request().postData() ?? '{}');
+      } catch {
+        return route.fulfill({ status: 400, json: { error: 'bad json' } });
+      }
+      const slug = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const id = body.id || slug(body.name ?? 'rule');
+      if (routingRules.some(r => r.id === id)) {
+        return route.fulfill({ status: 400, json: { error: `id ${id} exists` } });
+      }
+      const rule: RoutingRule = {
+        id,
+        name: body.name ?? '(unnamed)',
+        severity: 'required',
+        device_match: body.device_match ?? [],
+        worker_match: body.worker_match ?? [],
+      };
+      routingRules.push(rule);
+      return route.fulfill({ status: 200, json: rule });
+    }
+    return route.fulfill({ json: { rules: routingRules } });
+  });
+  await page.route('**/ui/api/routing-rules/*', async (route) => {
+    const url = new URL(route.request().url());
+    const m = url.pathname.match(/\/ui\/api\/routing-rules\/([^/]+)$/);
+    if (!m) return route.fulfill({ status: 404, json: { error: 'no match' } });
+    const id = decodeURIComponent(m[1]);
+    const method = route.request().method();
+    if (method === 'DELETE') {
+      const idx = routingRules.findIndex(r => r.id === id);
+      if (idx >= 0) routingRules.splice(idx, 1);
+      return route.fulfill({ json: { ok: true } });
+    }
+    if (method === 'PUT') {
+      let body: Partial<RoutingRule> = {};
+      try {
+        body = JSON.parse(route.request().postData() ?? '{}');
+      } catch {
+        return route.fulfill({ status: 400, json: { error: 'bad json' } });
+      }
+      const idx = routingRules.findIndex(r => r.id === id);
+      if (idx < 0) return route.fulfill({ status: 404, json: { error: 'not found' } });
+      const updated: RoutingRule = {
+        id,
+        name: body.name ?? routingRules[idx].name,
+        severity: 'required',
+        device_match: body.device_match ?? routingRules[idx].device_match,
+        worker_match: body.worker_match ?? routingRules[idx].worker_match,
+      };
+      routingRules[idx] = updated;
+      return route.fulfill({ json: updated });
+    }
+    return route.fulfill({ status: 405, json: { error: 'method not allowed' } });
+  });
   await page.route('**/ui/api/targets/*', route => {
     if (route.request().method() === 'DELETE') {
       return route.fulfill({ status: 200, json: {} });
