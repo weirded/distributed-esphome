@@ -20,6 +20,9 @@ import { getJobBadge, stripYaml, timeAgo, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
 import { SortHeader, getAriaSort } from './ui/sort-header';
 import { TagChips } from './ui/tag-chips';
+import { TagsEditDialog } from './TagsEditDialog';
+import { setWorkerTags } from '../api/client';
+import { useSWRConfig } from 'swr';
 
 interface Props {
   workers: Worker[];
@@ -248,6 +251,9 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
   // client_id so only one dropdown is open at a time.
   const [actionsMenuOpenClientId, setActionsMenuOpenClientId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  // TG.6 inline edit — same lift-out-of-row pattern as the Actions menu.
+  const [tagsEditClientId, setTagsEditClientId] = useState<string | null>(null);
+  const { mutate } = useSWRConfig();
   // QS.27: persist sort across reloads via localStorage.
   const [sorting, setSorting] = usePersistedState<SortingState>(
     'workers-sort',
@@ -415,7 +421,19 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
               max_parallel_jobs: c.max_parallel_jobs,
               host_platform: c.system_info?.os_version,
             })} /></td>
-            <td><TagChips tags={c.tags ?? []} /></td>
+            <td>
+              <button
+                type="button"
+                onClick={() => setTagsEditClientId(c.client_id)}
+                className="cursor-pointer rounded-md border border-transparent px-1 py-px text-left hover:border-[var(--border)] hover:bg-[var(--surface2)]"
+                aria-label={`Tags for ${c.hostname}`}
+                title="Click to edit tags"
+              >
+                {(c.tags && c.tags.length > 0)
+                  ? <TagChips tags={c.tags} />
+                  : <span className="text-[10px] text-[var(--text-muted)] italic">+ tags</span>}
+              </button>
+            </td>
             <td>
               <SlotControl
                 slots={slots}
@@ -542,6 +560,24 @@ export function WorkersTab({ workers, queue, serverClientVersion, minImageVersio
             </DropdownMenu>
           </div>
         </div>
+        {tagsEditClientId && (() => {
+          const w = workers.find(x => x.client_id === tagsEditClientId);
+          if (!w) return null;
+          return (
+            <TagsEditDialog
+              open
+              onOpenChange={(open) => { if (!open) setTagsEditClientId(null); }}
+              subject={`Worker ${w.hostname}`}
+              initial={w.tags ?? []}
+              onSave={async (tags) => {
+                await setWorkerTags(w.client_id, tags);
+                // SWR key is 'workers' (see App.tsx); 1Hz poll would catch
+                // up on its own but mutate() snaps the UI immediately.
+                await mutate('workers');
+              }}
+            />
+          );
+        })()}
         <div className="table-wrap">
           <table>
             <thead>

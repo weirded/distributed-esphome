@@ -2851,6 +2851,49 @@ async def clean_worker_cache(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+@routes.post("/ui/api/workers/{client_id}/tags")
+async def set_worker_tags(request: web.Request) -> web.Response:
+    """TG.4: authoritative worker-tag edit from the UI.
+
+    Body: ``{"tags": ["a", "b"]}`` — a JSON array of strings (the wire shape
+    the routing-rules engine works with). The store normalises (trim / drop
+    empties / dedupe, case-sensitive, preserves first-seen order). Persists
+    to ``/data/worker-tags.json`` and updates the in-memory registry record
+    so the next ``/ui/api/workers`` poll surfaces the change.
+    """
+    client_id = request.match_info["client_id"]
+    registry = request.app["registry"]
+    worker = registry.get(client_id)
+    if not worker:
+        return web.json_response({"error": "Worker not found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Expected a JSON object"}, status=400)
+    raw_tags = body.get("tags", [])
+    if not isinstance(raw_tags, list) or not all(isinstance(t, str) for t in raw_tags):
+        return web.json_response({"error": "tags must be an array of strings"}, status=400)
+
+    tag_store = request.app.get("worker_tag_store")
+    identity = worker.hostname or client_id
+    if tag_store is not None:
+        normalised = tag_store.set_tags(identity, raw_tags)
+    else:
+        # Test rigs without a store: normalise inline so behaviour matches.
+        from worker_tags import _normalise  # noqa: PLC0415
+        normalised = _normalise(raw_tags)
+    registry.set_tags(client_id, normalised)
+    logger.info(
+        "Worker %s (%s): tags set to %r%s",
+        client_id, worker.hostname, normalised, _who(request),
+    )
+    _broadcast_ws("workers_changed")
+    return web.json_response({"ok": True, "tags": normalised})
+
+
 # Legacy client routes — kept for backwards compatibility
 
 @routes.delete("/ui/api/clients/{client_id}")

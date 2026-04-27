@@ -709,6 +709,24 @@ export async function updateTargetMeta(
   ), 'updating target metadata');
 }
 
+/**
+ * TG.4: authoritative worker-tag edit. Server normalises (trim / drop
+ * empties / dedupe) and persists to ``/data/worker-tags.json``.
+ */
+export async function setWorkerTags(
+  clientId: string,
+  tags: string[],
+): Promise<void> {
+  await expectOk(await apiFetch(
+    `./ui/api/workers/${encodeURIComponent(clientId)}/tags`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    },
+  ), 'setting worker tags');
+}
+
 export async function setTargetSchedule(
   filename: string,
   cron: string,

@@ -14,8 +14,10 @@ import {
   getArchivedConfigs,
   pinTargetVersion,
   unpinTargetVersion,
+  updateTargetMeta,
   type ArchivedConfig,
 } from '../api/client';
+import { TagsEditDialog } from './TagsEditDialog';
 import type { AddressSource, Device, Job, Target, Worker } from '../types';
 import { stripYaml, haDeepLink, usePersistedState } from '../utils';
 import { StatusDot } from './StatusDot';
@@ -214,6 +216,8 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
   // #2: hamburger open state lives here so it survives row remounts
   // triggered by SWR polls. See useDeviceColumns / DeviceContextMenu.
   const [menuOpenTarget, setMenuOpenTarget] = useState<string | null>(null);
+  // TG.5 inline edit — same lift-out-of-row pattern. ``null`` = closed.
+  const [tagsEditTarget, setTagsEditTarget] = useState<string | null>(null);
   const [showUnmanaged, setShowUnmanaged] = useState(() => localStorage.getItem('showUnmanaged') !== 'false');
   // #62: Devices-toolbar Archive button → shadcn Dialog wrapping the
   // shared ArchivedDevicesList component. State lives here rather
@@ -361,6 +365,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
     onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
+    onEditTags: setTagsEditTarget,
   });
 
 
@@ -608,6 +613,32 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
           onClose={() => setDeleteTarget(null)}
         />
       )}
+
+      {tagsEditTarget && (() => {
+        const t = targets.find(x => x.target === tagsEditTarget);
+        if (!t) return null;
+        const initial = (t.tags || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+        return (
+          <TagsEditDialog
+            open
+            onOpenChange={(open) => { if (!open) setTagsEditTarget(null); }}
+            subject={`Device ${stripYaml(t.target)}`}
+            initial={initial}
+            onSave={async (tags) => {
+              // Existing /ui/api/targets/{filename}/meta endpoint stores
+              // the comment block as one comma-joined string — re-use it
+              // verbatim so tags round-trip through read_device_meta /
+              // write_device_meta unchanged.
+              await updateTargetMeta(t.target, { tags: tags.join(',') });
+              await onRefresh();
+              onToast(`Saved tags for ${stripYaml(t.target)}`, 'success');
+            }}
+          />
+        );
+      })()}
 
       {/* QS.18: bulk schedule UpgradeModal moved into DeviceTableActions. */}
 

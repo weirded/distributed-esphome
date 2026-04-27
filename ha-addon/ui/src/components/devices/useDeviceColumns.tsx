@@ -76,6 +76,8 @@ interface Options {
    */
   menuOpenTarget: string | null;
   setMenuOpenTarget: (target: string | null) => void;
+  /** TG.5 inline edit — open the tags dialog for the row's target. */
+  onEditTags: (target: string) => void;
 }
 
 /**
@@ -132,6 +134,7 @@ export function useDeviceColumns(options: Options) {
     onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
+    onEditTags,
   } = options;
 
   return useMemo(() => [
@@ -515,7 +518,22 @@ export function useDeviceColumns(options: Options) {
     columnHelper.accessor(row => row.tags || '', {
       id: 'tags',
       header: 'Tags',
-      cell: ({ row: { original: t } }) => <TagChips tags={parseDeviceTags(t.tags)} />,
+      cell: ({ row: { original: t } }) => {
+        const parsed = parseDeviceTags(t.tags);
+        return (
+          <button
+            type="button"
+            onClick={() => onEditTags(t.target)}
+            className="cursor-pointer rounded-md border border-transparent px-1 py-px text-left hover:border-[var(--border)] hover:bg-[var(--surface2)]"
+            aria-label={`Tags for ${stripYaml(t.target)}`}
+            title="Click to edit tags"
+          >
+            {parsed.length > 0
+              ? <TagChips tags={parsed} />
+              : <span className="text-[10px] text-[var(--text-muted)] italic">+ tags</span>}
+          </button>
+        );
+      },
       enableSorting: false,
     }),
     columnHelper.accessor(
@@ -578,5 +596,6 @@ export function useDeviceColumns(options: Options) {
     onCommitChanges,
     menuOpenTarget,
     setMenuOpenTarget,
+    onEditTags,
   ]);
 }
