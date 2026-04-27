@@ -4,27 +4,30 @@ Roadmap and bug tracking for ESPHome Fleet, organized by release.
 
 ## Active files
 
-- **[WORKITEMS-1.7.0.md](WORKITEMS-1.7.0.md)** — **Current release.** Honest Gold + heffneil-inspired device-management polish: walks every remaining Bronze+Silver+Gold quality-scale rule to `done`/`exempt` so the claim is one hassfest backs, closes TEST-AUDIT-1.6.1 blind spots, finishes the ESPHome-delegation audit, plus four user-facing features lifted from `heffneil/esphome-enhanced-dashboard` (sidecar-JSON tagging, mark-inactive, ping, install-to-specific-address). Renamed from 1.6.3 after the heffneil scope crossed the patch/minor line.
-- **[WORKITEMS-1.8.md](WORKITEMS-1.8.md)** — Planned: LLM assistance (AI editor, ESPHome release breaking-change analyzer)
-- **[WORKITEMS-1.9.md](WORKITEMS-1.9.md)** — Planned: Dashboard parity (create device, web serial, log tail, adoption, remote compilation)
-- **[WORKITEMS-future.md](WORKITEMS-future.md)** — Backlog without committed scope
-- **[SECURITY_AUDIT.md](SECURITY_AUDIT.md)** — Security audit findings (refer when making security-relevant changes)
-- **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)** — Step-by-step release process
+Each WORKITEMS file's first paragraph is the authoritative theme — read the file, not this index.
+
+- **[WORKITEMS-1.7.0.md](WORKITEMS-1.7.0.md)** — **Current release.** heffneil-inspired device-management polish + fleet tags & routing.
+- **[WORKITEMS-1.7.1.md](WORKITEMS-1.7.1.md)** — Honest Gold tier flip (carryover from 1.7.0).
+- **[WORKITEMS-1.8.md](WORKITEMS-1.8.md)** — LLM assistance.
+- **[WORKITEMS-1.9.md](WORKITEMS-1.9.md)** — ESPHome dashboard parity.
+- **[WORKITEMS-future.md](WORKITEMS-future.md)** — Unscheduled backlog.
+- **[SECURITY_AUDIT.md](SECURITY_AUDIT.md)** — Security audit findings.
+- **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)** — Release process.
 
 ## Archive
 
-Historical release plans for versions already shipped. Kept for reference but not edited.
+Historical release plans for versions already shipped. Themes only — details live in each file.
 
-- **[archive/WORKITEMS-1.0.md](archive/WORKITEMS-1.0.md)** — First stable release: distributed compile, vanilla JS UI, mDNS discovery
-- **[archive/WORKITEMS-1.1.md](archive/WORKITEMS-1.1.md)** — React UI rewrite, Monaco editor, HA integration, device lifecycle (89 bug fixes)
-- **[archive/WORKITEMS-1.2.md](archive/WORKITEMS-1.2.md)** — shadcn/ui design system, TanStack Table, SWR, local worker (69 bug fixes)
-- **[archive/WORKITEMS-1.3.md](archive/WORKITEMS-1.3.md)** — Quality + Testing: CI, Playwright, ruff, coverage, security hardening, client image version detection
-- **[archive/WORKITEMS-1.3.1.md](archive/WORKITEMS-1.3.1.md)** — Hardening: typed protocol, safety-net tests, supply chain, upgrade modal, network columns, 24 bug fixes
-- **[archive/WORKITEMS-1.4.md](archive/WORKITEMS-1.4.md)** — Fleet management & automation: per-device version pinning, scheduled upgrades, Schedules tab, "+ New Device", APScheduler, 88 bug fixes
-- **[archive/WORKITEMS-1.5.md](archive/WORKITEMS-1.5.md)** — Rebrand to ESPHome Fleet, native HA integration (services, entities, WebSocket events, mDNS discovery), ESPHome unbundled + lazy-installed, mandatory direct-port auth, downloadable firmware binaries (factory/OTA × raw/gzip), supply-chain hardening (SBOM, cosign, SHA-pinned Actions), full UI quality sprint + UX polish pass, 71 bug fixes
-- **[archive/WORKITEMS-1.6.md](archive/WORKITEMS-1.6.md)** — Per-file config history (AV.* with Monaco diff + rollback), first-login onboarding modal for versioning, archive tracked in git with `git mv`, persistent compile history DB (JH.*), in-app Settings drawer with Basic/Advanced tabs + full SP.8 migration of Supervisor options, Grafana-style time-range picker, Pat-centric UX pass from UX_REVIEW_1.6, 45+ numbered bug fixes
-- **[archive/WORKITEMS-1.6.1.md](archive/WORKITEMS-1.6.1.md)** — HA polish + supply chain: AppArmor profile (permissive-but-attached — see 1.6.2 TP for tightening), signed-image verification, Integration Bronze→Silver (PARALLEL_UPDATES, reauth, reconfigure, diagnostics, dynamic/stale devices), brand artwork, mDNS advertiser, repo hygiene; 22 numbered bug fixes. Shipped with 5 review-flagged paths unfixed (closed in 1.6.2 TR.*).
-- **[archive/WORKITEMS-1.6.2.md](archive/WORKITEMS-1.6.2.md)** — Install paths users can trust: prebuilt-image add-on install via GHCR (closes #82 fresh-HAOS rate-limit failure), standalone-Docker direct-port auth UX (closes #83), `wifi.domain` / `ethernet.domain` honored in OTA address resolution (closes #84), AppArmor narrowing with explicit denies, integration quality-scale claim retreated to honest `bronze` (Gold tier-flip moved to 1.7.0), Worker logs viewable in the UI, bundle discipline (workers no longer ship the whole `/config/esphome/` tree). 15 numbered bug fixes.
+- **[archive/WORKITEMS-1.0.md](archive/WORKITEMS-1.0.md)** — First stable release.
+- **[archive/WORKITEMS-1.1.md](archive/WORKITEMS-1.1.md)** — React UI + Monaco + HA integration.
+- **[archive/WORKITEMS-1.2.md](archive/WORKITEMS-1.2.md)** — shadcn/ui design system + local worker.
+- **[archive/WORKITEMS-1.3.md](archive/WORKITEMS-1.3.md)** — Quality + testing.
+- **[archive/WORKITEMS-1.3.1.md](archive/WORKITEMS-1.3.1.md)** — Typed protocol + supply chain hardening.
+- **[archive/WORKITEMS-1.4.md](archive/WORKITEMS-1.4.md)** — Fleet management + scheduled upgrades.
+- **[archive/WORKITEMS-1.5.md](archive/WORKITEMS-1.5.md)** — Rebrand to ESPHome Fleet + native HA integration.
+- **[archive/WORKITEMS-1.6.md](archive/WORKITEMS-1.6.md)** — Per-file config history + Settings drawer.
+- **[archive/WORKITEMS-1.6.1.md](archive/WORKITEMS-1.6.1.md)** — HA polish + Bronze→Silver.
+- **[archive/WORKITEMS-1.6.2.md](archive/WORKITEMS-1.6.2.md)** — Install paths + AppArmor narrowing.
 
 ## How this works
 
