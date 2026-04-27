@@ -1,6 +1,6 @@
 aiohttp>=3.9
 pydantic>=2
-croniter>=1.3
+croniter>=6.2.2
 apscheduler>=3.10,<4
 aioesphomeapi>=18.0
 zeroconf>=0.131
