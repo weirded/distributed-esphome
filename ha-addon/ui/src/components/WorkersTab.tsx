@@ -444,14 +444,6 @@ export function WorkersTab({ workers, targets, queue, serverClientVersion, minIm
               {slotNameEl}
               {isLocal && <span className="ml-1.5 text-[9px] font-semibold uppercase text-[var(--accent)]">built-in</span>}
             </td>
-            <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
-            <td>{statusEl}{uptimeEl}</td>
-            <td>{jobEl}</td>
-            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} hostname={c.hostname} onReinstall={() => onConnectWorker({
-              hostname: c.hostname,
-              max_parallel_jobs: c.max_parallel_jobs,
-              host_platform: c.system_info?.os_version,
-            })} /></td>
             <td>
               <button
                 type="button"
@@ -465,6 +457,14 @@ export function WorkersTab({ workers, targets, queue, serverClientVersion, minIm
                   : <span className="text-[10px] text-[var(--text-muted)] italic">+ tags</span>}
               </button>
             </td>
+            <td>{c.system_info ? workerPlatformHtml(c.system_info) : null}</td>
+            <td>{statusEl}{uptimeEl}</td>
+            <td>{jobEl}</td>
+            <td><ClientVersionCell ver={c.client_version} scv={serverClientVersion} imageVer={c.image_version} minImageVer={minImageVersion} hostname={c.hostname} onReinstall={() => onConnectWorker({
+              hostname: c.hostname,
+              max_parallel_jobs: c.max_parallel_jobs,
+              host_platform: c.system_info?.os_version,
+            })} /></td>
             <td>
               <SlotControl
                 slots={slots}
@@ -519,8 +519,8 @@ export function WorkersTab({ workers, targets, queue, serverClientVersion, minIm
             <td>{slotNameEl}</td>
             <td></td>
             <td></td>
-            <td>{jobEl}</td>
             <td></td>
+            <td>{jobEl}</td>
             <td></td>
             <td></td>
             <td></td>
@@ -531,8 +531,11 @@ export function WorkersTab({ workers, targets, queue, serverClientVersion, minIm
   }
 
   // Build header cells from TanStack column defs in the order we want to render them
-  // Column order: hostname, platform, status, currentJob, version, tags, slots, actions
-  const HEADER_ORDER = ['hostname', 'platform', 'status', 'currentJob', 'version', 'tags', 'slots', 'actions'];
+  // Column order: hostname, tags, platform, status, currentJob, version, slots, actions
+  // Bug #104: Tags promoted to position 2 to mirror the Devices tab's #16
+  // layout — tags are how users group workers in routing rules and the
+  // bulk-actions UX, so they belong adjacent to the identity column.
+  const HEADER_ORDER = ['hostname', 'tags', 'platform', 'status', 'currentJob', 'version', 'slots', 'actions'];
   const headerCells = table.getHeaderGroups()[0].headers;
   const headerByid = Object.fromEntries(headerCells.map(h => [h.id, h]));
 
