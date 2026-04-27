@@ -2894,6 +2894,145 @@ async def set_worker_tags(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "tags": normalised})
 
 
+# ---------------------------------------------------------------------------
+# TG.4 — routing-rules CRUD. Global rule list lives in /data/routing-rules.json
+# (RoutingRuleStore); per-device additive rules ride along in the YAML
+# metadata comment block via the existing ``meta`` endpoint (TG.5
+# round-trip is verified by tests/test_scanner.py).
+# ---------------------------------------------------------------------------
+
+
+def _rule_to_dict_handler(request: web.Request, rule_obj):  # type: ignore[no-untyped-def]
+    """Serialise a Rule for the wire — re-uses routing._rule_to_dict but
+    keeps the import local so a bare ``import routing`` in this module
+    doesn't pull the dataclass model into every UI handler that doesn't
+    need it."""
+    from routing import _rule_to_dict  # noqa: PLC0415
+    return _rule_to_dict(rule_obj)
+
+
+def _slugify(name: str) -> str:
+    """Auto-generate a URL-safe rule id from ``name``. Lowercase, ASCII
+    alphanum + dashes, collapsed runs, trimmed leading/trailing dashes.
+    Empty input → empty string (caller validates)."""
+    out: list[str] = []
+    prev_dash = False
+    for ch in name.lower():
+        if ch.isalnum():
+            out.append(ch)
+            prev_dash = False
+        elif ch in (" ", "-", "_"):
+            if not prev_dash:
+                out.append("-")
+                prev_dash = True
+    s = "".join(out).strip("-")
+    return s
+
+
+def _parse_clauses(raw: object, side_name: str) -> list:
+    """Convert the wire shape (list of dicts) into a list of Clause."""
+    from routing import RoutingRuleError, _clause_from_dict  # noqa: PLC0415
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RoutingRuleError(f"{side_name} must be a list of clauses")
+    return [_clause_from_dict(c if isinstance(c, dict) else {}) for c in raw]
+
+
+def _parse_rule(body: dict, *, default_id: str | None = None):  # type: ignore[no-untyped-def]
+    """Build a Rule from a JSON body, auto-slugging ``id`` from ``name``
+    when absent. Raises RoutingRuleError on shape problems."""
+    from routing import Rule, RoutingRuleError  # noqa: PLC0415
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise RoutingRuleError("rule 'name' is required")
+    rule_id = str(body.get("id") or default_id or _slugify(name))
+    if not rule_id:
+        raise RoutingRuleError("rule 'id' could not be derived from 'name' — provide one explicitly")
+    severity = body.get("severity") or "required"
+    if severity != "required":
+        # Defensive — RoutingRuleStore validates this too, but catching it
+        # here gives the same shape error every API field gets.
+        raise RoutingRuleError(
+            f"severity must be 'required' (got {severity!r}); "
+            "preferred-with-weight is reserved for a future release",
+        )
+    return Rule(
+        id=rule_id,
+        name=name,
+        severity="required",  # narrowed by the check above; satisfies mypy
+        device_match=_parse_clauses(body.get("device_match"), "device_match"),
+        worker_match=_parse_clauses(body.get("worker_match"), "worker_match"),
+    )
+
+
+@routes.get("/ui/api/routing-rules")
+async def list_routing_rules(request: web.Request) -> web.Response:
+    store = request.app.get("routing_rule_store")
+    if store is None:
+        return web.json_response({"rules": []})
+    rules = [_rule_to_dict_handler(request, r) for r in store.list_rules()]
+    return web.json_response({"rules": rules})
+
+
+@routes.post("/ui/api/routing-rules")
+async def create_routing_rule(request: web.Request) -> web.Response:
+    store = request.app.get("routing_rule_store")
+    if store is None:
+        return web.json_response({"error": "Routing not configured"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Expected a JSON object"}, status=400)
+    from routing import RoutingRuleError  # noqa: PLC0415
+    try:
+        rule = _parse_rule(body)
+        created = store.create_rule(rule)
+    except RoutingRuleError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    logger.info("Created routing rule %s (%s)%s", created.id, created.name, _who(request))
+    _broadcast_ws("routing_rules_changed")
+    return web.json_response(_rule_to_dict_handler(request, created), status=201)
+
+
+@routes.put("/ui/api/routing-rules/{rule_id}")
+async def update_routing_rule(request: web.Request) -> web.Response:
+    store = request.app.get("routing_rule_store")
+    if store is None:
+        return web.json_response({"error": "Routing not configured"}, status=503)
+    rule_id = request.match_info["rule_id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Expected a JSON object"}, status=400)
+    from routing import RoutingRuleError  # noqa: PLC0415
+    try:
+        rule = _parse_rule(body, default_id=rule_id)
+        updated = store.update_rule(rule_id, rule)
+    except RoutingRuleError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    logger.info("Updated routing rule %s (%s)%s", updated.id, updated.name, _who(request))
+    _broadcast_ws("routing_rules_changed")
+    return web.json_response(_rule_to_dict_handler(request, updated))
+
+
+@routes.delete("/ui/api/routing-rules/{rule_id}")
+async def delete_routing_rule(request: web.Request) -> web.Response:
+    store = request.app.get("routing_rule_store")
+    if store is None:
+        return web.json_response({"error": "Routing not configured"}, status=503)
+    rule_id = request.match_info["rule_id"]
+    if not store.delete_rule(rule_id):
+        return web.json_response({"error": "Rule not found"}, status=404)
+    logger.info("Deleted routing rule %s%s", rule_id, _who(request))
+    _broadcast_ws("routing_rules_changed")
+    return web.json_response({"ok": True})
+
+
 # Legacy client routes — kept for backwards compatibility
 
 @routes.delete("/ui/api/clients/{client_id}")

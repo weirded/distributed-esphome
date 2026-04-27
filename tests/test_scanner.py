@@ -947,6 +947,32 @@ def test_write_device_meta_removes_block_when_empty(tmp_path):
     assert "esphome:" in content
 
 
+def test_write_device_meta_routing_extra_round_trip(tmp_path):
+    """TG.2: per-device additive routing rules (`routing_extra`) round-trip
+    through the YAML metadata comment block as a list of rule dicts.
+    The comment-block writer doesn't need to know the rule shape — it
+    just YAML-dumps whatever ``meta`` it gets and the reader parses it
+    back through ``yaml.safe_load``."""
+    f = tmp_path / "device.yaml"
+    f.write_text("esphome:\n  name: test\n")
+
+    routing_extra = [
+        {
+            "name": "device-only-fast",
+            "severity": "required",
+            "device_match": [{"op": "all_of", "tags": ["kitchen"]}],
+            "worker_match": [{"op": "all_of", "tags": ["fast"]}],
+        },
+    ]
+    write_device_meta(str(tmp_path), "device.yaml", {"routing_extra": routing_extra})
+
+    meta = read_device_meta(str(tmp_path), "device.yaml")
+    assert meta == {"routing_extra": routing_extra}
+    # Original YAML preserved.
+    assert "esphome:" in f.read_text()
+    assert "name: test" in f.read_text()
+
+
 def test_write_device_meta_clearing_only_tags_strips_block(tmp_path):
     """Bug #9 regression: clearing the last tag (the only meta key) removes
     the whole comment block, not an empty `tags:` line.

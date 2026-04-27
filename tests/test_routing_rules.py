@@ -276,6 +276,80 @@ def test_store_unknown_schema_version_loads_empty(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# TG.4 helpers — slugify + body parser used by the UI API endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_slugify_basic() -> None:
+    from ui_api import _slugify
+    assert _slugify("Kitchen Devices Need Kitchen Worker") == "kitchen-devices-need-kitchen-worker"
+
+
+def test_slugify_collapses_runs_and_trims() -> None:
+    from ui_api import _slugify
+    assert _slugify("  --  Hello   World  __  ") == "hello-world"
+
+
+def test_slugify_drops_punctuation() -> None:
+    from ui_api import _slugify
+    assert _slugify("My Rule (v2)!") == "my-rule-v2"
+
+
+def test_slugify_empty_for_empty_input() -> None:
+    from ui_api import _slugify
+    assert _slugify("") == ""
+    assert _slugify("!!!") == ""
+
+
+def test_parse_rule_auto_slugs_id() -> None:
+    from ui_api import _parse_rule
+    rule = _parse_rule({
+        "name": "Kitchen only",
+        "device_match": [{"op": "all_of", "tags": ["kitchen"]}],
+        "worker_match": [{"op": "all_of", "tags": ["kitchen"]}],
+    })
+    assert rule.id == "kitchen-only"
+    assert rule.name == "Kitchen only"
+    assert rule.severity == "required"
+
+
+def test_parse_rule_explicit_id_wins() -> None:
+    from ui_api import _parse_rule
+    rule = _parse_rule({
+        "id": "custom-id",
+        "name": "Kitchen only",
+        "device_match": [{"op": "all_of", "tags": ["kitchen"]}],
+        "worker_match": [{"op": "all_of", "tags": ["kitchen"]}],
+    })
+    assert rule.id == "custom-id"
+
+
+def test_parse_rule_default_id_used_when_no_id_or_name_slug() -> None:
+    """Update path passes default_id=path_param so an empty/non-slug-able
+    name doesn't lose the rule id mid-update."""
+    from ui_api import _parse_rule
+    rule = _parse_rule({"name": "!!!"}, default_id="path-id")
+    assert rule.id == "path-id"
+
+
+def test_parse_rule_rejects_missing_name() -> None:
+    from ui_api import _parse_rule
+    with pytest.raises(RoutingRuleError):
+        _parse_rule({})
+
+
+def test_parse_rule_rejects_non_required_severity() -> None:
+    from ui_api import _parse_rule
+    with pytest.raises(RoutingRuleError):
+        _parse_rule({
+            "name": "n",
+            "severity": "preferred",
+            "device_match": [{"op": "all_of", "tags": ["a"]}],
+            "worker_match": [{"op": "all_of", "tags": ["a"]}],
+        })
+
+
 def test_effective_rules_compose_global_with_device_extra() -> None:
     """``effective_rules = global + device.routing_extra`` — strictly additive."""
     global_rules = [_rule(device_tags=("kitchen",), worker_tags=("kitchen",))]
