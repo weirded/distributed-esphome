@@ -11,6 +11,7 @@ import { ButtonGroup } from './ui/button-group';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
+import { TagChipInput } from './ui/tag-chip-input';
 
 interface Props {
   serverInfo: ServerInfo;
@@ -18,6 +19,9 @@ interface Props {
   onClose: () => void;
   /** Pre-populate fields when reconnecting an existing worker (bug #7). */
   preset?: WorkerPreset | null;
+  /** Bug #25: fleet-wide tag pool for the Tags field's autocomplete
+   *  dropdown. Same pool the Devices/Workers tabs feed into TagsEditDialog. */
+  tagSuggestions?: string[];
 }
 
 // UX.10: supported output formats in the Connect Worker modal. `compose`
@@ -144,7 +148,7 @@ function formReducer(state: FormState, action: FormAction): FormState {
   }
 }
 
-export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset }: Props) {
+export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset, tagSuggestions = [] }: Props) {
   const port = serverInfo.port || 8765;
   const addrs = serverInfo.server_addresses?.length
     ? serverInfo.server_addresses
@@ -296,20 +300,21 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset
                 onChange={e => set('hostPlatform', e.target.value)}
               />
             </div>
-            {/* TG.7: WORKER_TAGS — comma-separated. Only the *first*
-                registration seeds the server-side store; later edits live in
-                the Workers tab Tags column. The docker command picks this up
-                so tags travel with the docker invocation on initial setup. */}
+            {/* TG.7: WORKER_TAGS — chip-input editor (bug #25) with
+                fleet-wide autocomplete; serialised to a comma-joined
+                string for the docker invocation. Only the *first*
+                registration seeds the server-side store; later edits
+                live in the Workers tab Tags column. */}
             <div>
               <Label>
                 Tags{' '}
-                <span className="text-[var(--text-muted)] font-normal normal-case">(optional, comma-separated)</span>
+                <span className="text-[var(--text-muted)] font-normal normal-case">(optional)</span>
               </Label>
-              <Input
-                type="text"
-                value={tags}
+              <TagChipInput
+                tags={tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : []}
+                onChange={(next) => set('tags', next.join(','))}
+                suggestions={tagSuggestions}
                 placeholder="e.g. linux, fast, prod"
-                onChange={e => set('tags', e.target.value)}
               />
             </div>
             <div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Eye, EyeOff, Moon, Settings as SettingsIcon, Sun } from 'lucide-react';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import {
   cancelJobs,
   cleanWorkerCache,
@@ -184,6 +184,11 @@ export default function App() {
   const logSwrError = useCallback((key: string) => (err: unknown) => {
     console.error('SWR', key, err);
   }, []);
+
+  // Bug #2: invalidate the archived-configs SWR key after archive/restore so
+  // the Devices toolbar's "Restore from archive" button enables/disables
+  // without waiting for a manual reload.
+  const { mutate: mutateGlobal } = useSWRConfig();
 
   const { data: serverInfo = { token: '', port: 8765 }, error: serverInfoError, mutate: mutateServerInfo } = useSWR(
     'serverInfo',
@@ -609,10 +614,12 @@ export default function App() {
       await deleteTarget(target, archive);
       addToast(`${archive ? 'Archived' : 'Deleted'} ${stripYaml(target)}`, 'success');
       mutateDevices();
+      // Bug #2: archive populated → enable "Restore from archive" without a reload.
+      if (archive) mutateGlobal('archived-configs');
     } catch (err) {
       addToast('Delete failed: ' + (err as Error).message, 'error');
     }
-  }, [addToast, mutateDevices]);
+  }, [addToast, mutateDevices, mutateGlobal]);
 
   const handleRenameDevice = useCallback(async (oldTarget: string, newName: string) => {
     try {
@@ -955,6 +962,19 @@ export default function App() {
           serverInfo={serverInfo}
           esphomeVersion={seedVersion}
           preset={connectModalPreset}
+          // Bug #25: fleet-wide tag pool — same union the Devices/Workers
+          // tabs feed into TagsEditDialog. Computed inline (handful of
+          // strings).
+          tagSuggestions={(() => {
+            const pool = new Set<string>();
+            for (const t of targets) {
+              if (t.tags) for (const x of t.tags.split(',').map(s => s.trim()).filter(Boolean)) pool.add(x);
+            }
+            for (const w of workers) {
+              if (w.tags) for (const x of w.tags) pool.add(x);
+            }
+            return Array.from(pool).sort();
+          })()}
           onClose={() => { setConnectModalOpen(false); setConnectModalPreset(null); }}
         />
       )}

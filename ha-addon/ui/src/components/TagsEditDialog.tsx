@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Button } from './ui/button';
-import { TagChip } from './ui/tag-chips';
+import { TagChipInput } from './ui/tag-chip-input';
 
 /**
  * TG.5 / TG.6 / bug #11 — chip-input tag editor used by both the Workers
@@ -55,11 +55,8 @@ interface Props {
 
 export function TagsEditDialog({ open, onOpenChange, subject, initial, suggestions, onSave }: Props) {
   const [tags, setTags] = useState<string[]>(initial);
-  const [input, setInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [focused, setFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Bug #14: re-seed only on the open transition, not on every render.
   // ``initial`` is a fresh array reference each parent SWR poll even when
@@ -67,47 +64,16 @@ export function TagsEditDialog({ open, onOpenChange, subject, initial, suggestio
   useEffect(() => {
     if (open) {
       setTags(initial);
-      setInput('');
       setError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const addTag = (raw: string) => {
-    const v = raw.trim();
-    if (!v) return;
-    setTags(prev => (prev.includes(v) ? prev : [...prev, v]));
-    setInput('');
-    inputRef.current?.focus();
-  };
-
-  const removeTag = (t: string) => {
-    setTags(prev => prev.filter(x => x !== t));
-    inputRef.current?.focus();
-  };
-
-  // Suggestions: pool minus already-attached, optionally filtered by the
-  // prefix the user has typed. Capped at 12 to keep the dialog bounded.
-  const filtered = useMemo(() => {
-    const sel = new Set(tags);
-    const q = input.trim().toLowerCase();
-    return suggestions
-      .filter(s => !sel.has(s))
-      .filter(s => !q || s.toLowerCase().includes(q))
-      .slice(0, 12);
-  }, [suggestions, tags, input]);
-
   const handleSave = async () => {
-    // If the user typed a tag but didn't press Enter / comma, treat it
-    // as the last chip rather than dropping it on save.
-    const finalTags = input.trim() && !tags.includes(input.trim())
-      ? [...tags, input.trim()]
-      : tags;
-
     setSaving(true);
     setError(null);
     try {
-      await onSave(finalTags);
+      await onSave(tags);
       onOpenChange(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save tags');
@@ -132,65 +98,16 @@ export function TagsEditDialog({ open, onOpenChange, subject, initial, suggestio
             autocomplete dropdown. Click × to remove.
           </p>
 
-          {/* Bug #20: chip-input + autocomplete dropdown anchored to it.
-              The dropdown only renders when the input is focused; matches
-              are filtered by the prefix the user has typed. Replaces the
-              dev.7 "Suggestions" section that appeared below as a
-              separate row of chips. */}
-          <div className="relative">
-            <div
-              className="flex flex-wrap items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-2 py-1.5 min-h-[40px] cursor-text"
-              onClick={() => inputRef.current?.focus()}
-            >
-              {tags.map(t => (
-                <TagChip key={t} tag={t} onRemove={() => removeTag(t)} />
-              ))}
-              <input
-                ref={inputRef}
-                autoFocus
-                value={input}
-                onFocus={() => setFocused(true)}
-                onBlur={() => setFocused(false)}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ',') {
-                    e.preventDefault();
-                    if (input.trim()) addTag(input);
-                    else if (!saving) void handleSave();
-                  } else if (e.key === 'Backspace' && !input && tags.length > 0) {
-                    e.preventDefault();
-                    setTags(prev => prev.slice(0, -1));
-                  } else if (e.key === 'Escape') {
-                    setFocused(false);
-                  }
-                }}
-                placeholder={tags.length === 0 ? 'Type a tag and press Enter…' : ''}
-                className="flex-1 min-w-[140px] bg-transparent outline-none text-[13px] text-[var(--text)] placeholder:text-[var(--text-muted)]"
-              />
-            </div>
-            {focused && input.trim().length > 0 && filtered.length > 0 && (
-              <div
-                className="absolute left-0 right-0 top-full mt-1 z-10 rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-lg max-h-[220px] overflow-y-auto py-1"
-              >
-                {filtered.map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    // onMouseDown fires before the input's onBlur, so the
-                    // click registers even though blur is closing the
-                    // dropdown 120ms later.
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      addTag(t);
-                    }}
-                    className="flex w-full items-center gap-2 px-2 py-1 text-left text-[13px] text-[var(--text)] hover:bg-[var(--surface2)]"
-                  >
-                    <TagChip tag={t} />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Bug #20: chip-input + autocomplete dropdown extracted into
+              TagChipInput so ConnectWorkerModal (bug #25) can reuse the
+              same UX. Enter on an empty input saves the dialog. */}
+          <TagChipInput
+            tags={tags}
+            onChange={setTags}
+            suggestions={suggestions}
+            autoFocus
+            onSubmit={() => { if (!saving) void handleSave(); }}
+          />
 
           {error && (
             <div className="rounded-md border border-[var(--danger,#ef4444)] bg-[var(--danger,#ef4444)]/10 px-2.5 py-1.5 text-[12px] text-[var(--danger,#ef4444)]">

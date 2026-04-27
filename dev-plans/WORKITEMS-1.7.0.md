@@ -250,7 +250,7 @@ Severity: only `required` accepted by the API in 1.7.0 (`preferred` rejected wit
 
 - [ ] 1 in the modal for restoring from archive, the time that says how long ago it was archived has way too many digits. Let's prune that. 
 
-- [ ] 2 when I archive the first configuration, the restore from archive button remains grayed out until I reload. We should make that dynamic. 
+- [x] **2** *(1.7.0-dev.16)* — invalidate the `archived-configs` SWR key from `App.handleDeleteDevice` whenever the user archives a device (`archive=true`). The Devices toolbar's "Restore from archive" button reads `archiveEmpty` straight off that subscription, so the toggle now flips immediately after the first archive instead of waiting for a manual reload. Skip the invalidation on hard-delete (`archive=false`) since the archive list isn't affected. Routed through `useSWRConfig().mutate('archived-configs')` so any future caller of `deleteTarget` picks it up automatically.
 
 - [x] **3** *(1.7.0-dev.10)* — Archive as a first-order hamburger action. New `Archive` menu item between `Commit changes…` and `Delete` (no confirmation modal — archived configs are restorable from Settings → Archived devices). Clicking archives the target immediately via `onDelete(target, archive=true)`; a toast confirms with the restore-path hint. `onArchive` plumbs through `DeviceContextMenu` → `ActionsCell` → `useDeviceColumns` → `DevicesTab`.
 
@@ -292,3 +292,13 @@ Severity: only `required` accepted by the API in 1.7.0 (`preferred` rejected wit
 
 Also in **1.7.0-dev.10** (no separate bug entries — diagnosed from dev.9 matrix logs):
 - `e2e-hass-4/incremental-build.spec.ts` SPEEDUP_THRESHOLD bumped 1.50 → 2.00 after hass-4 hit ratio=1.70 in dev.9 (cause: other compiles running on local-worker during the test compile #2 — host-load variance, not a cache regression). Docstring updated with the host-by-host ratio table.
+
+- [x] **22** *(1.7.0-dev.16)* — `update_target_meta` derives a per-key commit-message action from the request body. Single-key bodies fan out to specific subjects via the new `meta <key>` / `meta <key> cleared` action keys (e.g. `"Updated device tags"`, `"Cleared device tags"`, `"Pinned ESPHome version"`, `"Updated routing rules"`); multi-key bodies still fall back to the generic `"Updated device metadata"`. `_default_subject` also degrades uncurated `meta <key>` actions to `"Updated <key>"` so a future metadata field landing without a curated entry still reads cleanly. Existing dedicated endpoints (`/pin`, `/schedule`) keep their already-specific messages. New `test_default_subject_specific_meta_keys` covers curated + uncurated + cleared paths.
+
+- [ ] 23 Add new columns on devices: one that shows bluetooth proxy (off/passive/active) and another that shows the type of ESP (ESP32, ESP8266, etc)
+
+- [ ] 24 the chips are still way too similar in color, and there are just a few colors. Let's make them more diverse.   
+
+- [x] **25** *(1.7.0-dev.16)* — chip-input + autocomplete dropdown for the ConnectWorker Tags field. Extracted the chip-input from `TagsEditDialog` into a reusable `TagChipInput` component (`components/ui/tag-chip-input.tsx`) — same UX (Enter/comma to commit, Backspace on empty input drops the last chip, autocomplete dropdown filtered by substring) — and dropped it into `ConnectWorkerModal`'s Tags field. The form still serialises to the comma-joined string `WORKER_TAGS` expects, so the docker invocation output is unchanged. `App.tsx` computes the fleet-wide tag pool inline (union of every device + worker's tags) and passes it via the new `tagSuggestions` prop. `TagsEditDialog` rebased onto the shared component so future chip-input changes apply to both consumers in one place.
+
+- [x] **26** *(1.7.0-dev.16)* — green CI on develop after dev.15. Two failures: (a) `tests/test_ui_api.py::test_get_settings_returns_defaults_on_fresh_boot` was missing `date_format: "auto"` in the asserted dict — the field landed in dev.10 (#5) but the test expectation wasn't updated, so dev.15 went red. (b) the `UI-3 explicit any type` invariant was matching English prose in `WorkersTab.tsx` comments (`"OR-logic: any selected tag matches"`, `"no worker has any tag yet"`) because the regex `:[[:space:]]*any` happens inside human sentences too. Rephrased both comments — the regex itself is intentionally simple and cheap; tightening it to skip line-comments adds risk without much win when the offending phrasing is easy to dodge. 

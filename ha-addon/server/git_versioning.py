@@ -487,6 +487,15 @@ _DEFAULT_SUBJECTS: dict[str, str] = {
     "pin": "Pinned ESPHome version",
     "unpin": "Unpinned ESPHome version",
     "meta": "Updated device metadata",
+    # Bug #22: per-meta-key specifics so the git log surfaces *what*
+    # changed instead of a generic "Updated device metadata". Emitted by
+    # update_target_meta when the body carries a single key. Multi-key
+    # bodies still fall back to the generic "meta" subject.
+    "meta tags": "Updated device tags",
+    "meta tags cleared": "Cleared device tags",
+    "meta pin_version": "Pinned ESPHome version",
+    "meta routing_extra": "Updated routing rules",
+    "meta routing_extra cleared": "Cleared routing rules",
     "schedule": "Updated scheduled upgrade",
     "unschedule": "Removed scheduled upgrade",
     "schedule toggle": "Toggled scheduled upgrade",
@@ -501,10 +510,20 @@ def _default_subject(action: str, relpath: str) -> str:
     :data:`_DEFAULT_SUBJECTS`. Falls back to ``"<Action>: <relpath>"``
     for unmapped actions so future additions that forget to curate
     here still produce a legible message rather than blank output.
+
+    Bug #22: actions of the form ``"meta <key>"`` / ``"meta <key> cleared"``
+    that aren't curated above degrade to a generic per-key subject so a
+    future metadata key landing without a curated entry still reads
+    cleanly in the log.
     """
     mapped = _DEFAULT_SUBJECTS.get(action)
     if mapped:
         return mapped
+    if action.startswith("meta "):
+        rest = action[len("meta "):]
+        if rest.endswith(" cleared"):
+            return f"Cleared {rest[: -len(' cleared')].replace('_', ' ')}"
+        return f"Updated {rest.replace('_', ' ')}"
     return f"{action.capitalize()}: {relpath}"
 
 

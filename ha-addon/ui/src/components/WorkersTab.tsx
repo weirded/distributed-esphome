@@ -286,7 +286,7 @@ export function WorkersTab({ workers, targets, queue, serverClientVersion, minIm
 
   // Filter before handing to TanStack — keeps filter state local, same as DevicesTab pattern
   const filteredWorkers = useMemo(() => {
-    // TG.6 pill filter first (OR-logic: any selected tag matches).
+    // TG.6 pill filter first (OR-logic — match if at least one selected tag is on the worker).
     const tagFilterSet = new Set(tagFilter);
     const tagged = tagFilterSet.size === 0
       ? workers
@@ -623,7 +623,7 @@ export function WorkersTab({ workers, targets, queue, serverClientVersion, minIm
           );
         })()}
         {/* TG.6 filter pills — same shape as the Devices tab. Hidden when
-            no worker has any tag yet so the bar doesn't show empty. */}
+            workers have no tags yet so the bar doesn't show empty. */}
         <TagFilterBar tags={tagPool} selected={tagFilter} onChange={setTagFilter} />
         <div className="table-wrap">
           <table>

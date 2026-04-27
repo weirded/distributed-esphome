@@ -1772,8 +1772,18 @@ async def update_target_meta(request: web.Request) -> web.Response:
             meta[key] = value
     write_device_meta(cfg.config_dir, filename, meta)
     logger.info("Updated metadata for %s: %s%s", filename, list(body.keys()), _who(request))
+    # Bug #22: derive a specific commit-message action from the body so
+    # the git log says what actually changed (e.g. "Updated device tags"
+    # rather than "Updated device metadata"). Single-key bodies get a
+    # per-key subject; multi-key bodies fall back to the generic "meta".
+    if len(body) == 1:
+        only_key = next(iter(body.keys()))
+        cleared = body[only_key] is None
+        action = f"meta {only_key}{' cleared' if cleared else ''}"
+    else:
+        action = "meta"
     from git_versioning import commit_file  # noqa: PLC0415
-    await commit_file(Path(cfg.config_dir), filename, "meta")
+    await commit_file(Path(cfg.config_dir), filename, action)
     return web.json_response({"ok": True})
 
 

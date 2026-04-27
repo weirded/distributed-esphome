@@ -1130,6 +1130,7 @@ async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_i
             "device_poll_interval": 60,
             "require_ha_auth": False,
             "time_format": "auto",
+            "date_format": "auto",
         }
     finally:
         await ta.close()

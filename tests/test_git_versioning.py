@@ -253,6 +253,21 @@ async def test_commit_file_uses_custom_message_when_provided(tmp_path: Path):
     assert messages[1] == "tune PWM duty cycle"
 
 
+def test_default_subject_specific_meta_keys():
+    """Bug #22: meta sub-actions surface what changed instead of "metadata"."""
+    # Curated keys land on the curated subject.
+    assert gv._default_subject("meta tags", "x.yaml") == "Updated device tags"
+    assert gv._default_subject("meta tags cleared", "x.yaml") == "Cleared device tags"
+    assert gv._default_subject("meta pin_version", "x.yaml") == "Pinned ESPHome version"
+    assert gv._default_subject("meta routing_extra", "x.yaml") == "Updated routing rules"
+    assert gv._default_subject("meta routing_extra cleared", "x.yaml") == "Cleared routing rules"
+    # Uncurated meta keys still degrade to a per-key sentence.
+    assert gv._default_subject("meta widget_id", "x.yaml") == "Updated widget id"
+    assert gv._default_subject("meta widget_id cleared", "x.yaml") == "Cleared widget id"
+    # The bare "meta" action keeps the legacy generic message.
+    assert gv._default_subject("meta", "x.yaml") == "Updated device metadata"
+
+
 async def test_commit_file_respects_preexisting_user_identity(tmp_path: Path):
     """Hass-4 regression: a pre-existing repo's user.name/email must survive.
 
