@@ -505,6 +505,69 @@ def test_metadata_no_esphome_block():
 
 
 # ---------------------------------------------------------------------------
+# Bug #23: ESP type + bluetooth_proxy extraction
+# ---------------------------------------------------------------------------
+
+def test_metadata_esp_type_esp32_default_variant():
+    """``esp32:`` block with no ``variant:`` reads as plain ``ESP32``."""
+    config = {"esphome": {"name": "dev"}, "esp32": {"board": "esp32dev"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "ESP32"
+
+
+def test_metadata_esp_type_esp32_s3_variant_renders_with_dash():
+    """``variant: esp32s3`` reads as ``ESP32-S3`` (Espressif product naming)."""
+    config = {"esphome": {"name": "dev"}, "esp32": {"variant": "esp32s3"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "ESP32-S3"
+
+
+def test_metadata_esp_type_esp8266():
+    config = {"esphome": {"name": "dev"}, "esp8266": {"board": "d1_mini"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "ESP8266"
+
+
+def test_metadata_esp_type_rp2040():
+    config = {"esphome": {"name": "dev"}, "rp2040": {"board": "rpipico"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "RP2040"
+
+
+def test_metadata_bluetooth_proxy_off_when_block_absent():
+    config = {"esphome": {"name": "dev"}, "esp32": {}}
+    meta = _empty_meta()
+    meta["bluetooth_proxy"] = "off"  # match get_device_metadata's seed
+    _extract_metadata(config, meta)
+    assert meta["bluetooth_proxy"] == "off"
+
+
+def test_metadata_bluetooth_proxy_passive_when_block_present_no_active():
+    """``bluetooth_proxy:`` with no value (or no ``active:``) is passive mode."""
+    config = {"esphome": {"name": "dev"}, "esp32": {}, "bluetooth_proxy": None}
+    meta = _empty_meta()
+    meta["bluetooth_proxy"] = "off"
+    _extract_metadata(config, meta)
+    assert meta["bluetooth_proxy"] == "passive"
+
+
+def test_metadata_bluetooth_proxy_active_when_active_true():
+    config = {
+        "esphome": {"name": "dev"},
+        "esp32": {},
+        "bluetooth_proxy": {"active": True},
+    }
+    meta = _empty_meta()
+    meta["bluetooth_proxy"] = "off"
+    _extract_metadata(config, meta)
+    assert meta["bluetooth_proxy"] == "active"
+
+
+# ---------------------------------------------------------------------------
 # build_name_to_target_map
 # ---------------------------------------------------------------------------
 

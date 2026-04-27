@@ -1054,6 +1054,11 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         "network_ipv6": False,       # top-level network.enable_ipv6 is true
         "network_ap_fallback": False,  # wifi.ap block configured
         "network_matter": False,     # matter: block present OR openthread: present
+        # Bug #23: chip family + bluetooth proxy state surfaced as Devices-tab
+        # columns so operators can scan a fleet for "which devices are ESP32-S3"
+        # or "which devices are passive BLE proxies" without opening each YAML.
+        "esp_type": None,            # 'ESP32' | 'ESP32-S3' | 'ESP8266' | 'RP2040' | ... | None
+        "bluetooth_proxy": "off",    # 'off' | 'passive' | 'active'
         # Per-device metadata from the # esphome-fleet: comment block.
         "pinned_version": None,      # pin_version from comment block
         "schedule": None,            # cron expression (5-field)
@@ -1185,6 +1190,47 @@ def _extract_metadata(config: dict, result: dict) -> None:
     # "Thread without Matter" path. So either signal flips the flag.
     if isinstance(config.get("matter"), dict) or blocks["openthread"]:
         result["network_matter"] = True
+
+    # Bug #23: ESP chip type. ESPHome accepts ``esp32:`` / ``esp8266:``
+    # blocks, plus the newer ``rp2040:`` (Pico) and ``host:`` (test
+    # platform). Within ``esp32:``, ``variant:`` distinguishes
+    # ESP32-S2/S3/C3/C6/H2 from the original ESP32 — surface it as
+    # "ESP32-S3" rather than ESPHome's bare "ESP32S3" so the cell reads
+    # the same as Espressif's product names. ``board:`` could narrow
+    # further (e.g. "esp32dev" vs "esp32-c3-devkitm-1") but board
+    # strings are noisy; the chip family is the level the user cares
+    # about for fleet-scale scanning.
+    if isinstance(config.get("esp32"), dict):
+        variant = config["esp32"].get("variant")
+        if variant:
+            v = str(variant).upper()
+            if v.startswith("ESP32") and len(v) > 5:
+                v = "ESP32-" + v[5:]
+            result["esp_type"] = v
+        else:
+            result["esp_type"] = "ESP32"
+    elif "esp8266" in config:
+        result["esp_type"] = "ESP8266"
+    elif isinstance(config.get("rp2040"), dict):
+        result["esp_type"] = "RP2040"
+    elif "host" in config:
+        result["esp_type"] = "Host"
+
+    # Bug #23: ``bluetooth_proxy:`` state. The block being absent means
+    # the device is NOT acting as a BLE proxy. Present-but-empty (the
+    # YAML literal ``bluetooth_proxy:`` with no value parses as None,
+    # which still enables the component) means passive — it forwards
+    # advertisements to HA but can't open BLE connections. ``active:
+    # true`` upgrades to active proxying (HA can read GATT services
+    # through the device). Test for KEY presence, not truthiness, so a
+    # bare ``bluetooth_proxy:`` line still flips passive on (#74 same
+    # pattern as web_server detection).
+    if "bluetooth_proxy" in config:
+        bt_block = config["bluetooth_proxy"]
+        if isinstance(bt_block, dict) and bt_block.get("active") is True:
+            result["bluetooth_proxy"] = "active"
+        else:
+            result["bluetooth_proxy"] = "passive"
 
 
 def _is_literal(value: str) -> bool:

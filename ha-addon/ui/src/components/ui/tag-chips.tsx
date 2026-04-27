@@ -21,25 +21,45 @@ import { X } from 'lucide-react';
  * cells render.
  */
 
-// Bug #21: 12 *visually-distinct* named colors instead of 12 evenly-spaced
-// HSL hues. The dev.6 hue list (0/30/60/…) had clusters that looked
-// near-identical at chip size — 130+160 both read as "green",
-// 215+240 both read as "blue", etc. Using Tailwind's 600-stop palette
-// (curated for accessible foreground/background contrast against white)
-// gives every chip a perceptibly different hue and saturation, so a
-// row of 4 tags reads as 4 colors at a glance.
+// Bug #24: doubled the palette from 12 to 24 colors and widened the
+// hue + lightness spread so adjacent tags read as different colors at
+// chip size. The dev.10 (#21) palette only used Tailwind's 600 stop
+// across 12 hues — clusters like red/orange or violet/fuchsia/pink
+// still felt "the same color" at 12px when two of them landed next to
+// each other in a row. Now we cover 17 Tailwind 600 hues (the full
+// spectrum) plus 7 darker 800-stop variants of widely-spaced hues to
+// add a second "perceptual band" of identity. White text reads
+// AA-contrast on every entry, on both ``[data-theme="light"]`` and
+// ``[data-theme="dark"]`` surfaces.
 const PALETTE: { bg: string; border: string }[] = [
+  // 600-stop, full Tailwind spectrum — 17 distinct hues.
   { bg: '#dc2626', border: '#991b1b' }, // red-600
   { bg: '#ea580c', border: '#9a3412' }, // orange-600
-  { bg: '#ca8a04', border: '#854d0e' }, // amber-600
+  { bg: '#d97706', border: '#92400e' }, // amber-600
+  { bg: '#ca8a04', border: '#854d0e' }, // yellow-600
   { bg: '#65a30d', border: '#3f6212' }, // lime-600
   { bg: '#16a34a', border: '#15803d' }, // green-600
+  { bg: '#059669', border: '#065f46' }, // emerald-600
   { bg: '#0d9488', border: '#115e59' }, // teal-600
+  { bg: '#0891b2', border: '#155e75' }, // cyan-600
   { bg: '#0284c7', border: '#075985' }, // sky-600
   { bg: '#2563eb', border: '#1e40af' }, // blue-600
+  { bg: '#4f46e5', border: '#3730a3' }, // indigo-600
   { bg: '#7c3aed', border: '#5b21b6' }, // violet-600
+  { bg: '#9333ea', border: '#6b21a8' }, // purple-600
   { bg: '#c026d3', border: '#86198f' }, // fuchsia-600
   { bg: '#db2777', border: '#9d174d' }, // pink-600
+  { bg: '#e11d48', border: '#9f1239' }, // rose-600
+  // 800-stop darker variants of widely-spaced hues — second perceptual
+  // band so the same-hash-bucket-collision risk drops in half.
+  { bg: '#7f1d1d', border: '#450a0a' }, // red-800
+  { bg: '#854d0e', border: '#422006' }, // yellow-800 (mustard)
+  { bg: '#166534', border: '#052e16' }, // green-800
+  { bg: '#155e75', border: '#083344' }, // cyan-800
+  { bg: '#1e3a8a', border: '#172554' }, // blue-900-ish
+  { bg: '#5b21b6', border: '#2e1065' }, // violet-800
+  { bg: '#9d174d', border: '#500724' }, // pink-800
+  // Neutral fallback.
   { bg: '#475569', border: '#334155' }, // slate-600
 ];
 

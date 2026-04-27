@@ -100,6 +100,20 @@ export interface Target {
    * is treated as a Matter signal too).
    */
   network_matter?: boolean;
+  /**
+   * Bug #23: ESP chip family parsed from the resolved YAML's
+   * ``esp32:`` / ``esp8266:`` / ``rp2040:`` block. ESP32 variants
+   * surface as "ESP32-S3", "ESP32-C3", etc. Null when the YAML
+   * doesn't pick a platform (rare; usually means resolve failed).
+   */
+  esp_type?: string | null;
+  /**
+   * Bug #23: ``bluetooth_proxy:`` block state.
+   *  - ``off``     — block absent (default).
+   *  - ``passive`` — block present, no ``active: true``.
+   *  - ``active``  — block present with ``active: true``.
+   */
+  bluetooth_proxy?: 'off' | 'passive' | 'active';
   /** Per-device pinned ESPHome version from YAML metadata comment. */
   pinned_version?: string | null;
   /** Cron schedule expression (5-field). */
@@ -146,7 +160,11 @@ export interface Target {
   /**
    * JH.6: per-target "last compiled" rollup from the persistent job
    * history DAO. Powers the optional "Last compiled" column on the
-   * Devices tab. Null when there's no history for the target.
+   * Devices tab. Null when there's neither history nor a running
+   * device with a parseable compilation_time. Bug #13: when the
+   * SQLite history is empty for this target, the server falls back
+   * to the running device's reported ``compilation_time`` and sets
+   * ``source: 'device'`` so the UI can render an approximate marker.
    */
   last_compile?: {
     /** Epoch seconds (UTC). */
@@ -155,6 +173,10 @@ export interface Target {
     ota_result: string | null;
     validate_only: boolean;
     download_only: boolean;
+    /** ``history`` = recorded by this server in SQLite. ``device`` = parsed
+     * from the running firmware's ESPHome ``compilation_time`` string
+     * (approximate; build-host local time, success state assumed). */
+    source: 'history' | 'device';
   } | null;
   /**
    * Chip MAC address, lower-case colon-separated (e.g.

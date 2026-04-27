@@ -660,6 +660,25 @@ async def get_targets(request: web.Request) -> web.Response:
         except Exception:
             logger.debug("job_history.last_per_target() raised; continuing")
 
+    def _device_compile_epoch(dev: Device | None) -> int | None:
+        """Bug #13: parse the ESPHome ``compilation_time`` string ("Mar 29
+        2026, 17:00:00") into epoch seconds so it can serve as a fallback
+        for the Devices-tab "Last compiled" column when the SQLite history
+        has nothing for the target (server is fresh, or the YAML was
+        compiled by a different install). Treats the timestamp as the
+        server's local time — ESPHome embeds it via ``__DATE__``/``__TIME__``
+        which are local to the build host; we don't know that host, so
+        local-on-this-server is the closest defensible interpretation.
+        """
+        if not dev or not dev.compilation_time:
+            return None
+        try:
+            from datetime import datetime  # noqa: PLC0415
+            dt = datetime.strptime(dev.compilation_time, "%b %d %Y, %H:%M:%S")
+            return int(dt.timestamp())
+        except (ValueError, OSError):
+            return None
+
     # Build device lookup by compile_target filename
     devices_by_target: dict[str, Device] = {}
     if device_poller:
@@ -780,6 +799,9 @@ async def get_targets(request: web.Request) -> web.Response:
             "network_ipv6": meta.get("network_ipv6", False),
             "network_ap_fallback": meta.get("network_ap_fallback", False),
             "network_matter": meta.get("network_matter", False),
+            # Bug #23: chip family + BLE proxy mode for the new Devices columns.
+            "esp_type": meta.get("esp_type"),
+            "bluetooth_proxy": meta.get("bluetooth_proxy", "off"),
             # Per-device metadata from the # esphome-fleet: comment block.
             "pinned_version": meta.get("pinned_version"),
             "schedule": meta.get("schedule"),
@@ -811,7 +833,14 @@ async def get_targets(request: web.Request) -> web.Response:
             # JH.6: tuple of (finished_at, state) for the Devices tab's
             # optional "Last compiled" column. Shape chosen so the UI
             # can render relative time + a success/failure chip without
-            # a second API call.
+            # a second API call. Bug #13: when the SQLite history has
+            # nothing for this target (fresh server, YAML compiled by
+            # another install, history evicted by retention), fall back
+            # to the running device's reported ``compilation_time`` so
+            # the column doesn't read "—" for devices that are obviously
+            # running compiled firmware. ``source`` distinguishes the
+            # two so the UI can disambiguate (history is precise; device
+            # is approximate — local-tz parsed, no per-job state).
             "last_compile": (
                 {
                     "at": last_compile_by_target[target]["finished_at"],
@@ -819,9 +848,21 @@ async def get_targets(request: web.Request) -> web.Response:
                     "ota_result": last_compile_by_target[target].get("ota_result"),
                     "validate_only": bool(last_compile_by_target[target].get("validate_only")),
                     "download_only": bool(last_compile_by_target[target].get("download_only")),
+                    "source": "history",
                 }
                 if target in last_compile_by_target
-                else None
+                else (
+                    {
+                        "at": _device_compile_epoch(dev),
+                        "state": "success",
+                        "ota_result": None,
+                        "validate_only": False,
+                        "download_only": False,
+                        "source": "device",
+                    }
+                    if _device_compile_epoch(dev) is not None
+                    else None
+                )
             ),
         }
         result.append(entry)

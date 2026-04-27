@@ -40,7 +40,10 @@ export function fmtDuration(secs: number | null | undefined): string {
  */
 export function fmtEpochRelative(epoch: number | null | undefined): string {
   if (epoch == null) return '—';
-  const diff = Math.max(0, Math.floor(Date.now() / 1000) - epoch);
+  // Bug #1: floor the diff itself, not just `Date.now()/1000`. Server epochs
+  // come from `os.stat().st_mtime` which is a float, so without flooring the
+  // sub-60s bucket renders `4.327s ago` instead of `4s ago`.
+  const diff = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
   if (diff === 0) return 'just now';
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;

@@ -86,7 +86,7 @@ interface Options {
  * Mirror of the `OptionalColumnId` type in DevicesTab. Exported here so the
  * two stay in sync when columns are added/removed.
  */
-export type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule' | 'tags';
+export type OptionalColumnId = 'status' | 'ha' | 'ip' | 'running' | 'area' | 'comment' | 'project' | 'net' | 'ipconfig' | 'ap' | 'esp' | 'ble' | 'schedule' | 'tags';
 
 // --- Small per-cell formatters (kept private to this module) ---------------
 
@@ -414,6 +414,40 @@ export function useDeviceColumns(options: Options) {
       ),
       sortingFn: 'alphanumeric',
     }),
+    // Bug #23: ESP chip family. Sort key is the bare string so ESP32 / ESP32-S3
+    // / ESP8266 group naturally; the cell renders as muted em-dash when the
+    // YAML failed to resolve (rare).
+    columnHelper.accessor(row => row.esp_type || '', {
+      id: 'esp',
+      header: ({ column }) => <SortHeader label="ESP" column={column} />,
+      cell: ({ row: { original: t } }) => (
+        t.esp_type
+          ? <span className="text-[12px] tabular-nums" title={`Chip family from the resolved YAML: ${t.esp_type}`}>{t.esp_type}</span>
+          : <span className="text-[12px] text-[var(--text-muted)]">—</span>
+      ),
+      sortingFn: 'alphanumeric',
+    }),
+    // Bug #23: Bluetooth proxy state. Sort key is the bare string so the
+    // three states cluster (active < off < passive alphabetically — fine
+    // for grouping). Off renders as a muted em-dash so the column reads
+    // quietly on devices that aren't BLE proxies.
+    columnHelper.accessor(row => row.bluetooth_proxy || 'off', {
+      id: 'ble',
+      header: ({ column }) => <SortHeader label="BLE proxy" column={column} />,
+      cell: ({ row: { original: t } }) => {
+        const mode = t.bluetooth_proxy ?? 'off';
+        if (mode === 'off') {
+          return <span className="text-[12px] text-[var(--text-muted)]" title="No bluetooth_proxy: block in this YAML">—</span>;
+        }
+        const label = mode === 'active' ? 'Active' : 'Passive';
+        const cls = mode === 'active' ? 'text-[var(--success)]' : 'text-[12px]';
+        const tip = mode === 'active'
+          ? 'bluetooth_proxy: { active: true } — forwards advertisements AND opens BLE connections for HA'
+          : 'bluetooth_proxy: present without active:true — forwards BLE advertisements only';
+        return <span className={`text-[12px] ${cls}`} title={tip}>{label}</span>;
+      },
+      sortingFn: 'alphanumeric',
+    }),
     columnHelper.accessor(row => row.schedule || row.schedule_once || '', {
       id: 'schedule',
       header: ({ column }) => <SortHeader label="Schedule" column={column} />,
@@ -470,12 +504,13 @@ export function useDeviceColumns(options: Options) {
           // compiles.
           return <span className="text-[12px] text-[var(--text-muted)]">—</span>;
         }
-        // #77 / UX_REVIEW §1.5: reuse ``getJobBadge`` so the Devices
-        // column's chip matches the Queue tab and JH.5 history surfaces
-        // exactly. Previously we hand-rolled a ✓/✗/· glyph that drifted
-        // in shape + colour from the pill badges on the other two
-        // surfaces.
-        const badge = getJobBadge({
+        // Bug #13: source='device' means the row is synthesized from
+        // the running firmware's ESPHome compilation_time string — no
+        // SQLite history exists for this target. Render with a leading
+        // ``~`` so the user knows it's approximate, and skip the badge
+        // (we don't know success/failed/ota for a remote-built firmware).
+        const fromDevice = lc.source === 'device';
+        const badge = fromDevice ? null : getJobBadge({
           state: lc.state,
           ota_result: lc.ota_result ?? undefined,
           validate_only: lc.validate_only,
@@ -484,16 +519,20 @@ export function useDeviceColumns(options: Options) {
         // PR #64 review: use shared fmtEpochRelative + fmtEpochAbsolute
         // so this cell respects the ``time_format`` Settings preference
         // (auto / 12h / 24h) via the module-local pref in utils/format.
-        // Prior inline ``toLocaleString()`` call ignored that setting.
         const rel = fmtEpochRelative(lc.at);
         const iso = fmtEpochAbsolute(lc.at);
+        const tooltip = fromDevice
+          ? `${iso} — reported by the device's running firmware (no compile history on this server)`
+          : `${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`;
         return (
           <span
             className="text-[12px] tabular-nums inline-flex items-center gap-1.5"
-            title={`${iso} · ${lc.state}${lc.ota_result ? ` / ota=${lc.ota_result}` : ''}`}
+            title={tooltip}
           >
-            <span className="text-[var(--text-muted)]">{rel}</span>
-            <span className={badge.cls}>{badge.label}</span>
+            <span className="text-[var(--text-muted)]">
+              {fromDevice ? `~${rel}` : rel}
+            </span>
+            {badge && <span className={badge.cls}>{badge.label}</span>}
           </span>
         );
       },

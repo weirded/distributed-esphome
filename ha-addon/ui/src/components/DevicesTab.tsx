@@ -45,7 +45,7 @@ import {
 } from './ui/dropdown-menu';
 
 /* ---- Column configuration ---- */
-type OptionalColumnId = 'status' | 'ha' | 'ip' | 'mac' | 'running' | 'area' | 'comment' | 'tags' | 'project' | 'net' | 'ipconfig' | 'ap' | 'schedule' | 'last_compiled';
+type OptionalColumnId = 'status' | 'ha' | 'ip' | 'mac' | 'running' | 'area' | 'comment' | 'tags' | 'project' | 'net' | 'ipconfig' | 'ap' | 'esp' | 'ble' | 'schedule' | 'last_compiled';
 
 interface OptionalColumnDef {
   id: OptionalColumnId;
@@ -62,7 +62,7 @@ interface OptionalColumnDef {
 //
 // Current table order (from useDeviceColumns):
 //   select, device, tags, status, ha, ip, mac, net, ipconfig, ap,
-//   schedule, last_compiled, running, area, comment, project, actions
+//   esp, ble, schedule, last_compiled, running, area, comment, project, actions
 // Picker covers the optional / hideable subset (everything except
 // select, device, actions which are always-visible).
 const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
@@ -80,6 +80,12 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'net', label: 'Net', defaultVisible: true },
   { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
   { id: 'ap', label: 'AP', defaultVisible: false },
+  // Bug #23: chip family + BLE proxy mode. Off by default — useful
+  // for fleet-scale scanning ("which devices are ESP32-S3?", "which
+  // are passive BLE proxies?") but adds two narrow columns most
+  // users don't need on the default layout.
+  { id: 'esp', label: 'ESP', defaultVisible: false },
+  { id: 'ble', label: 'BLE proxy', defaultVisible: false },
   { id: 'schedule', label: 'Schedule', defaultVisible: true },
   // JH.6: opt-in "Last compiled" column. Off by default so existing users
   // see no layout churn; power users toggle it on to spot stale devices.
