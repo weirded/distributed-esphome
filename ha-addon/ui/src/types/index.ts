@@ -380,4 +380,12 @@ export interface Job {
     rule_name: string;
     summary: string;
   } | null;
+  /** Bug #97: per-job worker-tag filter set at enqueue time from the
+   *  Upgrade modal's "Tag expression" worker-selection radio. Same
+   *  shape as a routing-rule clause — claim_next consults it via the
+   *  same per-worker eligibility predicate that drives global rules. */
+  worker_tag_filter?: {
+    op: RoutingClauseOp;
+    tags: string[];
+  } | null;
 }

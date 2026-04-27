@@ -393,6 +393,10 @@ export default function App() {
     esphomeVersion: string | null;
     updatePin?: string | null;
     downloadOnly?: boolean;
+    // Bug #97: per-job worker_tag_filter from the Upgrade modal's
+    // "Tag expression" worker-selection radio. Mutually exclusive
+    // with pinnedClientId at the UI level.
+    workerTagFilter?: { op: 'all_of' | 'any_of' | 'none_of'; tags: string[] } | null;
   }) {
     const ctx = upgradeModalTarget;
     if (!ctx) return;
@@ -407,11 +411,14 @@ export default function App() {
         params.pinnedClientId ?? undefined,
         params.esphomeVersion ?? undefined,
         params.downloadOnly ?? false,
+        params.workerTagFilter ?? undefined,
       );
       const versionSuffix = params.esphomeVersion ? ` (ESPHome ${params.esphomeVersion})` : '';
       const workerSuffix = params.pinnedClientId
         ? ` on ${workers.find(w => w.client_id === params.pinnedClientId)?.hostname ?? params.pinnedClientId}`
-        : '';
+        : params.workerTagFilter
+          ? ` (workers ${params.workerTagFilter.op.replace('_', ' ')} [${params.workerTagFilter.tags.join(', ')}])`
+          : '';
       const pinSuffix = params.updatePin ? ` (pin updated to ${params.updatePin})` : '';
       // FD.3: different toast verb when producing a downloadable binary
       // so the user understands the device won't be OTA'd this round.
@@ -972,14 +979,13 @@ export default function App() {
           serverInfo={serverInfo}
           esphomeVersion={seedVersion}
           preset={connectModalPreset}
-          // Bug #25: fleet-wide tag pool — same union the Devices/Workers
-          // tabs feed into TagsEditDialog. Computed inline (handful of
-          // strings).
+          // Bug #96 (was #27): worker tag pool only — the dialog
+          // configures a *worker*, so suggesting device tags
+          // (`kitchen`, `cosy`, `ratgdo`) is misleading and dilutes
+          // the autocomplete signal. Worker-only matches the routing-
+          // rule worker_match autocomplete in `RoutingRuleBuilder`.
           tagSuggestions={(() => {
             const pool = new Set<string>();
-            for (const t of targets) {
-              if (t.tags) for (const x of t.tags.split(',').map(s => s.trim()).filter(Boolean)) pool.add(x);
-            }
             for (const w of workers) {
               if (w.tags) for (const x of w.tags) pool.add(x);
             }

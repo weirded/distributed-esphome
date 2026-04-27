@@ -292,8 +292,34 @@ def build_claim_eligibility(
         cache[target] = (device_tags, effective)
         return device_tags, effective
 
+    worker_tag_set = set(worker_tags)
+
+    def _filter_matches(filter_dict: dict) -> bool:
+        # Bug #97: per-job ``worker_tag_filter`` clause — same shape as
+        # a routing-rule clause. Treat malformed entries as "no
+        # constraint" rather than poisoning the claim path.
+        op = filter_dict.get("op")
+        tags = filter_dict.get("tags") or []
+        if not isinstance(tags, list):
+            return True
+        wanted = {str(t) for t in tags if isinstance(t, str) and t}
+        if not wanted:
+            return True
+        if op == "all_of":
+            return wanted.issubset(worker_tag_set)
+        if op == "any_of":
+            return bool(wanted & worker_tag_set)
+        if op == "none_of":
+            return not (wanted & worker_tag_set)
+        return True  # unknown op — be permissive rather than strand the job
+
     def check(job: "Job") -> bool:
-        # Cheapest path first — most fleets have zero global rules and
+        # Bug #97: per-job worker_tag_filter applies before any YAML
+        # reads; reject early when the filter doesn't match this worker.
+        wtf = getattr(job, "worker_tag_filter", None)
+        if isinstance(wtf, dict) and not _filter_matches(wtf):
+            return False
+        # Cheapest path next — most fleets have zero global rules and
         # zero per-device routing_extra, so we never touch the YAML.
         if not global_rules:
             # Still need read_device_meta to discover routing_extra; do

@@ -378,3 +378,98 @@ async def test_build_claim_eligibility_caches_target_meta_within_call(
 
     assert call_count["n"] == 1, \
         f"read_device_meta called {call_count['n']} times for one target — cache miss"
+
+
+# ---------------------------------------------------------------------------
+# Bug #97 — per-job worker_tag_filter
+# ---------------------------------------------------------------------------
+
+
+async def test_build_claim_eligibility_honours_job_worker_tag_filter(
+    tmp_path: Path, config_dir: Path,
+) -> None:
+    """A job created with ``worker_tag_filter`` is only claimable by a
+    worker whose tags satisfy the clause — independent of any global
+    routing rules. This is the data path behind the Upgrade modal's
+    "Tag expression" worker-selection radio."""
+    from routing_eligibility import build_claim_eligibility
+    app = await _make_app(tmp_path, config_dir)
+    _write_yaml(config_dir, "anything.yaml")
+    job = await app["queue"].enqueue(
+        target="anything.yaml",
+        esphome_version="2026.3.2",
+        run_id="r1",
+        timeout_seconds=300,
+        worker_tag_filter={"op": "all_of", "tags": ["windows"]},
+    )
+    assert job is not None
+
+    debian_check = build_claim_eligibility(app, worker_tags=["debian"])
+    assert debian_check(job) is False
+
+    windows_check = build_claim_eligibility(app, worker_tags=["windows"])
+    assert windows_check(job) is True
+
+
+async def test_worker_tag_filter_clause_ops(
+    tmp_path: Path, config_dir: Path,
+) -> None:
+    """Each clause op behaves as expected: any_of, none_of, all_of."""
+    from routing_eligibility import build_claim_eligibility
+    app = await _make_app(tmp_path, config_dir)
+    _write_yaml(config_dir, "thing.yaml")
+
+    async def _job_with(filter_):
+        j = await app["queue"].enqueue(
+            target="thing.yaml",
+            esphome_version="x",
+            run_id=f"r-{filter_['op']}-{','.join(filter_['tags'])}",
+            timeout_seconds=300,
+            worker_tag_filter=filter_,
+        )
+        # Coalescing returns None on the second enqueue for the same
+        # target while the first is still PENDING. Mark the previous
+        # job claimed so the next enqueue creates a fresh one.
+        if j is None:
+            for existing in app["queue"].get_all():
+                if existing.target == "thing.yaml" and existing.state == JobState.PENDING:
+                    existing.state = JobState.WORKING
+            j = await app["queue"].enqueue(
+                target="thing.yaml",
+                esphome_version="x",
+                run_id="retry",
+                timeout_seconds=300,
+                worker_tag_filter=filter_,
+            )
+        assert j is not None
+        return j
+
+    job_any = await _job_with({"op": "any_of", "tags": ["windows", "macos"]})
+    check = build_claim_eligibility(app, worker_tags=["macos"])
+    assert check(job_any) is True
+
+    job_none = await _job_with({"op": "none_of", "tags": ["slow"]})
+    check = build_claim_eligibility(app, worker_tags=["slow"])
+    assert check(job_none) is False
+    check = build_claim_eligibility(app, worker_tags=["fast"])
+    assert check(job_none) is True
+
+
+async def test_worker_tag_filter_malformed_is_permissive(
+    tmp_path: Path, config_dir: Path,
+) -> None:
+    """A malformed filter (unknown op, empty tag list, non-list tags)
+    is treated as 'no constraint' so the job doesn't strand."""
+    from routing_eligibility import build_claim_eligibility
+    app = await _make_app(tmp_path, config_dir)
+    _write_yaml(config_dir, "thing.yaml")
+    job = await app["queue"].enqueue(
+        target="thing.yaml",
+        esphome_version="x",
+        run_id="r",
+        timeout_seconds=300,
+        worker_tag_filter={"op": "garbage", "tags": ["windows"]},
+    )
+    assert job is not None
+    check = build_claim_eligibility(app, worker_tags=["debian"])
+    assert check(job) is True

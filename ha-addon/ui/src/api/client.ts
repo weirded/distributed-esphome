@@ -356,11 +356,19 @@ export async function compile(
   pinnedClientId?: string,
   esphomeVersion?: string,
   downloadOnly?: boolean,
+  // Bug #97: per-job worker_tag_filter from the Upgrade modal's "Tag
+  // expression" worker-selection radio. Mutually exclusive with
+  // ``pinnedClientId`` at the UI level (the radio toggles between the
+  // two modes); the server accepts both fields independently.
+  workerTagFilter?: { op: 'all_of' | 'any_of' | 'none_of'; tags: string[] },
 ): Promise<CompileResponse> {
   const body: Record<string, unknown> = { targets };
   if (pinnedClientId) body.pinned_client_id = pinnedClientId;
   if (esphomeVersion) body.esphome_version = esphomeVersion;
   if (downloadOnly) body.download_only = true;
+  if (workerTagFilter && workerTagFilter.tags.length > 0) {
+    body.worker_tag_filter = workerTagFilter;
+  }
   return parseResponse<CompileResponse>(
     await apiFetch('./ui/api/compile', {
       method: 'POST',

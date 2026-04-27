@@ -131,6 +131,14 @@ class Job:
     # tooltip (TG.9) reads ``rule_name`` + ``summary``; ``rule_id`` is
     # used to deep-link the rules-editor open at the offending rule.
     blocked_reason: Optional[dict] = None
+    # Bug #97: per-job worker-tag filter set at enqueue time from the
+    # Upgrade modal's "Tag expression" worker-selection radio. Same
+    # shape as a routing-rule clause: ``{"op": "all_of"|"any_of"|"none_of",
+    # "tags": [...]}``. Survives the queue's lifetime (cleared when
+    # the job leaves the queue). claim_next honours it via the same
+    # eligibility predicate that drives global routing rules. None
+    # means "any worker can claim" — the historical default.
+    worker_tag_filter: Optional[dict] = None
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -165,6 +173,7 @@ class Job:
             "config_hash": self.config_hash,
             "selection_reason": self.selection_reason,
             "blocked_reason": self.blocked_reason,
+            "worker_tag_filter": self.worker_tag_filter,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -205,6 +214,7 @@ class Job:
             config_hash=d.get("config_hash"),
             selection_reason=d.get("selection_reason"),
             blocked_reason=d.get("blocked_reason"),
+            worker_tag_filter=d.get("worker_tag_filter"),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -413,6 +423,7 @@ class JobQueue:
         ota_address: Optional[str] = None,
         pinned_client_id: Optional[str] = None,
         config_hash: Optional[str] = None,
+        worker_tag_filter: Optional[dict] = None,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -464,6 +475,7 @@ class JobQueue:
                 followup.ota_address = ota_address
                 followup.timeout_seconds = timeout_seconds
                 followup.run_id = run_id  # belongs to the latest request
+                followup.worker_tag_filter = worker_tag_filter
                 self._persist()
                 logger.info(
                     "Updated existing follow-up job %s for target %s "
@@ -519,6 +531,7 @@ class JobQueue:
                 pinned_client_id=pinned_client_id,
                 is_followup=is_followup,
                 config_hash=config_hash,
+                worker_tag_filter=worker_tag_filter,
             )
             self._jobs[job.id] = job
             self._persist()

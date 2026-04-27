@@ -9,7 +9,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
-import type { Worker } from '../types';
+import { TagChipInput } from './ui/tag-chip-input';
+import type { Worker, RoutingClauseOp } from '../types';
 
 const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -113,6 +114,10 @@ interface Props {
     updatePin?: string | null;
     /** FD.3: when true, enqueue a compile-and-download job instead of compile+OTA. */
     downloadOnly?: boolean;
+    /** Bug #97: per-job worker tag filter from the "Tag expression"
+     *  worker-selection radio. Mutually exclusive with
+     *  ``pinnedClientId`` at the UI level. */
+    workerTagFilter?: { op: RoutingClauseOp; tags: string[] } | null;
   }) => void;
   /**
    * Save a recurring cron schedule. `version` is the user's pin choice —
@@ -154,6 +159,24 @@ export function UpgradeModal({
     .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
 
   const [selectedWorker, setSelectedWorker] = useState<string>('');
+  // Bug #97: worker-selection radio with three modes:
+  //   any         → no filter; routing rules + claim_next decide
+  //   specific    → pin to one worker_id (back-compat with the old
+  //                 single dropdown)
+  //   tag         → ad-hoc per-job worker_tag_filter (op + tags)
+  type WorkerMode = 'any' | 'specific' | 'tag';
+  const [workerMode, setWorkerMode] = useState<WorkerMode>('any');
+  const [tagFilterOp, setTagFilterOp] = useState<RoutingClauseOp>('all_of');
+  const [tagFilterTags, setTagFilterTags] = useState<string[]>([]);
+  // Worker-tag autocomplete pool — same union the
+  // RoutingRuleBuilder's worker side uses.
+  const workerTagPool = (() => {
+    const pool = new Set<string>();
+    for (const w of workers) {
+      if (w.tags) for (const t of w.tags) pool.add(t);
+    }
+    return Array.from(pool).sort();
+  })();
   // #31: selectedVersion = '' means "Latest" (no pin / use current default at
   // run time). If the device is currently pinned, default to that pin. Otherwise
   // default to "Latest" so the schedule auto-updates with new ESPHome releases.
@@ -240,13 +263,23 @@ export function UpgradeModal({
 
   function handleConfirm() {
     if (mode === 'now') {
+      // Bug #97: pinnedClientId vs workerTagFilter is decided by the
+      // worker-mode radio. "any" sends neither; "specific" sends only
+      // the pin; "tag" sends only the filter. The server accepts both
+      // independently — at the UI level we keep them mutually exclusive
+      // so the user has one source of truth.
+      const pinned = workerMode === 'specific' ? (selectedWorker || null) : null;
+      const filter = workerMode === 'tag' && tagFilterTags.length > 0
+        ? { op: tagFilterOp, tags: tagFilterTags }
+        : null;
       onUpgradeNow({
-        pinnedClientId: selectedWorker || null,
+        pinnedClientId: pinned,
         esphomeVersion: selectedVersion && selectedVersion !== defaultEsphomeVersion ? selectedVersion : null,
         // FD.3: don't update the pin when we're only producing a
         // binary to download — the device state hasn't changed.
         updatePin: nowAction === 'ota' && shouldUpdatePin ? selectedVersion : null,
         downloadOnly: nowAction === 'download',
+        workerTagFilter: filter,
       });
     } else {
       if (scheduleType === 'once') {
@@ -275,20 +308,78 @@ export function UpgradeModal({
           {/* Shared: Worker + Version (hidden in scheduleOnly mode) */}
           {!scheduleOnly && (
             <>
-              <div>
-                <Label htmlFor="upgrade-worker-select">Worker</Label>
-                <Select
-                  id="upgrade-worker-select"
-                  value={selectedWorker}
-                  onChange={e => setSelectedWorker(e.target.value)}
-                  title="Fleet will pick the fastest available worker at compile time."
-                >
-                  {/* UX.7: dropped the <any> coder-syntax label. */}
-                  <option value="">Any available worker (auto)</option>
-                  {eligibleWorkers.map(w => (
-                    <option key={w.client_id} value={w.client_id}>{w.hostname}</option>
-                  ))}
-                </Select>
+              {/* Bug #97: worker-selection radio. "Any" lets routing
+                  rules + the scheduler decide; "Specific" pins to one
+                  worker (legacy behaviour); "Tag expression" adds a
+                  per-job worker_tag_filter clause that participates in
+                  claim_next eligibility. The three are mutually
+                  exclusive at the UI level so the user has one source
+                  of truth. */}
+              <div className="flex flex-col gap-1.5">
+                <Label>Worker</Label>
+                <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                  <input
+                    type="radio"
+                    name="upgrade-worker-mode"
+                    checked={workerMode === 'any'}
+                    onChange={() => setWorkerMode('any')}
+                  />
+                  Any available worker
+                  <span className="text-[11px] text-[var(--text-muted)]">— scheduler picks at compile time</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                  <input
+                    type="radio"
+                    name="upgrade-worker-mode"
+                    checked={workerMode === 'specific'}
+                    onChange={() => setWorkerMode('specific')}
+                  />
+                  Specific worker
+                </label>
+                {workerMode === 'specific' && (
+                  <Select
+                    id="upgrade-worker-select"
+                    value={selectedWorker}
+                    onChange={e => setSelectedWorker(e.target.value)}
+                    className="ml-5"
+                  >
+                    <option value="">— select a worker —</option>
+                    {eligibleWorkers.map(w => (
+                      <option key={w.client_id} value={w.client_id}>{w.hostname}</option>
+                    ))}
+                  </Select>
+                )}
+                <label className="flex items-center gap-1.5 text-[13px] cursor-pointer whitespace-nowrap">
+                  <input
+                    type="radio"
+                    name="upgrade-worker-mode"
+                    checked={workerMode === 'tag'}
+                    onChange={() => setWorkerMode('tag')}
+                  />
+                  Tag expression
+                  <span className="text-[11px] text-[var(--text-muted)]">— same shape as a routing-rule clause</span>
+                </label>
+                {workerMode === 'tag' && (
+                  <div className="ml-5 flex items-start gap-2">
+                    <Select
+                      value={tagFilterOp}
+                      onChange={e => setTagFilterOp(e.target.value as RoutingClauseOp)}
+                      className="w-[100px]"
+                    >
+                      <option value="all_of">All of</option>
+                      <option value="any_of">Any of</option>
+                      <option value="none_of">None of</option>
+                    </Select>
+                    <div className="flex-1">
+                      <TagChipInput
+                        tags={tagFilterTags}
+                        onChange={setTagFilterTags}
+                        suggestions={workerTagPool}
+                        placeholder="worker tag (e.g. windows)…"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -467,7 +558,14 @@ export function UpgradeModal({
             <Button variant="secondary" onClick={onClose}>Cancel</Button>
             <Button
               variant={mode === 'now' ? 'success' : 'default'}
-              disabled={mode === 'schedule' && scheduleType === 'once' && !onceDate}
+              disabled={
+                (mode === 'schedule' && scheduleType === 'once' && !onceDate)
+                // Bug #97: don't let the user submit a half-set
+                // worker-mode choice — "specific" needs a worker,
+                // "tag" needs at least one tag in the clause.
+                || (mode === 'now' && workerMode === 'specific' && !selectedWorker)
+                || (mode === 'now' && workerMode === 'tag' && tagFilterTags.length === 0)
+              }
               onClick={handleConfirm}
             >
               {/* UX.8: confirm-button label mirrors the action verb. */}

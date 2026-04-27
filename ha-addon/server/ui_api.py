@@ -2014,6 +2014,20 @@ async def start_compile(request: web.Request) -> web.Response:
 
     targets_param = body.get("targets", "all")
     pinned_client_id = body.get("pinned_client_id")  # optional: pin job to specific worker
+    # Bug #97: optional per-job worker_tag_filter from the Upgrade
+    # modal's "Tag expression" worker-selection radio. Same shape as a
+    # routing-rule clause — ``{"op": "all_of"|"any_of"|"none_of",
+    # "tags": [...]}``. Validated minimally here; the eligibility
+    # builder accepts any well-shaped clause and skips malformed ones.
+    worker_tag_filter_raw = body.get("worker_tag_filter")
+    worker_tag_filter: dict | None = None
+    if isinstance(worker_tag_filter_raw, dict):
+        op = worker_tag_filter_raw.get("op")
+        tags = worker_tag_filter_raw.get("tags")
+        if op in ("all_of", "any_of", "none_of") and isinstance(tags, list):
+            cleaned_tags = [str(t).strip() for t in tags if isinstance(t, str) and str(t).strip()]
+            if cleaned_tags:
+                worker_tag_filter = {"op": op, "tags": cleaned_tags}
     # #16: optional per-run ESPHome version override. Falls back to the global
     # default from set_esphome_version when not provided. We do NOT mutate the
     # global default — this is a per-job override only.
@@ -2098,6 +2112,7 @@ async def start_compile(request: web.Request) -> web.Response:
             ota_address=ota_addresses.get(target),
             pinned_client_id=pinned_client_id,
             config_hash=_get_head(Path(cfg.config_dir)),
+            worker_tag_filter=worker_tag_filter,
         )
         if job is not None:
             # Bug 27: flag the job as triggered by a Home Assistant
