@@ -22,12 +22,16 @@ concurrency:
   group: compile-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # BD.2 (WORKITEMS-1.6.2): floor of 2026.4.0 — required by
-  # esphome.bundle.ConfigBundleCreator which scanner.create_bundle
-  # depends on. constants.MIN_ESPHOME_VERSION encodes the same floor
-  # for the runtime install path; keep the two in sync when bumping.
-  ESPHOME_VERSION: "2026.4.2"
+# CI.3 — ESPHome version axis. The pinned floor (`2026.4.0`) is the
+# release `BD.2` declared as required by ConfigBundleCreator; the
+# `latest_stable` axis tracks the version we ship with — bumped per
+# release. Upstream API regressions (the "2026.4.0 reshaped the API"
+# class of bug from 1.5) land as a CI red on the `latest_stable` axis
+# while the pinned axis anchors reproducibility.
+#
+# Keep `MIN_ESPHOME_VERSION` in `ha-addon/server/constants.py` in sync
+# with the pinned-floor axis — the runtime install path enforces the
+# same floor.
 
 jobs:
   # Test the client Docker image (used by remote workers)
@@ -37,6 +41,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        esphome_version:
+          - "2026.4.0"  # pinned floor — `MIN_ESPHOME_VERSION`
+          - "2026.4.2"  # latest stable shipped (bump per release)
         target:
           - esp8266-arduino
           - esp32-arduino
@@ -65,17 +72,17 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/esphome-compile-cache
-          key: pio-${{ matrix.target }}-${{ env.ESPHOME_VERSION }}
+          key: pio-${{ matrix.target }}-${{ matrix.esphome_version }}
           restore-keys: pio-${{ matrix.target }}-
 
-      - name: Compile ${{ matrix.target }}
+      - name: Compile ${{ matrix.target }} on ESPHome ${{ matrix.esphome_version }}
         run: |
           docker run --rm \
             --entrypoint /bin/bash \
             -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config" \
             -v /tmp/esphome-compile-cache:/esphome-versions \
             esphome-dist-client \
-            -c "pip install --no-cache-dir 'esphome==${{ env.ESPHOME_VERSION }}' && esphome compile /config/${{ matrix.target }}.yaml"
+            -c "pip install --no-cache-dir 'esphome==${{ matrix.esphome_version }}' && esphome compile /config/${{ matrix.target }}.yaml"
 
   # Test the server Docker image (used by local worker)
   compile-server:
@@ -84,6 +91,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        esphome_version:
+          - "2026.4.0"
+          - "2026.4.2"
         # Test a subset on the server image — if client passes, server should too
         # Focus on the platforms that historically had issues (toolchain deps)
         target:
@@ -102,14 +112,14 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/esphome-compile-cache
-          key: pio-server-${{ matrix.target }}-${{ env.ESPHOME_VERSION }}
+          key: pio-server-${{ matrix.target }}-${{ matrix.esphome_version }}
           restore-keys: pio-server-${{ matrix.target }}-
 
-      - name: Compile ${{ matrix.target }}
+      - name: Compile ${{ matrix.target }} on ESPHome ${{ matrix.esphome_version }}
         run: |
           docker run --rm \
             --entrypoint /bin/bash \
             -v "${{ github.workspace }}/tests/fixtures/compile_targets:/config" \
             -v /tmp/esphome-compile-cache:/esphome-versions \
             esphome-dist-server \
-            -c "pip install --no-cache-dir 'esphome==${{ env.ESPHOME_VERSION }}' && esphome compile /config/${{ matrix.target }}.yaml"
+            -c "pip install --no-cache-dir 'esphome==${{ matrix.esphome_version }}' && esphome compile /config/${{ matrix.target }}.yaml"
