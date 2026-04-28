@@ -63,9 +63,13 @@ test('auto-commit toggle flips and persists after reopen', async ({ page }) => {
   // Toast confirms persistence.
   await expect(page.getByText('Setting saved')).toBeVisible();
 
-  // Close + reopen: drawer shows the persisted value.
+  // Close + reopen: drawer shows the persisted value. `exact: true` so
+  // the locator only matches the gear trigger and not the in-flight
+  // "Close settings" button while the drawer is mid-close-animation —
+  // both share the substring "Settings" in their accessible name and
+  // a non-strict match flakes whichever way the animation finishes.
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('switch', { name: 'Auto-commit on save' })).not.toBeChecked();
 });
 
