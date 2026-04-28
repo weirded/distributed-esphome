@@ -70,6 +70,8 @@ interface Options {
   onOpenCompileHistory: (target: string) => void;
   /** Bug #16: open the manual-commit dialog for this target. */
   onCommitChanges: (target: string) => void;
+  /** RC.1: open the read-only rendered-config viewer. */
+  onViewRenderedConfig: (target: string) => void;
   /**
    * #2 followup to QS.16: per-row hamburger open state is owned by
    * DevicesTab (not Radix's internal state) so it survives row re-mounts
@@ -152,6 +154,7 @@ export function useDeviceColumns(options: Options) {
     onOpenHistory,
     onOpenCompileHistory,
     onCommitChanges,
+    onViewRenderedConfig,
     menuOpenTarget,
     setMenuOpenTarget,
     onEditTags,
@@ -639,6 +642,7 @@ export function useDeviceColumns(options: Options) {
           onOpenHistory={onOpenHistory}
           onOpenCompileHistory={onOpenCompileHistory}
           onCommitChanges={onCommitChanges}
+          onViewRenderedConfig={onViewRenderedConfig}
           onMenuOpenChange={(o) => setMenuOpenTarget(o ? t.target : null)}
         />
       ),
@@ -659,6 +663,7 @@ export function useDeviceColumns(options: Options) {
     onOpenHistory,
     onOpenCompileHistory,
     onCommitChanges,
+    onViewRenderedConfig,
     menuOpenTarget,
     setMenuOpenTarget,
     onEditTags,

@@ -57,6 +57,9 @@ interface Props {
   /** Bug #16: open the manual-commit dialog for this target. Only
    * offered when the target has uncommitted changes. */
   onCommitChanges: (target: string) => void;
+  /** RC.1: open the read-only modal showing the YAML *as ESPHome will
+   *  compile it* (substitutions / packages / !secret resolved). */
+  onViewRenderedConfig: (target: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -74,6 +77,7 @@ function DeviceContextMenuImpl({
   onOpenHistory,
   onOpenCompileHistory,
   onCommitChanges,
+  onViewRenderedConfig,
   open,
   onOpenChange,
 }: Props) {
@@ -184,6 +188,12 @@ function DeviceContextMenuImpl({
             title={versioningEnabled ? undefined : 'Config versioning is off — enable it in Settings to record a history.'}
           >
             Config history…
+          </DropdownMenuItem>
+          {/* RC.1: open the read-only "what will ESPHome compile?"
+              view. Cheap to surface — runs `esphome config <yaml>`
+              server-side and caches the result keyed by mtime. */}
+          <DropdownMenuItem onClick={() => onViewRenderedConfig(t.target)}>
+            View rendered config…
           </DropdownMenuItem>
           {/* Bug #16: only shown when the target has uncommitted changes.
               Bug #111: and only when versioning is on — the "commit"

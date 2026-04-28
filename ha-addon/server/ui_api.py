@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 
 import aiohttp
@@ -1743,6 +1744,184 @@ async def validate_config(request: web.Request) -> web.Response:
     else:
         logger.warning("Validation failed for %s (exit %d)", target, proc.returncode or -1)
     return web.json_response({"success": success, "output": output})
+
+
+# ---------------------------------------------------------------------------
+# RC.1 — rendered-config endpoint
+# ---------------------------------------------------------------------------
+
+# RC.1: in-process LRU cache for rendered configs. Key = (filename,
+# file_mtime_ns, secrets_mtime_ns) so any save/commit on the file or its
+# secrets.yaml busts the entry automatically (a fresh stat returns a
+# different mtime → cache miss → fresh subprocess run). Capped at 32
+# entries with FIFO eviction so a long-running session doesn't grow it
+# unbounded. Single-process server so a plain dict is sufficient.
+_rendered_config_cache: "OrderedDict[tuple[str, int, int], tuple[bool, str]] | None" = None
+_RENDERED_CONFIG_CACHE_MAX = 32
+
+
+def _get_rendered_cache() -> "OrderedDict[tuple[str, int, int], tuple[bool, str]]":
+    """Lazy-init the module-level OrderedDict so test harnesses that
+    re-import this module land on a fresh cache."""
+    global _rendered_config_cache
+    if _rendered_config_cache is None:
+        _rendered_config_cache = OrderedDict()
+    return _rendered_config_cache
+
+
+def _rendered_cache_key(config_dir: str, filename: str) -> tuple[str, int, int]:
+    """Build the cache key for *filename* under *config_dir*. The
+    secrets.yaml mtime participates so a `!secret` value change re-runs
+    `esphome config` even when the device YAML is byte-identical."""
+    file_mtime = 0
+    secrets_mtime = 0
+    try:
+        file_path = safe_resolve(Path(config_dir), filename)
+        if file_path is not None and file_path.exists():
+            file_mtime = file_path.stat().st_mtime_ns
+    except Exception:
+        file_mtime = 0
+    try:
+        secrets_path = Path(config_dir) / "secrets.yaml"
+        if secrets_path.exists():
+            secrets_mtime = secrets_path.stat().st_mtime_ns
+    except Exception:
+        secrets_mtime = 0
+    return (filename, file_mtime, secrets_mtime)
+
+
+@routes.get("/ui/api/targets/{filename}/rendered-config")
+async def get_rendered_config(request: web.Request) -> web.Response:
+    """RC.1 — return the YAML *as ESPHome will compile it* for *filename*.
+
+    Runs ``esphome config <abs-path>`` (same venv-binary discovery as
+    ``/ui/api/validate``), captures stdout (the rendered YAML on
+    success) or the captured output (validation/parse errors on
+    failure), and returns ``{"success": bool, "output": str,
+    "cached": bool}``.
+
+    The rendered output resolves ``!include`` / ``!secret`` /
+    ``substitutions:`` / ``packages:`` / ``<<: *anchor`` merges to
+    their final values — including plaintext ``!secret`` values, which
+    is exactly the diagnostic context the user wants but means the
+    response *must not* be logged server-side. Logger calls below
+    intentionally never reference ``output``.
+    """
+    filename = request.match_info["filename"]
+    cfg = _cfg(request)
+    config_path = safe_resolve(Path(cfg.config_dir), filename)
+    if config_path is None or not config_path.exists():
+        return json_error("Target not found", 404)
+
+    # secrets.yaml itself isn't a device config — same skip the
+    # validate endpoint applies for the same reason.
+    if Path(filename).name == "secrets.yaml":
+        return web.json_response({
+            "success": True,
+            "output": (
+                "secrets.yaml holds !secret values — there is no device "
+                "config to render here. Open a device YAML to view its "
+                "rendered output.\n"
+            ),
+            "cached": False,
+            "skipped": True,
+        })
+
+    cache = _get_rendered_cache()
+    key = _rendered_cache_key(cfg.config_dir, filename)
+    hit = cache.get(key)
+    if hit is not None:
+        # LRU bump so the most recently viewed entries stay warmest.
+        cache.move_to_end(key)
+        success, output = hit
+        return web.json_response({"success": success, "output": output, "cached": True})
+
+    # Same ESPHome-binary discovery as /ui/api/validate so a pinned
+    # device's rendered view matches what its compile would produce.
+    import scanner as _scanner  # noqa: PLC0415
+    from scanner import _get_installed_esphome_version  # noqa: PLC0415
+    meta = read_device_meta(cfg.config_dir, filename)
+    pin = meta.get("pin_version")
+    if _scanner._esphome_ready.is_set() and _scanner._server_esphome_bin:
+        esphome_bin = _scanner._server_esphome_bin
+    else:
+        esphome_bin = "esphome"
+    installed_binary_version = _get_installed_esphome_version()
+
+    if not pin and not _scanner._esphome_ready.is_set():
+        import shutil as _shutil  # noqa: PLC0415
+        if _shutil.which("esphome") is None:
+            return web.json_response(
+                {
+                    "success": False,
+                    "output": "ESPHome still installing, please retry in a moment",
+                    "cached": False,
+                },
+                status=503,
+            )
+
+    if pin and pin != installed_binary_version:
+        try:
+            from pathlib import Path as _Path  # noqa: PLC0415
+            import sys as _sys  # noqa: PLC0415
+            if "/app/client" not in _sys.path:
+                _sys.path.insert(0, "/app/client")
+            from version_manager import VersionManager  # noqa: PLC0415
+            vm = VersionManager(
+                versions_base=_Path("/data/esphome-versions"),
+                max_versions=5,
+            )
+            logger.info("Rendering %s: ensuring ESPHome %s is installed for pinned version", filename, pin)
+            esphome_bin = await asyncio.get_event_loop().run_in_executor(
+                None, vm.ensure_version, pin,
+            )
+        except Exception as exc:
+            logger.warning("Could not install pinned ESPHome %s for rendering: %s", pin, exc)
+
+    logger.info("Rendering %s via %s config (direct subprocess)", filename, esphome_bin)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            esphome_bin, "config", str(config_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cfg.config_dir,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        output = stdout.decode("utf-8", errors="replace") if stdout else ""
+        success = proc.returncode == 0
+    except asyncio.TimeoutError:
+        return web.json_response(
+            {"success": False, "output": "Rendering timed out after 60 seconds", "cached": False},
+            status=200,
+        )
+    except FileNotFoundError:
+        return web.json_response(
+            {"success": False, "output": "esphome binary not found on the server", "cached": False},
+            status=500,
+        )
+    except Exception as exc:
+        logger.exception("Render subprocess failed for %s", filename)
+        return web.json_response(
+            {"success": False, "output": f"Internal error: {exc}", "cached": False},
+            status=500,
+        )
+
+    if success:
+        # NEVER log the rendered output — it carries plaintext !secret
+        # values. Length is fine; content is not.
+        logger.info("Rendered config produced for %s (%d bytes)", filename, len(output))
+    else:
+        logger.warning("Render failed for %s (exit %d)", filename, proc.returncode or -1)
+
+    # Cache after the run so the same edit-session's repeat opens are
+    # subprocess-free. Successful AND failed renders both cache so a
+    # known-bad YAML doesn't burn a fresh subprocess on every retry.
+    cache[key] = (success, output)
+    cache.move_to_end(key)
+    while len(cache) > _RENDERED_CONFIG_CACHE_MAX:
+        cache.popitem(last=False)
+
+    return web.json_response({"success": success, "output": output, "cached": False})
 
 
 # ---------------------------------------------------------------------------

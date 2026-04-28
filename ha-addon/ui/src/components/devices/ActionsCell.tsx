@@ -47,6 +47,8 @@ interface Props {
   onOpenCompileHistory: (target: string) => void;
   /** Bug #16: open the manual-commit dialog for this target. */
   onCommitChanges: (target: string) => void;
+  /** RC.1: open the read-only rendered-config viewer. */
+  onViewRenderedConfig: (target: string) => void;
   onMenuOpenChange: (open: boolean) => void;
 }
 
@@ -67,6 +69,7 @@ function ActionsCellImpl({
   onOpenHistory,
   onOpenCompileHistory,
   onCommitChanges,
+  onViewRenderedConfig,
   onMenuOpenChange,
 }: Props) {
   // Bug #32: highlight the Upgrade button when the YAML has drifted.
@@ -108,6 +111,7 @@ function ActionsCellImpl({
         onOpenHistory={onOpenHistory}
         onOpenCompileHistory={onOpenCompileHistory}
         onCommitChanges={onCommitChanges}
+        onViewRenderedConfig={onViewRenderedConfig}
         open={menuOpen}
         onOpenChange={onMenuOpenChange}
       />

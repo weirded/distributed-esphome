@@ -582,6 +582,36 @@ export async function getApiKey(filename: string): Promise<string> {
  * Bug #25: previously this enqueued a validate-only job on the queue and
  * any worker could pick it up; now it runs directly on the server.
  */
+/**
+ * RC.1 — fetch the YAML *as ESPHome will compile it* for *target*.
+ *
+ * Returns the rendered YAML on success or the captured stdout (which
+ * holds the parser/validator's error message) on failure. The
+ * ``cached`` field is informational: the cache key is `(filename, file
+ * mtime, secrets.yaml mtime)` so any save/commit on either file busts
+ * the entry automatically.
+ *
+ * IMPORTANT: the response carries plaintext ``!secret`` values. Don't
+ * persist it client-side beyond the modal's lifetime.
+ */
+export async function getRenderedConfig(target: string): Promise<{ success: boolean; output: string; cached: boolean }> {
+  const r = await apiFetch(`./ui/api/targets/${encodeURIComponent(target)}/rendered-config`);
+  let data: { success?: boolean; output?: string; cached?: boolean; error?: string };
+  try {
+    data = await r.json() as typeof data;
+  } catch {
+    if (!r.ok) throw new Error(`rendering failed (HTTP ${r.status})`);
+    throw new Error('rendered-config response was not valid JSON');
+  }
+  if (!r.ok && r.status !== 200) {
+    // 503 (ESPHome installing) carries a useful body; surface it
+    // through the same shape so the modal can render the message.
+    if (data.output) return { success: false, output: data.output, cached: false };
+    throw new Error(data.error || `rendering failed (HTTP ${r.status})`);
+  }
+  return { success: !!data.success, output: data.output || '', cached: !!data.cached };
+}
+
 export async function validateConfig(target: string): Promise<{ success: boolean; output: string }> {
   // Bespoke handling: validate may return non-OK status with a useful `output`
   // body (e.g. "config has 3 errors..."). We fall through to .output on error.

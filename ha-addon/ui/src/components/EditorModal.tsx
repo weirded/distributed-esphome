@@ -38,6 +38,9 @@ interface Props {
   /** AV.6: callback when the user clicks the "History" toolbar button.
    *  Parent opens the per-file HistoryPanel drawer. */
   onOpenHistory?: (target: string) => void;
+  /** RC.1: callback when the user clicks the "View rendered" toolbar
+   *  button. Parent opens the read-only rendered-config modal. */
+  onViewRenderedConfig?: (target: string) => void;
   monacoTheme?: string;
   esphomeVersion?: string | null;
   /**
@@ -53,7 +56,7 @@ interface Props {
 // Track dirty-line decorations (module-level so the callback closure can access it)
 let _dirtyDecorationIds: string[] = [];
 
-export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, onOpenHistory, monacoTheme = 'vs-dark', esphomeVersion, reloadNonce = 0 }: Props) {
+export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onCompile, onOpenHistory, onViewRenderedConfig, monacoTheme = 'vs-dark', esphomeVersion, reloadNonce = 0 }: Props) {
   const isOpen = target !== null;
   const [content, setContent] = useState('');
   const [, setLoading] = useState(false);
@@ -358,6 +361,20 @@ export function EditorModal({ target, onClose, onSaved, onToast, onValidate, onC
               title="View version history + diff for this file"
             >
               History
+            </Button>
+          )}
+          {/* RC.1: open the read-only "what will ESPHome compile?" view.
+              Only offered for real device YAMLs — secrets.yaml has no
+              device config to render, and the .pending. stub files
+              aren't on disk yet. */}
+          {onViewRenderedConfig && target && target !== 'secrets.yaml' && !target.startsWith('.pending.') && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onViewRenderedConfig(target)}
+              title="Show the YAML as ESPHome will compile it (substitutions / packages / !secret resolved)"
+            >
+              View rendered
             </Button>
           )}
           {onValidate && target && target !== 'secrets.yaml' && (

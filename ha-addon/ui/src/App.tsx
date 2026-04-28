@@ -42,6 +42,7 @@ import { DeviceLogModal } from './components/DeviceLogModal';
 import { DevicesTab, RenameModal } from './components/DevicesTab';
 import { NewDeviceModal } from './components/NewDeviceModal';
 import { UpgradeModal } from './components/UpgradeModal';
+import { RenderedConfigModal } from './components/RenderedConfigModal';
 // ScheduleModal retired in #22 — absorbed into the unified UpgradeModal.
 import { SchedulesTab } from './components/SchedulesTab';
 import { EditorModal } from './components/EditorModal';
@@ -175,6 +176,11 @@ export default function App() {
   const [commitDialogTarget, setCommitDialogTarget] = useState<string | null>(null);
   const [commitDialogMessage, setCommitDialogMessage] = useState('');
   const [commitDialogBusy, setCommitDialogBusy] = useState(false);
+  // RC.1: read-only "rendered config" viewer. ``null`` = closed; the
+  // string is the target filename. Modal fetches /rendered-config on
+  // open and discards the output on close — the response carries
+  // plaintext !secret values, so we never persist it.
+  const [renderedConfigTarget, setRenderedConfigTarget] = useState<string | null>(null);
   // QS.6: SWR's default compare (stable-hash) already prevents re-renders
   // when polled data is structurally unchanged. The custom JSON.stringify
   // compare we used to have was strictly worse — O(n) serialization of the
@@ -877,6 +883,7 @@ export default function App() {
             onOpenHistory={(target) => setHistoryTarget(target)}
             onOpenCompileHistory={(target) => setCompileHistoryTarget(target)}
             onCommitChanges={(target) => { setCommitDialogMessage(''); setCommitDialogTarget(target); }}
+            onViewRenderedConfig={(target) => setRenderedConfigTarget(target)}
             onRefresh={() => mutateDevices()}
           />
         )}
@@ -1023,6 +1030,7 @@ export default function App() {
           // happens AFTER the save.
           onCompile={(target) => handleOpenUpgradeModal(target)}
           onOpenHistory={(target) => setHistoryTarget(target)}
+          onViewRenderedConfig={(target) => setRenderedConfigTarget(target)}
           monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
           esphomeVersion={esphomeVersions.selected ?? esphomeVersions.detected ?? undefined}
           // Bug #31: bump to trigger a re-fetch after History Restore.
@@ -1244,6 +1252,19 @@ export default function App() {
               }
             }}
             onClose={() => setUpgradeModalTarget(null)}
+          />
+        );
+      })()}
+
+      {/* RC.1: read-only YAML viewer for `esphome config <yaml>` output. */}
+      {renderedConfigTarget && (() => {
+        const t = targets.find(x => x.target === renderedConfigTarget);
+        return (
+          <RenderedConfigModal
+            target={renderedConfigTarget}
+            displayName={t?.friendly_name || stripYaml(renderedConfigTarget)}
+            monacoTheme={theme === 'light' ? 'vs' : 'vs-dark'}
+            onClose={() => setRenderedConfigTarget(null)}
           />
         );
       })()}
