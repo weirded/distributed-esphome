@@ -514,3 +514,93 @@ async def test_eligibility_isolates_stalemate_when_only_one_worker_qualifies(
     assert windows_check(job) is True
     assert macos_check(job) is False
     assert debian_check(job) is False
+
+
+# ---------------------------------------------------------------------------
+# Bug #110 — bypass_routing_rules per-job override
+# ---------------------------------------------------------------------------
+
+
+async def test_bypass_routing_rules_clears_block_in_re_eval(
+    tmp_path: Path, config_dir: Path,
+) -> None:
+    """A job with ``bypass_routing_rules=True`` must never go BLOCKED in
+    the fleet-wide re-eval sweep, even when the active rule disqualifies
+    every online worker."""
+    app = await _make_app(tmp_path, config_dir)
+    _write_yaml(config_dir, "garage.yaml", tags=["ratgdo"])
+    _add_worker(app, hostname="macdaddy", tags=["macos"])
+    app["routing_rule_store"].create_rule(Rule(
+        id="windows-only",
+        name="Garage Doors on Windows",
+        severity="required",
+        device_match=[Clause(op="any_of", tags=["ratgdo"])],
+        worker_match=[Clause(op="all_of", tags=["windows"])],
+    ))
+    # Without the override, the job would flip to BLOCKED on re-eval.
+    job = await _enqueue(app, "garage.yaml")
+    job.bypass_routing_rules = True
+    changed = await re_evaluate_routing(app)
+    # No change because the job is allowed to stay PENDING.
+    assert changed == 0
+    assert job.state == JobState.PENDING
+    assert job.blocked_reason is None
+
+
+async def test_bypass_routing_rules_lets_ineligible_worker_claim(
+    tmp_path: Path, config_dir: Path,
+) -> None:
+    """Per-worker claim_next predicate ignores routing rules when
+    ``bypass_routing_rules`` is set, but still honours the user's
+    explicit ``worker_tag_filter`` constraint."""
+    from routing_eligibility import build_claim_eligibility
+    app = await _make_app(tmp_path, config_dir)
+    _write_yaml(config_dir, "garage.yaml", tags=["ratgdo"])
+    app["routing_rule_store"].create_rule(Rule(
+        id="windows-only",
+        name="Garage Doors on Windows",
+        severity="required",
+        device_match=[Clause(op="any_of", tags=["ratgdo"])],
+        worker_match=[Clause(op="all_of", tags=["windows"])],
+    ))
+
+    job = await _enqueue(app, "garage.yaml")
+    macos_check = build_claim_eligibility(app, worker_tags=["macos"])
+    # Without bypass: macOS worker is rejected by the rule.
+    assert macos_check(job) is False
+    # With bypass: macOS worker is now allowed to claim.
+    job.bypass_routing_rules = True
+    macos_check = build_claim_eligibility(app, worker_tags=["macos"])
+    assert macos_check(job) is True
+
+    # Bypass does NOT override an explicit user tag filter — the
+    # filter is the user's other constraint, not the rule's.
+    job.worker_tag_filter = {"op": "all_of", "tags": ["linux"]}
+    macos_check = build_claim_eligibility(app, worker_tags=["macos"])
+    assert macos_check(job) is False
+    # Linux worker satisfies both the (bypassed) rule and the filter.
+    linux_check = build_claim_eligibility(app, worker_tags=["linux"])
+    assert linux_check(job) is True
+
+
+def test_bypass_field_round_trips_through_to_dict(tmp_path: Path) -> None:
+    """``bypass_routing_rules`` survives a queue persist/load cycle."""
+    q = JobQueue(queue_file=tmp_path / "queue.json")
+    job = Job(
+        id="job-1",
+        target="kitchen.yaml",
+        esphome_version="2026.3.2",
+        state=JobState.PENDING,
+        run_id="r1",
+        bypass_routing_rules=True,
+    )
+    d = job.to_dict()
+    assert d["bypass_routing_rules"] is True
+    revived = Job.from_dict(d)
+    assert revived.bypass_routing_rules is True
+    # Persisted shape: a fresh queue load picks up the flag.
+    q._jobs[job.id] = job
+    q._persist()
+    q2 = JobQueue(queue_file=tmp_path / "queue.json")
+    q2.load()
+    assert q2._jobs[job.id].bypass_routing_rules is True

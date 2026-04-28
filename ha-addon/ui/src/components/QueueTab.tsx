@@ -533,13 +533,17 @@ export function QueueTab({
               <Button variant="destructive" size="sm" onClick={() => onCancel([job.id])}>Cancel</Button>
             )}
             {canRetry && (
-              // #20: successful jobs get "Rerun" (green) since "Retry" implies
-              // failure recovery — re-running a successful job is just a
-              // re-compile, not a retry. Failed/timed-out jobs keep "Retry"
-              // (warn / amber).
-              isJobSuccessful(job)
-                ? <Button variant="success" size="sm" onClick={() => onRetry([job.id])}>Rerun</Button>
-                : <Button variant="warn" size="sm" onClick={() => onRetry([job.id])}>Retry</Button>
+              // Bug #108: every "redo this job" action reads as "Rerun" in
+              // the UI; success rows keep success-green, failure rows
+              // surface the same verb in warn-amber so the colour still
+              // signals the source state.
+              <Button
+                variant={isJobSuccessful(job) ? 'success' : 'warn'}
+                size="sm"
+                onClick={() => onRetry([job.id])}
+              >
+                Rerun
+              </Button>
             )}
             {canDownload && variants.length > 0 && (
               <FirmwareDownloadMenu
@@ -618,12 +622,13 @@ export function QueueTab({
             )}
           </div>
           <div className="actions">
-            {/* Retry dropdown — UX.4: rerun-class actions use the green
-                success colors (same as per-row Retry/Rerun buttons).
-                Orange/amber is reserved for genuine warn states. */}
+            {/* Rerun dropdown — UX.4: rerun-class actions use the green
+                success colors (same as per-row Rerun buttons). Orange/amber
+                is reserved for genuine warn states.
+                Bug #108: "Rerun" everywhere — was "Retry" historically. */}
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1 rounded-lg border border-transparent bg-[#14532d] px-2.5 h-7 text-[0.8rem] font-medium text-[#4ade80] hover:bg-[#166534] cursor-pointer">
-                Retry <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                Rerun <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
@@ -632,14 +637,14 @@ export function QueueTab({
                     disabled={!hasFailedJobs}
                     title={!hasFailedJobs ? 'No failed jobs in the current queue' : undefined}
                   >
-                    Retry All Failed
+                    Rerun All Failed
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={handleRetrySelected}
                     disabled={queue.length === 0}
                     title={queue.length === 0 ? 'Queue is empty' : undefined}
                   >
-                    Retry Selected
+                    Rerun Selected
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem

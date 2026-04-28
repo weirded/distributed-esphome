@@ -2049,6 +2049,13 @@ async def start_compile(request: web.Request) -> web.Response:
     # the user downloads it from the Queue tab. Mutually exclusive with
     # validate_only (which isn't exposed through this endpoint anyway).
     download_only = bool(body.get("download_only", False))
+    # Bug #110: per-job override flag for routing rules. Set when the
+    # user picked a Specific worker / Tag expression that conflicts
+    # with active rules and confirmed the warning in the Upgrade modal.
+    # The eligibility checks (BLOCKED-vs-PENDING re-eval and the
+    # per-worker claim_next predicate) ignore routing rules for jobs
+    # carrying this flag; the user's tag-filter / pin still applies.
+    bypass_routing_rules = bool(body.get("bypass_routing_rules", False))
     cfg = _cfg(request)
     queue = request.app["queue"]
     device_poller = request.app.get("device_poller")
@@ -2125,6 +2132,7 @@ async def start_compile(request: web.Request) -> web.Response:
             pinned_client_id=pinned_client_id,
             config_hash=_get_head(Path(cfg.config_dir)),
             worker_tag_filter=worker_tag_filter,
+            bypass_routing_rules=bypass_routing_rules,
         )
         if job is not None:
             # Bug 27: flag the job as triggered by a Home Assistant

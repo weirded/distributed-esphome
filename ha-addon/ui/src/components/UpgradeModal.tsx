@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import useSWR from 'swr';
 import {
   Dialog,
   DialogContent,
@@ -10,7 +11,9 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
 import { TagChipInput } from './ui/tag-chip-input';
-import type { Worker, RoutingClauseOp } from '../types';
+import { getRoutingRules } from '../api/client';
+import { evaluateClause } from '../utils/routing';
+import type { RoutingClause, RoutingRule, Worker, RoutingClauseOp } from '../types';
 
 const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -108,6 +111,23 @@ interface Props {
   /** If true, only show the schedule UI — hide mode radios and worker/version pickers.
    *  Used for bulk "Schedule Selected" where version/worker are per-device concerns. */
   scheduleOnly?: boolean;
+  /** Bug #109: when the user reruns an existing queue job, App.tsx
+   *  passes the original job's parameters here so the modal opens with
+   *  the same worker / version / action / tag-filter pre-selected. The
+   *  user can tweak any field before submitting. All fields optional;
+   *  absent values fall back to the same defaults a fresh upgrade uses. */
+  seed?: {
+    pinnedClientId?: string | null;
+    workerTagFilter?: { op: RoutingClauseOp; tags: string[] } | null;
+    esphomeVersion?: string | null;
+    action?: 'upgrade-now' | 'download-now';
+  };
+  /** Bug #110: tag-string lists for each affected target (one entry per
+   *  filename in App.tsx's `upgradeModalTarget.targets`). Empty array
+   *  is treated as "no per-target tags known" — the conflict check
+   *  short-circuits to "no conflict". App.tsx materialises this from
+   *  the matched `Target.tags` strings, parsed/trimmed/deduped. */
+  affectedTargetTags?: string[][];
   onUpgradeNow: (params: {
     pinnedClientId: string | null;
     esphomeVersion: string | null;
@@ -118,6 +138,11 @@ interface Props {
      *  worker-selection radio. Mutually exclusive with
      *  ``pinnedClientId`` at the UI level. */
     workerTagFilter?: { op: RoutingClauseOp; tags: string[] } | null;
+    /** Bug #110: true when the user confirmed the routing-rule
+     *  conflict warning. The server-side eligibility check ignores
+     *  global / per-device routing rules for this job; the user's
+     *  pin / tag-filter still applies. */
+    bypassRoutingRules?: boolean;
   }) => void;
   /**
    * Save a recurring cron schedule. `version` is the user's pin choice —
@@ -144,6 +169,8 @@ export function UpgradeModal({
   currentOnce,
   defaultMode = 'now',
   scheduleOnly = false,
+  seed,
+  affectedTargetTags = [],
   onUpgradeNow,
   onSaveSchedule,
   onSaveOnce,
@@ -152,22 +179,37 @@ export function UpgradeModal({
 }: Props) {
   void _target;
 
+  // Bug #110: fetch the active global routing rules so we can warn
+  // when the user's worker / tag-expression choice conflicts with
+  // them. SWR scoped to this modal so a fresh rule list is loaded
+  // every time the modal opens (rules change rarely; cheap fetch).
+  const { data: routingRules } = useSWR<RoutingRule[]>('routing-rules', getRoutingRules, {
+    revalidateOnFocus: false,
+  });
+
   // --- Shared state: worker + version ---
   const eligibleWorkers = workers
     .filter(w => w.online && !w.disabled && (w.max_parallel_jobs ?? 0) > 0)
     .slice()
     .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: 'base' }));
 
-  const [selectedWorker, setSelectedWorker] = useState<string>('');
   // Bug #97: worker-selection radio with three modes:
   //   any         → no filter; routing rules + claim_next decide
   //   specific    → pin to one worker_id (back-compat with the old
   //                 single dropdown)
   //   tag         → ad-hoc per-job worker_tag_filter (op + tags)
   type WorkerMode = 'any' | 'specific' | 'tag';
-  const [workerMode, setWorkerMode] = useState<WorkerMode>('any');
-  const [tagFilterOp, setTagFilterOp] = useState<RoutingClauseOp>('all_of');
-  const [tagFilterTags, setTagFilterTags] = useState<string[]>([]);
+  // Bug #109: derive the initial worker mode from the rerun seed when
+  // present — pinned_client_id wins, then worker_tag_filter, else any.
+  const initialWorkerMode: WorkerMode = (() => {
+    if (seed?.pinnedClientId) return 'specific';
+    if (seed?.workerTagFilter && seed.workerTagFilter.tags.length > 0) return 'tag';
+    return 'any';
+  })();
+  const [selectedWorker, setSelectedWorker] = useState<string>(seed?.pinnedClientId ?? '');
+  const [workerMode, setWorkerMode] = useState<WorkerMode>(initialWorkerMode);
+  const [tagFilterOp, setTagFilterOp] = useState<RoutingClauseOp>(seed?.workerTagFilter?.op ?? 'all_of');
+  const [tagFilterTags, setTagFilterTags] = useState<string[]>(seed?.workerTagFilter?.tags ?? []);
   // Worker-tag autocomplete pool — same union the
   // RoutingRuleBuilder's worker side uses.
   const workerTagPool = (() => {
@@ -180,7 +222,9 @@ export function UpgradeModal({
   // #31: selectedVersion = '' means "Latest" (no pin / use current default at
   // run time). If the device is currently pinned, default to that pin. Otherwise
   // default to "Latest" so the schedule auto-updates with new ESPHome releases.
-  const [selectedVersion, setSelectedVersion] = useState<string>(pinnedVersion ?? '');
+  // Bug #109: when reruning a previous job, seed the version with the one
+  // the original job ran against so the user sees what they're reusing.
+  const [selectedVersion, setSelectedVersion] = useState<string>(seed?.esphomeVersion ?? pinnedVersion ?? '');
 
   const versionList: string[] = [];
   if (defaultEsphomeVersion) versionList.push(defaultEsphomeVersion);
@@ -210,6 +254,9 @@ export function UpgradeModal({
   const initialAction: Action = (() => {
     if (scheduleOnly) return currentOnce ? 'schedule-once' : 'schedule-recurring';
     if (defaultMode === 'schedule') return currentOnce ? 'schedule-once' : 'schedule-recurring';
+    // Bug #109: seed.action lets a rerun preserve "Download Now" vs the
+    // default "Upgrade Now" so the same job intent comes back.
+    if (seed?.action === 'download-now') return 'download-now';
     return 'upgrade-now';
   })();
   const [action, setAction] = useState<Action>(initialAction);
@@ -261,6 +308,82 @@ export function UpgradeModal({
   // For schedule saves: '' ("Latest") → null (unpin), otherwise the string.
   const scheduleVersion: string | null = selectedVersion || null;
 
+  // --- Bug #110: routing-rule conflict detection ---
+  // Mirror the server-side conditional-rule semantics from
+  // ``routing.evaluate_rule``: a rule "fires" for a (device, worker)
+  // pair when its ``device_match`` clauses all hold for the device's
+  // tags; once it fires, the worker must satisfy the rule's
+  // ``worker_match``. We surface a warning when the user's chosen
+  // worker (``specific``) or tag-expression (``tag``) would *not*
+  // satisfy at least one rule that fires for at least one affected
+  // target. Confirm under the warning sends ``bypass_routing_rules``
+  // through to the server so the job is enqueued anyway.
+  function clauseSatisfiesAllOf(clause: RoutingClause, candidateOp: RoutingClauseOp, candidateTags: string[]): boolean {
+    // Returns true when every worker satisfying the candidate clause
+    // also satisfies the rule clause. Used for ``tag`` mode where the
+    // user's clause defines a *set* of acceptable workers.
+    //
+    // Conservative rule: we only accept "satisfies" for the trivial
+    // cases — `all_of` candidate that includes the rule's required
+    // tags. For everything else we drop into the "is there any online
+    // worker that satisfies both" fallback below.
+    if (candidateOp === 'all_of' && clause.op === 'all_of') {
+      return clause.tags.every(t => candidateTags.includes(t));
+    }
+    return false;
+  }
+  function tagFilterCanSatisfyRuleClause(
+    clause: RoutingClause,
+    candidateOp: RoutingClauseOp,
+    candidateTags: string[],
+  ): boolean {
+    if (clauseSatisfiesAllOf(clause, candidateOp, candidateTags)) return true;
+    // Fallback: search the live worker pool for one that satisfies
+    // both the user's filter AND the rule's clause. If at least one
+    // such worker exists, the chosen tag-expression is compatible
+    // with this rule clause — no conflict.
+    const candidateClause: RoutingClause = { op: candidateOp, tags: candidateTags };
+    return eligibleWorkers.some(w => {
+      const wt = new Set(w.tags ?? []);
+      return evaluateClause(candidateClause, wt) && evaluateClause(clause, wt);
+    });
+  }
+  const conflictingRules: { rule: RoutingRule; targetIndex: number }[] = (() => {
+    if (mode !== 'now') return [];
+    if (!routingRules || routingRules.length === 0) return [];
+    if (workerMode === 'any') return [];
+    const out: { rule: RoutingRule; targetIndex: number }[] = [];
+    if (workerMode === 'specific') {
+      const w = workers.find(x => x.client_id === selectedWorker);
+      if (!w) return [];
+      const wt = new Set(w.tags ?? []);
+      affectedTargetTags.forEach((dt, idx) => {
+        const dtSet = new Set(dt);
+        for (const rule of routingRules) {
+          const fires = rule.device_match.every(c => evaluateClause(c, dtSet));
+          if (!fires) continue;
+          const ok = rule.worker_match.every(c => evaluateClause(c, wt));
+          if (!ok) out.push({ rule, targetIndex: idx });
+        }
+      });
+    } else if (workerMode === 'tag' && tagFilterTags.length > 0) {
+      affectedTargetTags.forEach((dt, idx) => {
+        const dtSet = new Set(dt);
+        for (const rule of routingRules) {
+          const fires = rule.device_match.every(c => evaluateClause(c, dtSet));
+          if (!fires) continue;
+          // Conflict when the user's tag filter cannot satisfy this
+          // rule's worker_match — i.e. no candidate worker the filter
+          // accepts also satisfies the rule.
+          const canSatisfy = rule.worker_match.every(c => tagFilterCanSatisfyRuleClause(c, tagFilterOp, tagFilterTags));
+          if (!canSatisfy) out.push({ rule, targetIndex: idx });
+        }
+      });
+    }
+    return out;
+  })();
+  const hasConflict = conflictingRules.length > 0;
+
   function handleConfirm() {
     if (mode === 'now') {
       // Bug #97: pinnedClientId vs workerTagFilter is decided by the
@@ -280,6 +403,11 @@ export function UpgradeModal({
         updatePin: nowAction === 'ota' && shouldUpdatePin ? selectedVersion : null,
         downloadOnly: nowAction === 'download',
         workerTagFilter: filter,
+        // Bug #110: when the user clicks confirm under a visible
+        // routing-rule conflict warning, treat the click as the "yes,
+        // override" answer and tell the server to bypass rules for
+        // this job. With no conflict, the flag stays absent.
+        bypassRoutingRules: hasConflict || undefined,
       });
     } else {
       if (scheduleType === 'once') {
@@ -426,6 +554,28 @@ export function UpgradeModal({
                   <strong>Pin update.</strong> Currently pinned to <code className="bg-[var(--surface)] px-1 rounded">{pinnedVersion}</code>. Upgrading will update the pin to <code className="bg-[var(--surface)] px-1 rounded">{selectedVersion}</code>.
                 </div>
               )}
+
+              {/* Bug #110: routing-rule conflict warning. Surfaces the
+                  rule names that fire for the affected device(s) but
+                  the chosen worker / tag-expression doesn't satisfy.
+                  Confirming "Upgrade" under this banner sends
+                  ``bypass_routing_rules: true`` so the server
+                  enqueues the job anyway. */}
+              {hasConflict && mode === 'now' && (
+                <div className="rounded-lg border border-[#fb923c] bg-[#3f1d1d] px-3 py-2 text-[12px] text-[#fb923c]">
+                  <strong>Routing-rule conflict.</strong>{' '}
+                  {workerMode === 'specific'
+                    ? 'The selected worker does not satisfy:'
+                    : 'No worker matching this tag expression satisfies:'}
+                  <ul className="mt-1 ml-4 list-disc">
+                    {Array.from(new Set(conflictingRules.map(c => c.rule.id))).map(id => {
+                      const r = conflictingRules.find(c => c.rule.id === id)!.rule;
+                      return <li key={id}><code className="bg-[var(--surface)] px-1 rounded">{r.name || id}</code></li>;
+                    })}
+                  </ul>
+                  <div className="mt-1.5">Confirming will override the rule for this run only — the rule itself is unchanged.</div>
+                </div>
+              )}
             </>
           )}
 
@@ -568,9 +718,11 @@ export function UpgradeModal({
               }
               onClick={handleConfirm}
             >
-              {/* UX.8: confirm-button label mirrors the action verb. */}
-              {action === 'upgrade-now' && 'Upgrade'}
-              {action === 'download-now' && 'Compile & Download'}
+              {/* UX.8: confirm-button label mirrors the action verb.
+                  Bug #110: when a rule conflict is showing, append
+                  "& override rules" so the click is unambiguous. */}
+              {action === 'upgrade-now' && (hasConflict ? 'Upgrade & override rules' : 'Upgrade')}
+              {action === 'download-now' && (hasConflict ? 'Download & override rules' : 'Compile & Download')}
               {action === 'schedule-recurring' && 'Save Schedule'}
               {action === 'schedule-once' && 'Save Schedule'}
             </Button>

@@ -361,6 +361,12 @@ export async function compile(
   // ``pinnedClientId`` at the UI level (the radio toggles between the
   // two modes); the server accepts both fields independently.
   workerTagFilter?: { op: 'all_of' | 'any_of' | 'none_of'; tags: string[] },
+  // Bug #110: when the user explicitly chose a worker / tag expression
+  // that conflicts with an active routing rule and confirmed the
+  // warning, this flag tells the server to ignore routing rules for
+  // *this* job. The user's tag-filter / pin still applies — those are
+  // their explicit constraint, not the rule's.
+  bypassRoutingRules?: boolean,
 ): Promise<CompileResponse> {
   const body: Record<string, unknown> = { targets };
   if (pinnedClientId) body.pinned_client_id = pinnedClientId;
@@ -369,6 +375,7 @@ export async function compile(
   if (workerTagFilter && workerTagFilter.tags.length > 0) {
     body.worker_tag_filter = workerTagFilter;
   }
+  if (bypassRoutingRules) body.bypass_routing_rules = true;
   return parseResponse<CompileResponse>(
     await apiFetch('./ui/api/compile', {
       method: 'POST',

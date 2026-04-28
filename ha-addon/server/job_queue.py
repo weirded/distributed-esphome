@@ -140,6 +140,16 @@ class Job:
     # eligibility predicate that drives global routing rules. None
     # means "any worker can claim" — the historical default.
     worker_tag_filter: Optional[dict] = None
+    # Bug #110: when the user explicitly chooses a Specific worker or
+    # Tag expression that conflicts with a global / per-device routing
+    # rule, the Upgrade modal surfaces the conflict and lets the user
+    # confirm the override. Setting this to True causes the eligibility
+    # checks (both the BLOCKED-vs-PENDING re-eval and per-worker
+    # claim_next predicate) to ignore routing rules for *this* job —
+    # ``pinned_client_id`` and ``worker_tag_filter`` are still honoured
+    # because they're the user's explicit constraint, not the rule's.
+    # Per-job override; never persisted as a default.
+    bypass_routing_rules: bool = False
     status_text: Optional[str] = None  # transient; not persisted
     _streaming_log: str = field(default="", repr=False)  # transient; not persisted
 
@@ -175,6 +185,7 @@ class Job:
             "selection_reason": self.selection_reason,
             "blocked_reason": self.blocked_reason,
             "worker_tag_filter": self.worker_tag_filter,
+            "bypass_routing_rules": self.bypass_routing_rules,
             "status_text": self.status_text,
             "duration_seconds": self.duration_seconds(),
         }
@@ -216,6 +227,7 @@ class Job:
             selection_reason=d.get("selection_reason"),
             blocked_reason=d.get("blocked_reason"),
             worker_tag_filter=d.get("worker_tag_filter"),
+            bypass_routing_rules=d.get("bypass_routing_rules", False),
         )
 
     def duration_seconds(self) -> Optional[float]:
@@ -425,6 +437,7 @@ class JobQueue:
         pinned_client_id: Optional[str] = None,
         config_hash: Optional[str] = None,
         worker_tag_filter: Optional[dict] = None,
+        bypass_routing_rules: bool = False,
     ) -> Optional[Job]:
         """
         Create and enqueue a new job for *target*.
@@ -477,6 +490,7 @@ class JobQueue:
                 followup.timeout_seconds = timeout_seconds
                 followup.run_id = run_id  # belongs to the latest request
                 followup.worker_tag_filter = worker_tag_filter
+                followup.bypass_routing_rules = bypass_routing_rules
                 self._persist()
                 logger.info(
                     "Updated existing follow-up job %s for target %s "
@@ -533,6 +547,7 @@ class JobQueue:
                 is_followup=is_followup,
                 config_hash=config_hash,
                 worker_tag_filter=worker_tag_filter,
+                bypass_routing_rules=bypass_routing_rules,
             )
             self._jobs[job.id] = job
             self._persist()

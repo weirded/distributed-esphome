@@ -296,7 +296,19 @@ export default function App() {
   // Bug #107: the bulk Upgrade dropdown (Upgrade All / Online / Outdated /
   // Selected) now routes through this modal too — `targets` carries the
   // affected set; single-target callers wrap in a 1-element array.
-  const [upgradeModalTarget, setUpgradeModalTarget] = useState<{ targets: string[]; displayName: string; defaultMode: 'now' | 'schedule' } | null>(null);
+  // Bug #109: `seed` carries the original job's parameters when the user
+  // reruns from the Queue or LogModal so the modal opens pre-populated.
+  const [upgradeModalTarget, setUpgradeModalTarget] = useState<{
+    targets: string[];
+    displayName: string;
+    defaultMode: 'now' | 'schedule';
+    seed?: {
+      pinnedClientId?: string | null;
+      workerTagFilter?: { op: 'all_of' | 'any_of' | 'none_of'; tags: string[] } | null;
+      esphomeVersion?: string | null;
+      action?: 'upgrade-now' | 'download-now';
+    };
+  } | null>(null);
   const [renameModalTarget, setRenameModalTarget] = useState<string | null>(null);
   // CD.4-CD.6: shared "create / duplicate" modal state. null = closed, object = open.
   // sourceTarget is set when duplicating an existing device.
@@ -395,6 +407,10 @@ export default function App() {
     // "Tag expression" worker-selection radio. Mutually exclusive
     // with pinnedClientId at the UI level.
     workerTagFilter?: { op: 'all_of' | 'any_of' | 'none_of'; tags: string[] } | null;
+    // Bug #110: true when the user confirmed the routing-rule
+    // conflict warning — the server will skip routing-rule
+    // eligibility checks for this job.
+    bypassRoutingRules?: boolean;
   }) {
     const ctx = upgradeModalTarget;
     if (!ctx) return;
@@ -416,6 +432,7 @@ export default function App() {
         params.esphomeVersion ?? undefined,
         params.downloadOnly ?? false,
         params.workerTagFilter ?? undefined,
+        params.bypassRoutingRules ?? undefined,
       );
       const versionSuffix = params.esphomeVersion ? ` (ESPHome ${params.esphomeVersion})` : '';
       const workerSuffix = params.pinnedClientId
@@ -462,13 +479,48 @@ export default function App() {
     }
   }
 
+  // Bug #109: open the UpgradeModal seeded with a previous job's
+  // worker / version / action / tag-filter so a single-job rerun goes
+  // through the same picker the user originally saw — but with the
+  // chance to tweak any field before re-submitting. Bulk reruns
+  // (Rerun All Failed / Rerun Selected) keep the immediate
+  // re-enqueue path because there's no single set of params to seed.
+  function rerunSingleJobViaModal(job: Job) {
+    const t = targets.find(x => x.target === job.target);
+    const displayName = t?.friendly_name || stripYaml(job.target);
+    setUpgradeModalTarget({
+      targets: [job.target],
+      displayName,
+      defaultMode: 'now',
+      seed: {
+        pinnedClientId: job.pinned_client_id ?? null,
+        workerTagFilter: job.worker_tag_filter ?? null,
+        esphomeVersion: job.esphome_version ?? null,
+        action: job.download_only ? 'download-now' : 'upgrade-now',
+      },
+    });
+  }
+
   async function handleRetryJobs(ids: string[]) {
+    // Bug #109: when the user reruns a single existing job from the
+    // Queue / LogModal, open the UpgradeModal pre-populated with that
+    // job's worker / version / action / tag-filter so the user can
+    // tweak before submitting. Bulk reruns (>1 id) keep the immediate
+    // re-enqueue path — there's no single set of params to seed a
+    // modal with.
+    if (ids.length === 1) {
+      const job = queue.find(j => j.id === ids[0]);
+      if (job) {
+        rerunSingleJobViaModal(job);
+        return;
+      }
+    }
     try {
       const data = await retryJobs(ids);
       if (data.retried > 0) {
         const msg = data.retried === 1
-          ? `Retrying ${stripYaml(queue.find(j => j.id === ids[0])?.target ?? ids[0])}`
-          : `Retrying ${data.retried} jobs`;
+          ? `Rerunning ${stripYaml(queue.find(j => j.id === ids[0])?.target ?? ids[0])}`
+          : `Rerunning ${data.retried} jobs`;
         addToast(msg, 'success');
       }
       mutateQueue();
@@ -481,7 +533,7 @@ export default function App() {
     try {
       const data = await retryAllFailed();
       if (data.retried > 0) {
-        const msg = data.retried === 1 ? 'Retrying 1 job' : `Retrying ${data.retried} failed jobs`;
+        const msg = data.retried === 1 ? 'Rerunning 1 job' : `Rerunning ${data.retried} failed jobs`;
         addToast(msg, 'success');
       }
       mutateQueue();
@@ -1113,6 +1165,26 @@ export default function App() {
       {upgradeModalTarget && (() => {
         const isMulti = upgradeModalTarget.targets.length > 1;
         const t = isMulti ? undefined : targets.find(x => x.target === upgradeModalTarget.targets[0]);
+        // Bug #110: materialise per-target tag lists so the modal can
+        // detect routing-rule conflicts client-side. parseTags
+        // duplicates the trim/dedupe logic the server applies on the
+        // YAML metadata round-trip.
+        const parseTags = (s: string | null | undefined): string[] => {
+          if (!s) return [];
+          const seen = new Set<string>();
+          const out: string[] = [];
+          for (const part of s.split(',')) {
+            const v = part.trim();
+            if (!v || seen.has(v)) continue;
+            seen.add(v);
+            out.push(v);
+          }
+          return out;
+        };
+        const affectedTargetTags = upgradeModalTarget.targets.map(name => {
+          const tt = targets.find(x => x.target === name);
+          return parseTags(tt?.tags);
+        });
         return (
           <UpgradeModal
             target={upgradeModalTarget.targets[0] ?? ''}
@@ -1126,6 +1198,8 @@ export default function App() {
             currentScheduleTz={t?.schedule_tz}
             currentOnce={t?.schedule_once}
             defaultMode={upgradeModalTarget.defaultMode}
+            seed={upgradeModalTarget.seed}
+            affectedTargetTags={affectedTargetTags}
             onUpgradeNow={handleUpgradeConfirm}
             onSaveSchedule={async (cron, version, tz) => {
               try {

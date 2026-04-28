@@ -1,8 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { mockApi } from './fixtures';
 
-// PT.5 — Queue extras: Triggered column icons, Rerun vs Retry button labels,
+// PT.5 — Queue extras: Triggered column icons, Rerun button labels,
 // Cancelled badge, Clear actions don't touch cancelled rows by accident.
+// Bug #108 collapsed both "Retry" (failed jobs) and "Rerun" (success
+// jobs) onto a single "Rerun" verb; the warn-amber colour still
+// distinguishes failed-source rows at a glance.
 
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
@@ -28,11 +31,13 @@ test('successful job uses Rerun (not Retry) label', async ({ page }) => {
   await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0);
 });
 
-test('failed job uses Retry (not Rerun) label', async ({ page }) => {
-  // job-002 (garage-door) is failed — Retry, not Rerun.
+test('failed job also uses Rerun (Bug #108: same verb for success + failure)', async ({ page }) => {
+  // job-002 (garage-door) is failed — pre-#108 it said "Retry", now
+  // both branches read "Rerun" and the warn-amber variant signals
+  // "this job failed" without changing the verb.
   const row = page.locator('#tab-queue tbody tr').filter({ hasText: 'garage-door' }).first();
-  await expect(row.getByRole('button', { name: 'Retry' })).toBeVisible();
-  await expect(row.getByRole('button', { name: 'Rerun' })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: 'Rerun' })).toBeVisible();
+  await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0);
 });
 
 test('cancelled badge renders for cancelled jobs', async ({ page }) => {

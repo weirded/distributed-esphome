@@ -147,6 +147,12 @@ async def re_evaluate_routing(app: "web.Application") -> int:
         return device_tags, effective
 
     def check(job: "Job") -> tuple[bool, dict | None]:
+        # Bug #110: a job whose enqueuer explicitly chose to override
+        # routing rules is never BLOCKED by them. Per-worker
+        # ``worker_tag_filter`` and ``pinned_client_id`` still apply
+        # (those are the user's explicit constraint, not a rule).
+        if getattr(job, "bypass_routing_rules", False):
+            return (True, None)
         device_tags, effective = _resolve_target(job.target)
         if not effective:
             return (True, None)  # no rules apply → always eligible
@@ -319,6 +325,13 @@ def build_claim_eligibility(
         wtf = getattr(job, "worker_tag_filter", None)
         if isinstance(wtf, dict) and not _filter_matches(wtf):
             return False
+        # Bug #110: with the user's override flag set, the rule check
+        # is skipped — they've explicitly accepted the warning. The
+        # tag-filter check above still ran because that's a constraint
+        # the user authored too (and rejecting wrong workers there
+        # avoids a false claim).
+        if getattr(job, "bypass_routing_rules", False):
+            return True
         # Cheapest path next — most fleets have zero global rules and
         # zero per-device routing_extra, so we never touch the YAML.
         if not global_rules:

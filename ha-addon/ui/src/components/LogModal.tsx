@@ -277,9 +277,10 @@ export function LogModal({ source, queue, workers, onClose, onRetry, onEdit, onO
     }
 
     if (!job.validate_only && ['failed', 'timed_out', 'success'].includes(job.state)) {
-      // #20: successful jobs use "Rerun" (green) — re-running a successful
-      // job isn't a retry, it's a fresh re-compile. Failed/timed-out keep
-      // "Retry" (warn / amber). Same convention as the queue table.
+      // Bug #108: every "redo this job" action reads as "Rerun" in the
+      // UI. Success rows keep success-green; failure rows surface the
+      // same verb in warn-amber so the colour still signals the source
+      // state. Same convention as the queue table.
       const isSuccess = job.state === 'success';
       retryEl = (
         <Button
@@ -287,7 +288,7 @@ export function LogModal({ source, queue, workers, onClose, onRetry, onEdit, onO
           size="sm"
           onClick={() => { onRetry([job.id]); onClose(); }}
         >
-          {isSuccess ? 'Rerun' : 'Retry'}
+          Rerun
         </Button>
       );
     }
