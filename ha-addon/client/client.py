@@ -45,7 +45,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.7.0-dev.42"
+CLIENT_VERSION = "1.7.0-dev.43"
 
 
 def _read_image_version() -> Optional[str]:
@@ -364,23 +364,49 @@ def _restart_self() -> None:
 
 
 def _clean_build_cache() -> None:
-    """Remove all build artifacts from the esphome-versions directory."""
+    """Remove build artifacts from the esphome-versions directory.
+
+    Bug #119: skips installed ESPHome venvs (anything with ``bin/esphome``).
+    The embedded local-worker shares ``/data/esphome-versions/`` with the
+    server's lazy-installed venv cache (see ``main.py``'s
+    ``ESPHOME_VERSIONS_DIR=/data/esphome-versions`` in the local-worker
+    spawn). Pre-fix, "Clean Cache" wiped the server's active venv along
+    with the build dirs, leaving ``scanner._server_esphome_bin`` pointing
+    at a deleted path; every subsequent bundle attempt then failed with
+    ``FileNotFoundError: '.../bin/python'`` until the add-on restarted.
+    Venv lifecycle is already bounded by ``MAX_ESPHOME_VERSIONS`` LRU
+    eviction in ``VersionManager``, so leaving them here is not a leak.
+    """
     import shutil
-    from version_manager import VERSIONS_BASE
-    base = Path(VERSIONS_BASE)
+    base = Path(_ESPHOME_VERSIONS_DIR)
     if not base.exists():
         logger.info("No build cache to clean (%s does not exist)", base)
         return
-    removed = 0
+    removed: list[str] = []
+    preserved_venvs: list[str] = []
     for entry in base.iterdir():
-        if entry.is_dir():
-            try:
-                shutil.rmtree(entry)
-                removed += 1
-                logger.info("Removed %s", entry.name)
-            except Exception as exc:
-                logger.warning("Failed to remove %s: %s", entry.name, exc)
-    logger.info("Build cache clean complete — removed %d version(s)", removed)
+        if not entry.is_dir():
+            continue
+        if (entry / "bin" / "esphome").exists():
+            preserved_venvs.append(entry.name)
+            continue
+        try:
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+            logger.info("Removed %s", entry.name)
+        except Exception as exc:
+            logger.warning("Failed to remove %s: %s", entry.name, exc)
+    if preserved_venvs:
+        logger.info(
+            "Build cache clean complete — removed %d cache dir(s); "
+            "preserved %d ESPHome venv(s): %s",
+            len(removed), len(preserved_venvs), preserved_venvs,
+        )
+    else:
+        logger.info(
+            "Build cache clean complete — removed %d cache dir(s)",
+            len(removed),
+        )
 
 
 # ---------------------------------------------------------------------------

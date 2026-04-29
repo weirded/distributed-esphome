@@ -646,3 +646,53 @@ def test_target_cache_lock_is_exclusive(tmp_path, monkeypatch):
     assert seq == ["acquired", "released", "acquired", "released"], (
         f"lock not exclusive, events: {events}"
     )
+
+
+def test_clean_build_cache_preserves_esphome_venvs(tmp_path, monkeypatch):
+    """Regression for bug #119: "Clean Cache" must not wipe ESPHome venvs.
+
+    The embedded local-worker shares ``/data/esphome-versions/`` with the
+    server's lazy-installed venv. Pre-fix, ``_clean_build_cache`` blindly
+    rmtree'd every subdirectory — including the venv the server was
+    actively using — leaving the server unable to bundle until restart.
+    Anything with ``bin/esphome`` is now preserved.
+    """
+    import client as client_module  # noqa: PLC0415
+    monkeypatch.setattr(client_module, "_ESPHOME_VERSIONS_DIR", str(tmp_path))
+
+    # Two ESPHome venvs (have bin/esphome) — must survive the clean.
+    for ver in ("2026.4.2", "2026.4.3"):
+        (tmp_path / ver / "bin").mkdir(parents=True)
+        (tmp_path / ver / "bin" / "esphome").write_text("#!/bin/sh\n")
+
+    # Build cache directories — must be removed.
+    (tmp_path / "cache" / "dev").mkdir(parents=True)
+    (tmp_path / "slots" / "1" / "dev").mkdir(parents=True)
+    (tmp_path / "pio-slot-1").mkdir()
+    (tmp_path / "platformio").mkdir()
+
+    client_module._clean_build_cache()
+
+    # Venvs preserved
+    assert (tmp_path / "2026.4.2" / "bin" / "esphome").exists()
+    assert (tmp_path / "2026.4.3" / "bin" / "esphome").exists()
+
+    # Build caches gone
+    assert not (tmp_path / "cache").exists()
+    assert not (tmp_path / "slots").exists()
+    assert not (tmp_path / "pio-slot-1").exists()
+    assert not (tmp_path / "platformio").exists()
+
+
+def test_clean_build_cache_removes_all_when_no_venvs(tmp_path, monkeypatch):
+    """When the directory has no venv-shaped dirs, every subdir is removed."""
+    import client as client_module  # noqa: PLC0415
+    monkeypatch.setattr(client_module, "_ESPHOME_VERSIONS_DIR", str(tmp_path))
+
+    (tmp_path / "cache" / "dev").mkdir(parents=True)
+    (tmp_path / "slots").mkdir()
+    (tmp_path / "platformio").mkdir()
+
+    client_module._clean_build_cache()
+
+    assert list(tmp_path.iterdir()) == []
