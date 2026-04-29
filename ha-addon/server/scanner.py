@@ -1136,6 +1136,12 @@ def get_device_metadata(config_dir: str, target: str) -> dict:
         # columns so operators can scan a fleet for "which devices are ESP32-S3"
         # or "which devices are passive BLE proxies" without opening each YAML.
         "esp_type": None,            # 'ESP32' | 'ESP32-S3' | 'ESP8266' | 'RP2040' | ... | None
+        # UD.5: PlatformIO board string from inside the chip block (e.g.
+        # ``esp32: { board: esp32dev }`` → "esp32dev"). Surfaced as a
+        # secondary line under the chip family on the Devices-tab Platform
+        # column so the user can distinguish "ESP32 esp32dev" from
+        # "ESP32 nodemcu_32s" without opening the YAML.
+        "board": None,               # PlatformIO board string, or None
         "bluetooth_proxy": "off",    # 'off' | 'passive' | 'active'
         # Per-device metadata from the # esphome-fleet: comment block.
         "pinned_version": None,      # pin_version from comment block
@@ -1287,11 +1293,26 @@ def _extract_metadata(config: dict, result: dict) -> None:
             result["esp_type"] = v
         else:
             result["esp_type"] = "ESP32"
+        # UD.5: PlatformIO board lives inside the chip block. Esphome's
+        # ``board:`` field can also live at the top level for some
+        # frameworks, but the canonical post-resolve location is here.
+        board = config["esp32"].get("board")
+        if board:
+            result["board"] = str(board)
     elif "esp8266" in config:
         result["esp_type"] = "ESP8266"
+        if isinstance(config.get("esp8266"), dict):
+            board = config["esp8266"].get("board")
+            if board:
+                result["board"] = str(board)
     elif isinstance(config.get("rp2040"), dict):
         result["esp_type"] = "RP2040"
+        board = config["rp2040"].get("board")
+        if board:
+            result["board"] = str(board)
     elif "host" in config:
+        # Host platform has no board — it's a virtual platform for
+        # tests / CI runs against the developer's machine.
         result["esp_type"] = "Host"
 
     # Bug #23: ``bluetooth_proxy:`` state. The block being absent means

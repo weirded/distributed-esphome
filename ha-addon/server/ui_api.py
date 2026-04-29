@@ -814,6 +814,9 @@ async def get_targets(request: web.Request) -> web.Response:
             "network_matter": meta.get("network_matter", False),
             # Bug #23: chip family + BLE proxy mode for the new Devices columns.
             "esp_type": meta.get("esp_type"),
+            # UD.5: PlatformIO board string (esp32dev, nodemcu_32s, …) — secondary
+            # line on the Platform column.
+            "board": meta.get("board"),
             "bluetooth_proxy": meta.get("bluetooth_proxy", "off"),
             # Per-device metadata from the # esphome-fleet: comment block.
             "pinned_version": meta.get("pinned_version"),
@@ -920,6 +923,7 @@ async def get_targets(request: web.Request) -> web.Response:
             "network_ap_fallback": False,
             "network_matter": False,
             "esp_type": None,
+            "board": None,
             "bluetooth_proxy": "off",
             "pinned_version": None,
             "schedule": None,

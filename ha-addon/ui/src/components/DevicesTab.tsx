@@ -80,11 +80,13 @@ const OPTIONAL_COLUMNS: OptionalColumnDef[] = [
   { id: 'net', label: 'Net', defaultVisible: true },
   { id: 'ipconfig', label: 'IP Config', defaultVisible: false },
   { id: 'ap', label: 'AP', defaultVisible: false },
-  // Bug #23: chip family + BLE proxy mode. Off by default — useful
-  // for fleet-scale scanning ("which devices are ESP32-S3?", "which
-  // are passive BLE proxies?") but adds two narrow columns most
-  // users don't need on the default layout.
-  { id: 'esp', label: 'ESP', defaultVisible: false },
+  // Bug #23 + UD.5: chip family + PlatformIO board on a stacked
+  // two-line cell, plus BLE proxy mode. Off by default — useful for
+  // fleet-scale scanning ("which devices are ESP32-S3?", "which are
+  // passive BLE proxies?") but adds two narrow columns most users
+  // don't need on the default layout. Renamed "ESP" → "Platform" in
+  // UD.5 to reflect that it now answers chip + board, not just chip.
+  { id: 'esp', label: 'Platform', defaultVisible: false },
   { id: 'ble', label: 'BLE proxy', defaultVisible: false },
   { id: 'schedule', label: 'Schedule', defaultVisible: true },
   // JH.6: opt-in "Last compiled" column. Off by default so existing users

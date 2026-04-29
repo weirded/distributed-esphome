@@ -108,6 +108,13 @@ export interface Target {
    */
   esp_type?: string | null;
   /**
+   * UD.5: PlatformIO board string from inside the chip block
+   * (e.g. ``esp32: { board: esp32dev }``). Surfaced as a secondary
+   * line on the Devices-tab Platform column; null when the YAML
+   * has no board (e.g. host platform) or resolve failed.
+   */
+  board?: string | null;
+  /**
    * Bug #23: ``bluetooth_proxy:`` block state.
    *  - ``off``     — block absent (default).
    *  - ``passive`` — block present, no ``active: true``.

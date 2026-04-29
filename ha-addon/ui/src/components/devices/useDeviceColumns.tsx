@@ -456,17 +456,32 @@ export function useDeviceColumns(options: Options) {
       ),
       sortingFn: 'alphanumeric',
     }),
-    // Bug #23: ESP chip family. Sort key is the bare string so ESP32 / ESP32-S3
-    // / ESP8266 group naturally; the cell renders as muted em-dash when the
-    // YAML failed to resolve (rare).
+    // Bug #23 + UD.5: chip family on the primary line, PlatformIO board on
+    // a smaller secondary line below. Renamed "ESP" → "Platform" since
+    // the column now answers two questions ("which chip" + "which board")
+    // and the old single-word header didn't fit. Sort key is the bare
+    // chip-family string so ESP32 / ESP32-S3 / ESP8266 group naturally;
+    // board comes along for the ride within each chip family. Renders
+    // as muted em-dash when the YAML failed to resolve (rare).
     columnHelper.accessor(row => row.esp_type || '', {
       id: 'esp',
-      header: ({ column }) => <SortHeader label="ESP" column={column} />,
-      cell: ({ row: { original: t } }) => (
-        t.esp_type
-          ? <span className="text-[12px] tabular-nums" title={`Chip family from the resolved YAML: ${t.esp_type}`}>{t.esp_type}</span>
-          : <span className="text-[12px] text-[var(--text-muted)]">—</span>
-      ),
+      header: ({ column }) => <SortHeader label="Platform" column={column} />,
+      cell: ({ row: { original: t } }) => {
+        if (!t.esp_type) {
+          return <span className="text-[12px] text-[var(--text-muted)]">—</span>;
+        }
+        const tip = t.board
+          ? `Chip family + PlatformIO board from the resolved YAML: ${t.esp_type} on ${t.board}`
+          : `Chip family from the resolved YAML: ${t.esp_type}`;
+        return (
+          <span className="inline-flex flex-col leading-tight" title={tip}>
+            <span className="text-[12px] tabular-nums">{t.esp_type}</span>
+            {t.board && (
+              <span className="text-[11px] text-[var(--text-muted)] tabular-nums">{t.board}</span>
+            )}
+          </span>
+        );
+      },
       sortingFn: 'alphanumeric',
     }),
     // Bug #23: Bluetooth proxy state. Sort key is the bare string so the

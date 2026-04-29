@@ -34,6 +34,9 @@ def _empty_meta() -> dict:
         "project_name": None,
         "project_version": None,
         "has_web_server": False,
+        # UD.5: surfaced via the Devices-tab Platform column. Defaults
+        # to None so a YAML without a chip block (rare) reads cleanly.
+        "board": None,
     }
 
 FIXTURES = Path(__file__).parent / "fixtures" / "esphome_configs"
@@ -619,6 +622,62 @@ def test_metadata_esp_type_rp2040():
     meta = _empty_meta()
     _extract_metadata(config, meta)
     assert meta["esp_type"] == "RP2040"
+
+
+# ---------------------------------------------------------------------------
+# UD.5: PlatformIO board extraction
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_board_extracted_from_esp32_block():
+    config = {"esphome": {"name": "dev"}, "esp32": {"board": "esp32dev"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["board"] == "esp32dev"
+
+
+def test_metadata_board_extracted_from_esp32_s3_block():
+    """ESP32 with variant + board both surface — variant in esp_type, board in board."""
+    config = {
+        "esphome": {"name": "dev"},
+        "esp32": {"variant": "esp32s3", "board": "esp32-s3-devkitm-1"},
+    }
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "ESP32-S3"
+    assert meta["board"] == "esp32-s3-devkitm-1"
+
+
+def test_metadata_board_extracted_from_esp8266_block():
+    config = {"esphome": {"name": "dev"}, "esp8266": {"board": "d1_mini"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["board"] == "d1_mini"
+
+
+def test_metadata_board_extracted_from_rp2040_block():
+    config = {"esphome": {"name": "dev"}, "rp2040": {"board": "rpipico"}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["board"] == "rpipico"
+
+
+def test_metadata_board_none_when_block_has_no_board_key():
+    """No ``board:`` field → board stays None (rare; bare ``esp32:`` block)."""
+    config = {"esphome": {"name": "dev"}, "esp32": {}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "ESP32"
+    assert meta["board"] is None
+
+
+def test_metadata_board_none_for_host_platform():
+    """Host platform is virtual — no PlatformIO board concept."""
+    config = {"esphome": {"name": "dev"}, "host": {}}
+    meta = _empty_meta()
+    _extract_metadata(config, meta)
+    assert meta["esp_type"] == "Host"
+    assert meta["board"] is None
 
 
 def test_metadata_bluetooth_proxy_off_when_block_absent():
