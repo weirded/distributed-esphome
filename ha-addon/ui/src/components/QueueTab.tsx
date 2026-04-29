@@ -359,12 +359,16 @@ export function QueueTab({
         }
 
         const display = formatSelectionReason(job.selection_reason);
+        // UD.2: render the long form at xl: (≥1280 px) and the short
+        // form below — fixes the Worker-selection cell overflowing on
+        // a standard 13" laptop. Tooltip carries the long context.
         const reasonLine = display ? (
           <span
             className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
             title={display.title}
           >
-            {display.label}
+            <span className="hidden xl:inline">{display.label}</span>
+            <span className="xl:hidden">{display.shortLabel}</span>
           </span>
         ) : null;
 

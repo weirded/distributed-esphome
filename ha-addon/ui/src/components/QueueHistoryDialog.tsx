@@ -365,12 +365,14 @@ export function QueueHistoryDialog({ open, onOpenChange, targets, onOpenHistoryD
         cell: ({ row: { original: r } }) => {
           const display = formatSelectionReason(r.selection_reason);
           if (!display) return <span className="text-[var(--text-muted)]">—</span>;
+          // UD.2: long form at xl: (≥1280 px), short form below.
           return (
             <span
               className="text-[11px] text-[var(--text-muted)] whitespace-nowrap"
               title={display.title}
             >
-              {display.label}
+              <span className="hidden xl:inline">{display.label}</span>
+              <span className="xl:hidden">{display.shortLabel}</span>
             </span>
           );
         },
