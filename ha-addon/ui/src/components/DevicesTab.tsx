@@ -391,9 +391,14 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
 
   // TG.5 filter pills — fleet-wide tag pool with usage counts, sorted
   // alphabetically. The TagFilterBar component reads this directly.
+  // #203: archived rows contribute their tags only when the user has
+  // archived devices visible; otherwise the pill bar would offer tags
+  // that filter no visible row (and bumping the count for an "Archived
+  // only" tag would mislead — the count is over the visible set).
   const tagPool = useMemo(() => {
     const counts = new Map<string, number>();
     for (const t of targets) {
+      if (t.archived && !showArchived) continue;
       if (t.tags) for (const tag of t.tags.split(',').map(s => s.trim()).filter(Boolean)) {
         counts.set(tag, (counts.get(tag) ?? 0) + 1);
       }
@@ -401,7 +406,7 @@ export function DevicesTab({ targets, devices, workers, streamerMode, activeJobs
     return Array.from(counts.entries())
       .map(([tag, count]) => ({ tag, count }))
       .sort((a, b) => a.tag.localeCompare(b.tag));
-  }, [targets]);
+  }, [targets, showArchived]);
 
   // Filter targets before passing to TanStack (filter state owned here, not in TanStack)
   // DM.1: archived rows are included in the data set when the toggle is

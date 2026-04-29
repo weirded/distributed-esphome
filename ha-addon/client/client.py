@@ -45,7 +45,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.7.0-dev.53"
+CLIENT_VERSION = "1.7.0-dev.54"
 
 
 def _read_image_version() -> Optional[str]:
@@ -361,6 +361,36 @@ def _restart_self() -> None:
     """Restart the worker process in-place (preserving env vars)."""
     logger.info("Restarting worker process...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+def _strip_quarantine_xattr(path: str) -> None:
+    """#204: clear ``com.apple.quarantine`` from every file under *path*.
+
+    macOS sets this xattr on tarballs / curl downloads, and PlatformIO's
+    tool-toolchain-xtensa-esp-elf packages inherit it. The first time
+    the build invokes ``xtensa-esp32-elf-gcc`` (which ``posix_spawn``s
+    ``cc1``), Gatekeeper denies the unsigned binary; the parent gcc
+    sees ENOENT and reports ``fatal error: cannot execute 'cc1':
+    posix_spawnp: No such file or directory``.
+
+    Best-effort — we never raise: a missing xattr binary, a denied
+    file, or a non-Darwin host is not a reason to fail the compile.
+    The 1-shot ``-r`` walk is fast on a clean tree (the xattr is
+    keyed in the file's xattr table; the recursive call short-circuits
+    when nothing matches).
+    """
+    cmd = ["/usr/bin/xattr", "-dr", "com.apple.quarantine", path]
+    logger.debug("Running quarantine-strip: %s", " ".join(cmd))
+    try:
+        subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("xattr quarantine-strip on %s failed: %s", path, exc)
 
 
 def _clean_build_cache() -> None:
@@ -1105,6 +1135,20 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     except OSError as exc:
         logger.debug("Could not create pio dir %s (%s); using default PLATFORMIO_CORE_DIR", pio_dir, exc)
         subprocess_env = dict(os.environ)
+
+    # #204: PlatformIO downloads its toolchain via curl/tar on first
+    # use; on macOS those tarballs land with the
+    # ``com.apple.quarantine`` xattr which makes Gatekeeper kill any
+    # subprocess invocation of the unsigned binaries inside (cc1,
+    # ld, etc.). The exact symptom seen on the two Mac workers in
+    # the home lab was ``xtensa-esp-elf-gcc: fatal error: cannot
+    # execute 'cc1': posix_spawnp: No such file or directory`` —
+    # ENOENT bubbling up from Gatekeeper's deny. Sweeping the
+    # quarantine attribute off the per-slot tree before each compile
+    # is cheap (no-op on a clean tree), only happens on Darwin, and
+    # self-heals the case where a redownload re-introduced it.
+    if sys.platform == "darwin" and os.path.isdir(pio_dir):
+        _strip_quarantine_xattr(pio_dir)
 
     # Match server timezone so ESPHome produces identical config_hash.
     # Mismatched TZ → different hash → unnecessary clean rebuild → different firmware binary.

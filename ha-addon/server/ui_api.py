@@ -19,6 +19,7 @@ from job_queue import JobState
 from scanner import (
     create_stub_yaml,
     duplicate_device,
+    get_archived_device_metadata,
     get_device_metadata,
     get_esphome_version,
     read_device_meta,
@@ -891,16 +892,22 @@ async def get_targets(request: web.Request) -> web.Response:
     # inline (toggleable via the column-picker "Show archived devices"
     # entry). The poller / scheduler / routing engine / queue continue
     # to see only active targets — archived is purely a UI surface.
+    # #203: re-read each archived YAML so the row keeps tags / area /
+    # project / comment / pinned_version / schedule / network / chip /
+    # BLE-proxy. Without this the Devices tab silently dropped every
+    # attribute the moment a device was archived (and the tag-filter
+    # pills lost the archived rows' tags entirely).
     from scanner import scan_archived  # noqa: PLC0415
     for arch in scan_archived(cfg.config_dir):
+        meta = get_archived_device_metadata(cfg.config_dir, arch["filename"])
         result.append({
             "target": arch["filename"],
-            "friendly_name": None,
-            "device_name": None,
-            "comment": None,
-            "area": None,
-            "project_name": None,
-            "project_version": None,
+            "friendly_name": meta.get("friendly_name"),
+            "device_name": meta.get("device_name"),
+            "comment": meta.get("comment"),
+            "area": meta.get("area"),
+            "project_name": meta.get("project_name"),
+            "project_version": meta.get("project_version"),
             "online": None,
             "running_version": None,
             "compilation_time": None,
@@ -911,27 +918,27 @@ async def get_targets(request: web.Request) -> web.Response:
             "last_seen": None,
             "server_version": server_version,
             "has_api_key": False,
-            "has_web_server": False,
-            "has_restart_button": False,
+            "has_web_server": meta.get("has_web_server", False),
+            "has_restart_button": meta.get("has_restart_button", False),
             "ha_configured": False,
             "ha_connected": False,
             "ha_device_id": None,
             "mac_address": None,
-            "network_type": None,
-            "network_static_ip": False,
-            "network_ipv6": False,
-            "network_ap_fallback": False,
-            "network_matter": False,
-            "esp_type": None,
-            "board": None,
-            "bluetooth_proxy": "off",
-            "pinned_version": None,
-            "schedule": None,
-            "schedule_enabled": False,
-            "schedule_last_run": None,
-            "schedule_once": None,
+            "network_type": meta.get("network_type"),
+            "network_static_ip": meta.get("network_static_ip", False),
+            "network_ipv6": meta.get("network_ipv6", False),
+            "network_ap_fallback": meta.get("network_ap_fallback", False),
+            "network_matter": meta.get("network_matter", False),
+            "esp_type": meta.get("esp_type"),
+            "board": meta.get("board"),
+            "bluetooth_proxy": meta.get("bluetooth_proxy", "off"),
+            "pinned_version": meta.get("pinned_version"),
+            "schedule": meta.get("schedule"),
+            "schedule_enabled": meta.get("schedule_enabled", False),
+            "schedule_last_run": meta.get("schedule_last_run"),
+            "schedule_once": meta.get("schedule_once"),
             "schedule_tz": None,
-            "tags": None,
+            "tags": meta.get("tags"),
             "has_uncommitted_changes": False,
             "last_flashed_config_hash": None,
             "config_drifted_since_flash": None,
@@ -3193,11 +3200,22 @@ async def ping_device(request: web.Request) -> web.Response:
         filename, dev.name, address,
     )
 
+    # #206: try unprivileged ICMP first (Linux hosts where
+    # ``net.ipv4.ping_group_range`` allows it), fall back to a raw-socket
+    # ping (HA addon container with ``NET_RAW`` capability granted via
+    # ``ha-addon/config.yaml``). HAOS ships ``ping_group_range = 1 0``
+    # (empty) so unprivileged ICMP fails with ``SocketPermissionError``;
+    # without the fallback the modal would always immediately fail there.
     try:
-        from icmplib import async_ping  # noqa: PLC0415
-        host = await async_ping(
-            address, count=10, interval=0.2, timeout=2, privileged=False,
-        )
+        from icmplib import SocketPermissionError, async_ping  # noqa: PLC0415
+        try:
+            host = await async_ping(
+                address, count=10, interval=0.2, timeout=2, privileged=False,
+            )
+        except SocketPermissionError:
+            host = await async_ping(
+                address, count=10, interval=0.2, timeout=2, privileged=True,
+            )
     except Exception as exc:
         logger.warning("Ping %s (%s) failed: %s", filename, address, exc)
         return web.json_response(

@@ -252,6 +252,10 @@ tr.local-worker-row td { background: var(--surface2); }
 .dot-offline   { background: #4b5563; }
 .dot-checking  { background: #4b5563; animation: pulse 1.4s ease-in-out infinite; }
 .dot-upgrading { background: #f59e0b; animation: pulse 1.4s ease-in-out infinite; }
+/* #207: archived rows — muted, no animation. Distinguish from offline
+   by lower opacity so the eye groups them with the muted "Archived"
+   text rather than the live grey of an offline device. */
+.dot-archived  { background: #4b5563; opacity: 0.55; }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 
 .needs-update-yes { color: var(--warn); font-weight: 600; }

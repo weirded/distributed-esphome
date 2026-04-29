@@ -18,7 +18,7 @@ import { Input } from '../ui/input';
 import { Button } from '../ui/button';
 import { UpgradeModal } from '../UpgradeModal';
 import { BulkTagsEditDialog } from '../BulkTagsEditDialog';
-import { commitFile, setTargetSchedule, updateTargetMeta } from '../../api/client';
+import { commitFile, deleteTarget, restoreArchivedConfig, setTargetSchedule, updateTargetMeta } from '../../api/client';
 import { useVersioningEnabled } from '../../hooks/useVersioning';
 import type { Target, Worker } from '../../types';
 
@@ -88,6 +88,78 @@ export function DeviceTableActions({ selectedTargets, workers, targets, onToast,
   if (!hasSelection) tagEditTitle = 'Check one or more devices in the table first';
   else if (tagEditDisabled) tagEditTitle = 'Tags can’t be edited on archived devices';
   else if (archivedSelectedCount > 0) tagEditTitle = `${archivedSelectedCount} archived row${archivedSelectedCount === 1 ? '' : 's'} skipped — tags can’t be edited on archived devices`;
+
+  // #208: bulk Archive / Unarchive selected. Only one of the two is
+  // enabled at a time:
+  //   - "Archive selected" is enabled when every checked row is active.
+  //   - "Unarchive selected" is enabled when every checked row is archived.
+  //   - Mixed selections (or empty selection) disable both — there's no
+  //     single sensible action and the user shouldn't have to guess
+  //     which subset would be touched.
+  const selectedTargetObjs = useMemo(
+    () => selectedTargets.map(name => targets.find(x => x.target === name)).filter((x): x is Target => !!x),
+    [selectedTargets, targets],
+  );
+  const allSelectedActive = hasSelection && selectedTargetObjs.every(t => !t.archived);
+  const allSelectedArchived = hasSelection && selectedTargetObjs.every(t => t.archived);
+  const archiveSelectedTitle = !hasSelection
+    ? 'Check one or more devices in the table first'
+    : !allSelectedActive
+      ? 'Mixed or all-archived selection — only active devices can be archived'
+      : `Archive ${selectedTargets.length} device${selectedTargets.length === 1 ? '' : 's'}`;
+  const unarchiveSelectedTitle = !hasSelection
+    ? 'Check one or more devices in the table first'
+    : !allSelectedArchived
+      ? 'Mixed or all-active selection — only archived devices can be unarchived'
+      : `Unarchive ${selectedTargets.length} device${selectedTargets.length === 1 ? '' : 's'}`;
+
+  async function handleArchiveSelected() {
+    if (!allSelectedActive) return;
+    const names = [...selectedTargets];
+    try {
+      const results = await Promise.all(
+        names.map(t =>
+          deleteTarget(t, true)
+            .then(() => ({ ok: true as const, target: t }))
+            .catch(err => ({ ok: false as const, target: t, err: (err as Error).message })),
+        ),
+      );
+      const ok = results.filter(r => r.ok).length;
+      const failed = results.length - ok;
+      if (failed === 0) {
+        onToast(`Archived ${ok} device${ok === 1 ? '' : 's'}`, 'success');
+      } else {
+        onToast(`Archived ${ok}, ${failed} failed`, 'error');
+      }
+      onRefresh();
+    } catch (err) {
+      onToast('Archive failed: ' + (err as Error).message, 'error');
+    }
+  }
+
+  async function handleUnarchiveSelected() {
+    if (!allSelectedArchived) return;
+    const names = [...selectedTargets];
+    try {
+      const results = await Promise.all(
+        names.map(t =>
+          restoreArchivedConfig(t)
+            .then(() => ({ ok: true as const, target: t }))
+            .catch(err => ({ ok: false as const, target: t, err: (err as Error).message })),
+        ),
+      );
+      const ok = results.filter(r => r.ok).length;
+      const failed = results.length - ok;
+      if (failed === 0) {
+        onToast(`Unarchived ${ok} device${ok === 1 ? '' : 's'}`, 'success');
+      } else {
+        onToast(`Unarchived ${ok}, ${failed} failed`, 'error');
+      }
+      onRefresh();
+    } catch (err) {
+      onToast('Unarchive failed: ' + (err as Error).message, 'error');
+    }
+  }
 
   // Bug #103: surface a fleet-wide "commit any uncommitted YAML" action
   // for the case where the user edited configs outside the addon (CLI,
@@ -253,6 +325,20 @@ export function DeviceTableActions({ selectedTargets, workers, targets, onToast,
               title={tagEditTitle}
             >
               Edit Tags…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleArchiveSelected}
+              disabled={!allSelectedActive}
+              title={archiveSelectedTitle}
+            >
+              Archive Selected
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleUnarchiveSelected}
+              disabled={!allSelectedArchived}
+              title={unarchiveSelectedTitle}
+            >
+              Unarchive Selected
             </DropdownMenuItem>
             {versioningEnabled && (
               <DropdownMenuItem

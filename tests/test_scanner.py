@@ -15,6 +15,7 @@ from scanner import (
     create_bundle,
     create_stub_yaml,
     duplicate_device,
+    get_archived_device_metadata,
     get_device_address,
     get_device_metadata,
     get_esphome_version,
@@ -233,6 +234,83 @@ def test_scan_archived_ignores_subdirectory(tmp_path):
     (nested / "buried.yaml").write_text("x")
     rows = scan_archived(str(tmp_path))
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# get_archived_device_metadata — #203. Archived rows used to come back from
+# the /ui/api/targets endpoint with every attribute set to None, dropping
+# tags / area / project / pinned_version / schedule the moment a device
+# was archived. The helper re-reads the YAML under .archive/ and pulls the
+# same shape get_device_metadata returns (raw-YAML path only — no ESPHome
+# resolution because archived files may reference deleted secrets).
+# ---------------------------------------------------------------------------
+
+def test_archived_metadata_missing_dir_returns_empty_shape(tmp_path):
+    """No .archive/ directory → still returns the canonical shape so the
+    caller can spread keys without KeyError."""
+    meta = get_archived_device_metadata(str(tmp_path), "alpha.yaml")
+    assert meta["tags"] is None
+    assert meta["area"] is None
+    assert meta["pinned_version"] is None
+    assert meta["bluetooth_proxy"] == "off"
+
+
+def test_archived_metadata_preserves_tags_and_area(tmp_path):
+    """Archived YAML's tags + area survive the round-trip — this is the
+    bug #203 regression: tag-filter pills lost archived rows entirely."""
+    archive = tmp_path / ".archive"
+    archive.mkdir()
+    (archive / "alpha.yaml").write_text(
+        "# esphome-fleet:\n"
+        "#   tags: 'kitchen, bedroom'\n"
+        "#   pin_version: '2024.6.1'\n"
+        "esphome:\n"
+        "  name: alpha\n"
+        "  area: Living Room\n"
+        "  project:\n"
+        "    name: my-project\n"
+        "    version: '1.2.3'\n"
+    )
+    meta = get_archived_device_metadata(str(tmp_path), "alpha.yaml")
+    assert meta["tags"] == "kitchen, bedroom"
+    assert meta["pinned_version"] == "2024.6.1"
+    assert meta["area"] == "Living Room"
+    assert meta["project_name"] == "my-project"
+    assert meta["project_version"] == "1.2.3"
+
+
+def test_archived_metadata_preserves_schedule(tmp_path):
+    archive = tmp_path / ".archive"
+    archive.mkdir()
+    (archive / "alpha.yaml").write_text(
+        "# esphome-fleet:\n"
+        "#   schedule: '0 2 * * *'\n"
+        "#   schedule_enabled: true\n"
+        "esphome:\n"
+        "  name: alpha\n"
+    )
+    meta = get_archived_device_metadata(str(tmp_path), "alpha.yaml")
+    assert meta["schedule"] == "0 2 * * *"
+    assert meta["schedule_enabled"] is True
+
+
+def test_archived_metadata_unparseable_yaml_falls_back_to_empty(tmp_path):
+    """A broken YAML (e.g. references a deleted !include) shouldn't crash
+    the Devices endpoint — return the empty shape instead so the row
+    still renders, just without metadata."""
+    archive = tmp_path / ".archive"
+    archive.mkdir()
+    (archive / "broken.yaml").write_text(
+        "esphome:\n"
+        "  name: broken\n"
+        "  area: !include missing_file.yaml\n"
+        "{this is: not: valid: yaml\n"
+    )
+    meta = get_archived_device_metadata(str(tmp_path), "broken.yaml")
+    # Some keys may parse before the failure; the contract is "doesn't
+    # raise" + canonical shape, not "always None".
+    assert "tags" in meta
+    assert "bluetooth_proxy" in meta
 
 
 # ---------------------------------------------------------------------------

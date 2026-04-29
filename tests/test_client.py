@@ -696,3 +696,49 @@ def test_clean_build_cache_removes_all_when_no_venvs(tmp_path, monkeypatch):
     client_module._clean_build_cache()
 
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# #204 — _strip_quarantine_xattr — macOS Gatekeeper kills cc1 / ld inside
+# PlatformIO's downloaded toolchain when the tarball-extracted binaries
+# inherit ``com.apple.quarantine``. Helper sweeps the xattr off the slot
+# tree before each compile.
+# ---------------------------------------------------------------------------
+
+def test_strip_quarantine_invokes_xattr(tmp_path, monkeypatch):
+    """On any platform, the helper shells out to /usr/bin/xattr -dr.
+    The actual xattr binary is macOS-only so we mock subprocess.run."""
+    import client as client_module  # noqa: PLC0415
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        m = MagicMock()
+        m.returncode = 0
+        return m
+
+    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
+    client_module._strip_quarantine_xattr(str(tmp_path))
+    assert calls == [["/usr/bin/xattr", "-dr", "com.apple.quarantine", str(tmp_path)]]
+
+
+def test_strip_quarantine_swallows_oserror(tmp_path, monkeypatch):
+    """Missing xattr (non-macOS host) → OSError → silently swallowed.
+    The helper is best-effort: failing it must not fail the compile."""
+    import client as client_module  # noqa: PLC0415
+
+    def fake_run(cmd, **kwargs):
+        raise FileNotFoundError("xattr not on this host")
+
+    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
+    client_module._strip_quarantine_xattr(str(tmp_path))  # must not raise
+
+
+def test_strip_quarantine_swallows_subprocess_error(tmp_path, monkeypatch):
+    import client as client_module  # noqa: PLC0415
+
+    def fake_run(cmd, **kwargs):
+        raise client_module.subprocess.TimeoutExpired(cmd=cmd, timeout=30)
+
+    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
+    client_module._strip_quarantine_xattr(str(tmp_path))  # must not raise

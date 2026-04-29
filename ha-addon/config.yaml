@@ -1,5 +1,5 @@
 name: "ESPHome Fleet"
-version: "1.7.0-dev.53"
+version: "1.7.0-dev.54"
 slug: "esphome_dist_server"
 description: "A modern Home Assistant UI for ESPHome — git-backed config history with rollback, live compile queue, per-device version pinning, scheduled OTA, optional distributed compilation. Works whether you have 3 or 300 devices."
 url: "https://github.com/weirded/distributed-esphome"
@@ -57,6 +57,14 @@ ports_description:
 
 # mDNS device discovery requires host networking
 host_network: true
+
+# #206: NET_RAW lets the per-device Ping diagnostic open raw ICMP
+# sockets when the host's ``net.ipv4.ping_group_range`` is empty
+# (HAOS default ``1 0``). The ping helper tries unprivileged datagram
+# ICMP first and falls back to the raw-socket path; without the
+# capability the modal failed immediately on every HAOS install.
+privileged:
+  - NET_RAW
 
 # Supervisor API access — needed to detect ESPHome add-on version
 hassio_api: true

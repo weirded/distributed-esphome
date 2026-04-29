@@ -5,6 +5,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+  DialogClose,
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { pingDevice, type PingResult } from '../api/client';
@@ -82,17 +84,16 @@ export default function PingDeviceModal({ target, onClose, onToast }: Props) {
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent style={{ maxWidth: 480 }}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Activity className="size-4" aria-hidden="true" />
             Ping {stripYaml(target)}
           </DialogTitle>
         </DialogHeader>
-
-        <div className="px-1 py-2 text-[12px] text-[var(--text-muted)]">
+        <div className="px-4 py-3 flex flex-col gap-2 text-sm text-[var(--text)]">
           {pending && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-[var(--text-muted)]">
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               <span>Pinging {address || 'device'}… (~4 s)</span>
             </div>
@@ -107,37 +108,36 @@ export default function PingDeviceModal({ target, onClose, onToast }: Props) {
             </div>
           )}
           {!pending && result && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
+            <>
+              <div className="flex items-center gap-2">
                 <span
                   className={`inline-block size-2.5 rounded-full ${result.is_alive ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'}`}
                   aria-hidden="true"
                 />
-                <span className="font-medium text-[var(--text)]">
+                <span className="font-medium">
                   {result.is_alive ? 'Reachable' : 'No response'}
                 </span>
-                <span className="text-[11px]">
+                <span className="text-[11px] text-[var(--text-muted)]">
                   via {result.address}
                 </span>
               </div>
               <table className="text-[12px] w-full">
                 <tbody>
-                  <tr><td className="pr-3 py-0.5">Packets sent</td><td className="tabular-nums">{result.packets_sent}</td></tr>
-                  <tr><td className="pr-3 py-0.5">Packets received</td><td className="tabular-nums">{result.packets_received}</td></tr>
-                  <tr><td className="pr-3 py-0.5">Packet loss</td><td className="tabular-nums">{(result.packet_loss * 100).toFixed(1)}%</td></tr>
-                  <tr><td className="pr-3 py-0.5">RTT min / avg / max</td>
+                  <tr><td className="pr-3 py-0.5 text-[var(--text-muted)]">Packets sent</td><td className="tabular-nums">{result.packets_sent}</td></tr>
+                  <tr><td className="pr-3 py-0.5 text-[var(--text-muted)]">Packets received</td><td className="tabular-nums">{result.packets_received}</td></tr>
+                  <tr><td className="pr-3 py-0.5 text-[var(--text-muted)]">Packet loss</td><td className="tabular-nums">{(result.packet_loss * 100).toFixed(1)}%</td></tr>
+                  <tr><td className="pr-3 py-0.5 text-[var(--text-muted)]">RTT min / avg / max</td>
                     <td className="tabular-nums">
                       {result.min_rtt.toFixed(2)} / {result.avg_rtt.toFixed(2)} / {result.max_rtt.toFixed(2)} ms
                     </td>
                   </tr>
-                  <tr><td className="pr-3 py-0.5">Jitter</td><td className="tabular-nums">{result.jitter.toFixed(2)} ms</td></tr>
+                  <tr><td className="pr-3 py-0.5 text-[var(--text-muted)]">Jitter</td><td className="tabular-nums">{result.jitter.toFixed(2)} ms</td></tr>
                 </tbody>
               </table>
-            </div>
+            </>
           )}
         </div>
-
-        <div className="flex items-center justify-end gap-2 pt-2">
+        <DialogFooter>
           <Button
             variant="secondary"
             size="sm"
@@ -160,8 +160,10 @@ export default function PingDeviceModal({ target, onClose, onToast }: Props) {
             )}
             {pending ? 'Pinging…' : 'Run again'}
           </Button>
-          <Button size="sm" onClick={onClose}>Close</Button>
-        </div>
+          <DialogClose>
+            <Button size="sm">Close</Button>
+          </DialogClose>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -305,6 +305,11 @@ export function useDeviceColumns(options: Options) {
     }),
     columnHelper.accessor(
       row => {
+        // #207: archived rows are inert — sort them past every live state and
+        // never poll/compile them, so the status column reflects the archive
+        // state, not whatever stale online/checking value the row carried at
+        // archive time.
+        if (row.archived) return 'e-archived';
         if (activeJobsByTarget.has(row.target)) return 'a-upgrading';
         if (row.online == null) return 'b-unknown';
         return row.online ? 'c-online' : 'd-offline';
@@ -316,6 +321,11 @@ export function useDeviceColumns(options: Options) {
           const lastSeenEl = t.last_seen
             ? <div className="text-[10px] text-[var(--text-muted)]">{timeAgo(t.last_seen)}</div>
             : null;
+          // #207: archived rows render as "Archived" instead of falling
+          // through to checking/online/offline. The Tags column already
+          // shows the archived chip so we omit the dot's date suffix here
+          // — the row is inert.
+          if (t.archived) return <StatusDot status="archived" />;
           const activeJob = activeJobsByTarget.get(t.target);
           if (activeJob) {
             const statusText = activeJob.status_text || (activeJob.state === 'pending' ? 'Pending…' : 'Compiling…');

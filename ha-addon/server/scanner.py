@@ -1097,6 +1097,67 @@ def _resolve_esphome_config(config_dir: str, target: str) -> Optional[dict]:
         return None
 
 
+def get_archived_device_metadata(config_dir: str, filename: str) -> dict:
+    """Return display metadata for an archived YAML under ``.archive/``.
+
+    #203: archived rows used to come back with every attribute set to None
+    so the Devices tab couldn't show their tags / area / comment / project,
+    and the tag-filter pills lost the archived rows' tags entirely. We
+    re-read the archived YAML (raw — no ESPHome resolution; the file may
+    reference deleted secrets / packages) and return the same shape
+    :func:`get_device_metadata` returns. Comment-block fields (tags,
+    pinned_version, schedule) come back via :func:`read_device_meta`;
+    YAML-literal fields (friendly_name, device_name, comment, area,
+    project_name, project_version, has_web_server) come back via the raw
+    loader's ``_fill_missing_metadata`` path.
+    """
+    result = _empty_metadata()
+    archived_target = f".archive/{filename}"
+    device_meta = read_device_meta(config_dir, archived_target)
+    if device_meta:
+        result["pinned_version"] = device_meta.get("pin_version")
+        result["schedule"] = device_meta.get("schedule")
+        result["schedule_enabled"] = device_meta.get("schedule_enabled", False)
+        result["schedule_last_run"] = device_meta.get("schedule_last_run")
+        result["schedule_once"] = device_meta.get("schedule_once")
+        result["tags"] = device_meta.get("tags")
+    raw_config = _load_raw_yaml(config_dir, archived_target)
+    if raw_config is not None:
+        _fill_missing_metadata(raw_config, result)
+    return result
+
+
+def _empty_metadata() -> dict:
+    """Default metadata shape used by :func:`get_device_metadata` and
+    :func:`get_archived_device_metadata`. Kept in one place so both paths
+    return the same keys."""
+    return {
+        "friendly_name": None,
+        "device_name": None,
+        "device_name_raw": None,
+        "comment": None,
+        "area": None,
+        "project_name": None,
+        "project_version": None,
+        "has_web_server": False,
+        "has_restart_button": False,
+        "network_type": None,
+        "network_static_ip": False,
+        "network_ipv6": False,
+        "network_ap_fallback": False,
+        "network_matter": False,
+        "esp_type": None,
+        "board": None,
+        "bluetooth_proxy": "off",
+        "pinned_version": None,
+        "schedule": None,
+        "schedule_enabled": False,
+        "schedule_last_run": None,
+        "schedule_once": None,
+        "tags": None,
+    }
+
+
 def get_device_metadata(config_dir: str, target: str) -> dict:
     """Return display metadata from a YAML config file.
 
