@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 import git_versioning as gv
-from tests.test_ui_api import _UiApp, _make_ui_app, _write_config  # type: ignore
+from test_ui_api import _UiApp, _make_ui_app, _write_config  # type: ignore
 
 
 @pytest.fixture
