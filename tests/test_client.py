@@ -648,14 +648,21 @@ def test_target_cache_lock_is_exclusive(tmp_path, monkeypatch):
     )
 
 
-def test_clean_build_cache_preserves_esphome_venvs(tmp_path, monkeypatch):
-    """Regression for bug #119: "Clean Cache" must not wipe ESPHome venvs.
+def test_clean_build_cache_preserves_esphome_venvs_and_pio_slots(tmp_path, monkeypatch):
+    """Regression for #119 + #214: ``Clean Cache`` must preserve ESPHome
+    venvs (anything with ``bin/esphome``) AND PlatformIO core dirs
+    (``pio-slot-*``) so the toolchain isn't re-downloaded.
 
-    The embedded local-worker shares ``/data/esphome-versions/`` with the
-    server's lazy-installed venv. Pre-fix, ``_clean_build_cache`` blindly
-    rmtree'd every subdirectory — including the venv the server was
-    actively using — leaving the server unable to bundle until restart.
-    Anything with ``bin/esphome`` is now preserved.
+    #119: pre-fix wiped venvs and stranded the server's bundle subprocess
+    on a deleted ``bin/python``.
+
+    #214: pre-fix wiped ``pio-slot-N`` (PlatformIO's toolchain home),
+    forcing every subsequent compile through a 5–10 min toolchain
+    re-download and surfacing the partial-extract case as ``cc1:
+    posix_spawnp: No such file or directory``.
+
+    Anything else (slots, cache, platformio, builds) is build-artifact
+    state — that's what the user is asking us to clean.
     """
     import client as client_module  # noqa: PLC0415
     monkeypatch.setattr(client_module, "_ESPHOME_VERSIONS_DIR", str(tmp_path))
@@ -665,10 +672,13 @@ def test_clean_build_cache_preserves_esphome_venvs(tmp_path, monkeypatch):
         (tmp_path / ver / "bin").mkdir(parents=True)
         (tmp_path / ver / "bin" / "esphome").write_text("#!/bin/sh\n")
 
-    # Build cache directories — must be removed.
+    # Two PlatformIO core dirs — must also survive (toolchain home).
+    (tmp_path / "pio-slot-1" / "packages" / "toolchain-xtensa-esp-elf").mkdir(parents=True)
+    (tmp_path / "pio-slot-2" / "packages" / "toolchain-xtensa-esp-elf").mkdir(parents=True)
+
+    # Build cache directories — these are what Clean Cache should wipe.
     (tmp_path / "cache" / "dev").mkdir(parents=True)
     (tmp_path / "slots" / "1" / "dev").mkdir(parents=True)
-    (tmp_path / "pio-slot-1").mkdir()
     (tmp_path / "platformio").mkdir()
 
     client_module._clean_build_cache()
@@ -676,16 +686,18 @@ def test_clean_build_cache_preserves_esphome_venvs(tmp_path, monkeypatch):
     # Venvs preserved
     assert (tmp_path / "2026.4.2" / "bin" / "esphome").exists()
     assert (tmp_path / "2026.4.3" / "bin" / "esphome").exists()
+    # PlatformIO core dirs preserved (#214)
+    assert (tmp_path / "pio-slot-1" / "packages" / "toolchain-xtensa-esp-elf").exists()
+    assert (tmp_path / "pio-slot-2" / "packages" / "toolchain-xtensa-esp-elf").exists()
 
     # Build caches gone
     assert not (tmp_path / "cache").exists()
     assert not (tmp_path / "slots").exists()
-    assert not (tmp_path / "pio-slot-1").exists()
     assert not (tmp_path / "platformio").exists()
 
 
-def test_clean_build_cache_removes_all_when_no_venvs(tmp_path, monkeypatch):
-    """When the directory has no venv-shaped dirs, every subdir is removed."""
+def test_clean_build_cache_removes_unprotected_dirs(tmp_path, monkeypatch):
+    """Directories that aren't venvs or pio-slot-* are removed."""
     import client as client_module  # noqa: PLC0415
     monkeypatch.setattr(client_module, "_ESPHOME_VERSIONS_DIR", str(tmp_path))
 
@@ -696,49 +708,3 @@ def test_clean_build_cache_removes_all_when_no_venvs(tmp_path, monkeypatch):
     client_module._clean_build_cache()
 
     assert list(tmp_path.iterdir()) == []
-
-
-# ---------------------------------------------------------------------------
-# #204 — _strip_quarantine_xattr — macOS Gatekeeper kills cc1 / ld inside
-# PlatformIO's downloaded toolchain when the tarball-extracted binaries
-# inherit ``com.apple.quarantine``. Helper sweeps the xattr off the slot
-# tree before each compile.
-# ---------------------------------------------------------------------------
-
-def test_strip_quarantine_invokes_xattr(tmp_path, monkeypatch):
-    """On any platform, the helper shells out to /usr/bin/xattr -dr.
-    The actual xattr binary is macOS-only so we mock subprocess.run."""
-    import client as client_module  # noqa: PLC0415
-    calls: list[list[str]] = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        m = MagicMock()
-        m.returncode = 0
-        return m
-
-    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
-    client_module._strip_quarantine_xattr(str(tmp_path))
-    assert calls == [["/usr/bin/xattr", "-dr", "com.apple.quarantine", str(tmp_path)]]
-
-
-def test_strip_quarantine_swallows_oserror(tmp_path, monkeypatch):
-    """Missing xattr (non-macOS host) → OSError → silently swallowed.
-    The helper is best-effort: failing it must not fail the compile."""
-    import client as client_module  # noqa: PLC0415
-
-    def fake_run(cmd, **kwargs):
-        raise FileNotFoundError("xattr not on this host")
-
-    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
-    client_module._strip_quarantine_xattr(str(tmp_path))  # must not raise
-
-
-def test_strip_quarantine_swallows_subprocess_error(tmp_path, monkeypatch):
-    import client as client_module  # noqa: PLC0415
-
-    def fake_run(cmd, **kwargs):
-        raise client_module.subprocess.TimeoutExpired(cmd=cmd, timeout=30)
-
-    monkeypatch.setattr(client_module.subprocess, "run", fake_run)
-    client_module._strip_quarantine_xattr(str(tmp_path))  # must not raise

@@ -45,7 +45,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.7.0-dev.58"
+CLIENT_VERSION = "1.7.0-dev.59"
 
 
 def _read_image_version() -> Optional[str]:
@@ -363,49 +363,71 @@ def _restart_self() -> None:
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
-def _strip_quarantine_xattr(path: str) -> None:
-    """#204: clear ``com.apple.quarantine`` from every file under *path*.
+def _log_toolchain_state(pio_dir: str, reason: str) -> None:
+    """#214: dump the PlatformIO toolchain layout to the worker log so the
+    next ``cc1: posix_spawnp: No such file or directory`` failure has
+    actionable context. Recursive ``ls`` of the xtensa-esp-elf packages
+    dir, plus disk-free + active-job count. Best-effort — we never raise.
 
-    macOS sets this xattr on tarballs / curl downloads, and PlatformIO's
-    tool-toolchain-xtensa-esp-elf packages inherit it. The first time
-    the build invokes ``xtensa-esp32-elf-gcc`` (which ``posix_spawn``s
-    ``cc1``), Gatekeeper denies the unsigned binary; the parent gcc
-    sees ENOENT and reports ``fatal error: cannot execute 'cc1':
-    posix_spawnp: No such file or directory``.
-
-    Best-effort — we never raise: a missing xattr binary, a denied
-    file, or a non-Darwin host is not a reason to fail the compile.
-    The 1-shot ``-r`` walk is fast on a clean tree (the xattr is
-    keyed in the file's xattr table; the recursive call short-circuits
-    when nothing matches).
+    Called from the compile failure path when the captured log mentions
+    a posix_spawnp ENOENT on cc1, so this only fires when we actually
+    need the data (no overhead on the happy path).
     """
-    cmd = ["/usr/bin/xattr", "-dr", "com.apple.quarantine", path]
-    logger.debug("Running quarantine-strip: %s", " ".join(cmd))
     try:
-        subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.debug("xattr quarantine-strip on %s failed: %s", path, exc)
+        toolchain_root = os.path.join(pio_dir, "packages")
+        if not os.path.isdir(toolchain_root):
+            logger.warning("[#214] no packages/ under %s — pio dir was wiped", pio_dir)
+            return
+        for entry in os.listdir(toolchain_root):
+            if "toolchain" not in entry and "esp" not in entry:
+                continue
+            sub = os.path.join(toolchain_root, entry)
+            try:
+                proc = subprocess.run(
+                    ["/bin/ls", "-laR", sub],
+                    check=False, capture_output=True, text=True, timeout=10,
+                )
+                logger.warning("[#214] %s — %s tree:\n%s", reason, sub, (proc.stdout or "")[:8000])
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("[#214] ls failed on %s: %s", sub, exc)
+        try:
+            st = os.statvfs(pio_dir)
+            free_gb = (st.f_frsize * st.f_bavail) / (1024 ** 3)
+            logger.warning("[#214] free disk on %s: %.1f GB", pio_dir, free_gb)
+        except OSError:
+            pass
+        with _active_jobs_lock:
+            logger.warning("[#214] active jobs on this worker: %d", _active_jobs)
+    except Exception:
+        logger.warning("[#214] toolchain-state diagnostic crashed", exc_info=True)
 
 
 def _clean_build_cache() -> None:
     """Remove build artifacts from the esphome-versions directory.
 
-    Bug #119: skips installed ESPHome venvs (anything with ``bin/esphome``).
-    The embedded local-worker shares ``/data/esphome-versions/`` with the
-    server's lazy-installed venv cache (see ``main.py``'s
-    ``ESPHOME_VERSIONS_DIR=/data/esphome-versions`` in the local-worker
-    spawn). Pre-fix, "Clean Cache" wiped the server's active venv along
-    with the build dirs, leaving ``scanner._server_esphome_bin`` pointing
-    at a deleted path; every subsequent bundle attempt then failed with
-    ``FileNotFoundError: '.../bin/python'`` until the add-on restarted.
-    Venv lifecycle is already bounded by ``MAX_ESPHOME_VERSIONS`` LRU
-    eviction in ``VersionManager``, so leaving them here is not a leak.
+    Preserves both:
+      - **Installed ESPHome venvs** (anything with ``bin/esphome``) —
+        bug #119; the embedded local-worker shares
+        ``/data/esphome-versions/`` with the server's lazy-installed
+        venv cache (see ``main.py``'s
+        ``ESPHOME_VERSIONS_DIR=/data/esphome-versions`` in the local-
+        worker spawn). Pre-#119, Clean Cache wiped the server's active
+        venv, leaving ``scanner._server_esphome_bin`` pointing at a
+        deleted path and every subsequent bundle failing with
+        ``FileNotFoundError: '.../bin/python'`` until the add-on
+        restarted. Venv lifecycle is already bounded by
+        ``MAX_ESPHOME_VERSIONS`` LRU eviction in ``VersionManager``,
+        so leaving them in place is not a leak.
+      - **PlatformIO core dirs** (``pio-slot-*/`` — toolchain home) —
+        bug #214; the xtensa-esp-elf toolchain is ~500 MB and takes
+        5–10 min to re-download via curl/tar. Wiping it on every Clean
+        Cache click forces every subsequent compile through that
+        re-download, and a partially-extracted toolchain surfaces as
+        ``cc1: posix_spawnp: No such file or directory`` on jobs that
+        race the first post-clean compile. The user's intent for Clean
+        Cache is "wipe build artifacts so the next compile is honest"
+        (i.e. ``slots/<N>/<stem>/`` and ``cache/<stem>/``), NOT "spend
+        10 minutes re-downloading the compiler."
     """
     import shutil
     base = Path(_ESPHOME_VERSIONS_DIR)
@@ -413,12 +435,21 @@ def _clean_build_cache() -> None:
         logger.info("No build cache to clean (%s does not exist)", base)
         return
     removed: list[str] = []
-    preserved_venvs: list[str] = []
+    preserved: list[str] = []
     for entry in base.iterdir():
         if not entry.is_dir():
             continue
+        # #119: preserve any directory that's an ESPHome venv.
         if (entry / "bin" / "esphome").exists():
-            preserved_venvs.append(entry.name)
+            preserved.append(entry.name)
+            continue
+        # #214: preserve PlatformIO core dirs so the toolchain isn't
+        # re-downloaded on every Clean Cache. Slot/cache build
+        # artifacts under ``pio-slot-<N>/cache/`` (PlatformIO's HTTP
+        # cache, scratch builds) are tiny vs the packages tree, so
+        # "preserve the whole pio-slot-N" is the right granularity.
+        if entry.name.startswith("pio-slot-"):
+            preserved.append(entry.name)
             continue
         try:
             shutil.rmtree(entry)
@@ -426,11 +457,11 @@ def _clean_build_cache() -> None:
             logger.info("Removed %s", entry.name)
         except Exception as exc:
             logger.warning("Failed to remove %s: %s", entry.name, exc)
-    if preserved_venvs:
+    if preserved:
         logger.info(
             "Build cache clean complete — removed %d cache dir(s); "
-            "preserved %d ESPHome venv(s): %s",
-            len(removed), len(preserved_venvs), preserved_venvs,
+            "preserved %d (venvs + pio-slot-*): %s",
+            len(removed), len(preserved), preserved,
         )
     else:
         logger.info(
@@ -1136,20 +1167,6 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
         logger.debug("Could not create pio dir %s (%s); using default PLATFORMIO_CORE_DIR", pio_dir, exc)
         subprocess_env = dict(os.environ)
 
-    # #204: PlatformIO downloads its toolchain via curl/tar on first
-    # use; on macOS those tarballs land with the
-    # ``com.apple.quarantine`` xattr which makes Gatekeeper kill any
-    # subprocess invocation of the unsigned binaries inside (cc1,
-    # ld, etc.). The exact symptom seen on the two Mac workers in
-    # the home lab was ``xtensa-esp-elf-gcc: fatal error: cannot
-    # execute 'cc1': posix_spawnp: No such file or directory`` —
-    # ENOENT bubbling up from Gatekeeper's deny. Sweeping the
-    # quarantine attribute off the per-slot tree before each compile
-    # is cheap (no-op on a clean tree), only happens on Darwin, and
-    # self-heals the case where a redownload re-introduced it.
-    if sys.platform == "darwin" and os.path.isdir(pio_dir):
-        _strip_quarantine_xattr(pio_dir)
-
     # Match server timezone so ESPHome produces identical config_hash.
     # Mismatched TZ → different hash → unnecessary clean rebuild → different firmware binary.
     server_tz = job.get("server_timezone")
@@ -1312,6 +1329,14 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
             env=subprocess_env,
             job_id=job_id,
         )
+
+        # #214: when the compile failed with the cc1 / posix_spawnp ENOENT
+        # symptom, dump the toolchain layout to the worker log so the next
+        # reproduction has actionable context (which file is missing, free
+        # disk, active job count). Cheap to do on the failure path; no-op
+        # on the happy path.
+        if not run_ok and ("posix_spawnp" in run_log or "cc1" in run_log):
+            _log_toolchain_state(pio_dir, "compile failed with cc1/posix_spawnp ENOENT")
 
         if run_ok:
             # #45: compile succeeded — sync the slot's .pio/.esphome back to

@@ -75,12 +75,12 @@ test('UpgradeModal fits within a short viewport and version list is reachable (#
   expect(dialog).not.toBeNull();
   expect(dialog!.fits, `dialog ${JSON.stringify(dialog!.r)} > viewport ${JSON.stringify(dialog!.viewport)}`).toBe(true);
 
-  // Version "Current" button is the first item in the inline scroll list;
-  // scrollIntoViewIfNeeded inside the dialog's overflow-y container should
-  // bring it on-screen.
-  const currentBtn = page.getByRole('dialog').getByRole('button', { name: /^Current/ });
-  await currentBtn.scrollIntoViewIfNeeded();
-  await expect(currentBtn).toBeInViewport();
+  // #215: "Current" version is now a radio label (was an inline button
+  // in the old scrolling list). The dialog's overflow-y container
+  // should still bring it on-screen via scrollIntoViewIfNeeded.
+  const currentRadio = page.getByRole('dialog').getByRole('radio', { name: /^Current/ });
+  await currentRadio.scrollIntoViewIfNeeded();
+  await expect(currentRadio).toBeInViewport();
 });
 
 for (const viewport of [
