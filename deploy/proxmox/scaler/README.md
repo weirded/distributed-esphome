@@ -97,6 +97,17 @@ If you prefer always-on, set `MIN_WORKERS = MAX_WORKERS` and the scaler becomes 
 | Deployment artifacts | Helm chart | Python package + systemd / Docker |
 | Networking | Pod CIDR (or hostNetwork) | LXC bridge (typically vmbr0) |
 
+## Automated deployment
+
+You don't have to do most of the install by hand. Three layers of automation, pick whichever fits:
+
+- **`deploy/terraform/`** — Terraform module that provisions the entire LXC pool from a template. Idempotent; resize the pool by editing `pool_size` and re-applying. Recommended if you already use IaC.
+- **`deploy/scripts/bootstrap-pool.sh`** — shell-script equivalent for users who don't want Terraform. `pct clone` loop with idempotency. Run on the Proxmox host.
+- **`deploy/systemd/esphome-fleet-proxmox-scaler.service`** — runs the scaler natively under systemd with hardened sandboxing.
+- **`Dockerfile` + `docker-compose.yml`** — runs the scaler as a container (anywhere with Proxmox API reachability).
+
+The one thing you still do by hand is creating the **LXC template** (one container with worker autostart configured, then `pct template`). That's a five-minute setup once; the scaler + automation handles everything after.
+
 ## Status
 
-This is a **draft** scaffold accompanying PR #<TBD>. The polling loop, Fleet client, Proxmox client, and unit tests are in place; Dockerfile, systemd unit, docker-compose, and a chart-CI-equivalent test workflow are follow-ups.
+This is a **draft** scaffold accompanying PR #113. Includes the polling loop, Fleet client, Proxmox client, unit tests (25/25 pass), Dockerfile, docker-compose, systemd unit, bootstrap shell script, and Terraform module. Live cluster integration test + a CI workflow at `.github/workflows/proxmox-scaler-ci.yml` are remaining follow-ups.
