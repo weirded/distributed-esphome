@@ -36,11 +36,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import collections
+import errno
 import http.server
 import json
 import os
 import re
 import shutil
+import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -1219,6 +1223,146 @@ class _StatusHandler(http.server.BaseHTTPRequestHandler):
         return
 
 
+_DASHBOARD_TERMINAL_PHASES = {"done", "failed", "deploy-failed"}
+_DASHBOARD_ACTIVE_PHASES = {"pending", "deploying", "testing"}
+
+
+def _find_listener_pid(port: int) -> int | None:
+    """Return the PID listening on 127.0.0.1:<port>, or None if lsof can't tell."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    for line in out.splitlines():
+        if line.startswith("p"):
+            try:
+                return int(line[1:])
+            except ValueError:
+                pass
+    return None
+
+
+def _try_bind(port: int) -> bool:
+    """True if the script can bind 127.0.0.1:<port> right now.
+
+    Sets ``SO_REUSEADDR`` to mirror ``http.server.ThreadingHTTPServer``'s
+    default ``allow_reuse_address = True`` — otherwise the probe says
+    "still busy" for ~30 s after the prior dashboard exits while the
+    kernel holds the socket in TIME_WAIT, even though the real bind in
+    ``start_web_server`` would succeed immediately.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("127.0.0.1", port))
+        return True
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        return False
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def _ensure_port_available(port: int) -> None:
+    """Reclaim ``port`` from a stale test-matrix dashboard if there is one.
+
+    The ``--web`` mode keeps the HTTP server up after the matrix run
+    finishes (``Web UI still at … (Ctrl-C to exit)``) so a developer can
+    revisit the final state. That convenience is also the source of the
+    every-third-day "OSError: Address already in use" papercut: a window
+    closed without Ctrl-C leaves PID N idling on 8099, and the next run
+    dies before reaching the matrix code at all.
+
+    Behaviour, in order:
+      1. Port free → return.
+      2. Port held but the listener doesn't speak our /status.json shape
+         → exit non-zero (don't kill an unknown process).
+      3. Port held by a finished test-matrix dashboard (every target's
+         ``phase`` is terminal, or no targets are recorded yet/anymore)
+         → SIGTERM that PID, wait up to 5 s for the port to free, retry.
+      4. Port held by a *running* test-matrix run (any target in
+         ``pending`` / ``deploying`` / ``testing``) → exit non-zero with
+         the offending target list and a pointer to the live dashboard.
+         Killing an in-progress run would corrupt half-deployed targets;
+         the right move is for the user to wait or stop it themselves.
+    """
+    if _try_bind(port):
+        return
+
+    # Port busy — see whether it's our dashboard speaking.
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status.json", timeout=2) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+    except Exception as e:  # noqa: BLE001 — broad on purpose; any failure → bail
+        sys.stderr.write(
+            f"Port {port} is in use, and the listener doesn't respond like a "
+            f"test-matrix dashboard ({type(e).__name__}: {e}).\n"
+            f"Pick a different port with --web-port, or stop the conflicting process.\n"
+        )
+        sys.exit(2)
+
+    if not (isinstance(payload, dict) and {"build", "targets", "output"} <= payload.keys()):
+        sys.stderr.write(
+            f"Port {port} is in use by something that responds to HTTP but isn't a "
+            f"test-matrix dashboard. Pick a different port with --web-port, or stop "
+            f"the conflicting process.\n"
+        )
+        sys.exit(2)
+
+    targets = payload.get("targets") or []
+    in_flight = [t for t in targets if t.get("phase") in _DASHBOARD_ACTIVE_PHASES]
+    if in_flight:
+        names = ", ".join(f"{t.get('name', '?')} ({t.get('phase')})" for t in in_flight)
+        sys.stderr.write(
+            f"Another test-matrix run is still active on port {port}: {names}.\n"
+            f"Open http://127.0.0.1:{port}/ to watch it, or wait for it to finish "
+            f"before retrying. Pass --web-port to run a second matrix in parallel.\n"
+        )
+        sys.exit(2)
+
+    # All recorded targets are terminal (or there are none — same shape the
+    # idle dashboard shows after `_clear_state_dir` ran on the prior cycle).
+    pid = _find_listener_pid(port)
+    if pid is None:
+        sys.stderr.write(
+            f"Port {port} is held by a finished test-matrix dashboard but lsof "
+            f"couldn't identify the PID. Stop it manually or pick a different "
+            f"--web-port.\n"
+        )
+        sys.exit(2)
+
+    tprint(
+        color("build", f"==> Port {port} held by stale test-matrix dashboard (PID {pid}); terminating..."),
+        flush=True,
+    )
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass  # Already gone; the port should free shortly.
+    except OSError as e:
+        sys.stderr.write(f"Could not signal PID {pid}: {e}\n")
+        sys.exit(2)
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if _try_bind(port):
+            return
+        time.sleep(0.2)
+
+    sys.stderr.write(
+        f"Port {port} did not free within 5 s after SIGTERM to PID {pid}. "
+        f"Try again or pick another --web-port.\n"
+    )
+    sys.exit(2)
+
+
 def start_web_server(port: int) -> None:
     """Start the status server on a background daemon thread."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), _StatusHandler)
@@ -1367,6 +1511,10 @@ def main() -> int:
 
     if args.web and not args.list:
         LOG_ROOT.mkdir(parents=True, exist_ok=True)
+        # Reclaim the port from a stale dashboard before clearing state —
+        # the probe needs the prior run's targets[] to tell active from
+        # finished, and `_clear_state_dir` would erase that signal first.
+        _ensure_port_available(args.web_port)
         _clear_state_dir()
         start_web_server(args.web_port)
 
