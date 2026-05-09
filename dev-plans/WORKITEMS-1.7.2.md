@@ -144,4 +144,6 @@ CI.4 protects the tier flip (TP.3); CI.6 protects the coverage claim (HT.12 / QS
 
 *(Any post-tag regression against `v1.7.1` lands here as a numbered bug once 1.7.1 ships.)*
 
+- [ ] **#131 (sub-bullets 4 + 5)** — *Compile-with-old-versions* shipped in 1.7.1-dev.12 (legacy bundle path for ESPHome <2026.4); two polish sub-bullets deferred per the in-line sizing note: (4) UI **"Installable" filter** in the version dropdown (mirror the existing "Show betas" toggle, default ON) — pure UX polish on top of the now-honest dropdown; (5) **validate-with-pinned-version** so `/ui/api/validate` reads the YAML's `esphome_version:` pin and routes through the matching `<venv>/bin/esphome` instead of the currently-selected one (closes the second half of [#130](https://github.com/weirded/distributed-esphome/issues/130) — pinning 2026.3.3 to dodge the 2026.4 YAML-parser regression should validate cleanly without flipping the global selection). Pairs naturally; ship together.
+
 ### New in 1.7.2
