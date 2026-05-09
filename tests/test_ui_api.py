@@ -1480,6 +1480,7 @@ async def test_get_settings_returns_defaults_on_fresh_boot(tmp_path, _settings_i
             "time_format": "auto",
             "date_format": "auto",
             "default_worker_disk_quota_bytes": 10 * 1024 ** 3,
+            "device_native_api_poll": False,
         }
     finally:
         await ta.close()
