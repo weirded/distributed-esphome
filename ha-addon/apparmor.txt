@@ -1,6 +1,6 @@
 #include <tunables/global>
 
-# SS.1 (1.6.1): AppArmor profile for the ESPHome Fleet add-on.
+# SS.1 (1.6.1): AppArmor profile for the Fleet for ESPHome add-on.
 #
 # Scope: server (aiohttp + `/app/server/`) and the bundled local-worker
 # subprocess (`/app/client/client.py`), both running as PID 1+ inside

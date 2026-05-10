@@ -1,4 +1,4 @@
-"""Config flow for ESPHome Fleet (HI.1).
+"""Config flow for Fleet for ESPHome (HI.1).
 
 Two entry paths:
   - manual: user types the base URL of a running add-on
@@ -8,7 +8,7 @@ Two entry paths:
 Both land in `_async_create_entry` which de-duplicates by URL.
 
 Structure adapted from Ardumine's PR #57 with the post-rebrand domain
-(`esphome_fleet`) and name ("ESPHome Fleet").
+(`esphome_fleet`) and name ("Fleet for ESPHome").
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _normalize_base_url(value: str) -> str:
 
 
 class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for ESPHome Fleet."""
+    """Handle a config flow for Fleet for ESPHome."""
 
     VERSION = 1
 
@@ -96,7 +96,7 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # `async_step_reauth_confirm` can update its data.
     _reauth_entry: config_entries.ConfigEntry | None = None
     # QS.5 (1.6.1): reconfigure context — the entry being edited via
-    # Settings → Devices & Services → ESPHome Fleet → Configure, so
+    # Settings → Devices & Services → Fleet for ESPHome → Configure, so
     # ``async_step_reconfigure`` can update URL + token without
     # forcing the user to remove and re-add the integration.
     _reconfigure_entry: config_entries.ConfigEntry | None = None
@@ -248,8 +248,9 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not token:
                     # AU.7: manual setup needs the add-on token so the
                     # coordinator has a Bearer credential. The user can
-                    # copy it from Settings → Add-ons → ESPHome Fleet →
-                    # Configuration.
+                    # copy it from the add-on's own UI: open the Fleet
+                    # for ESPHome add-on → Settings (gear icon) →
+                    # Authentication → Server token (#231).
                     errors[CONF_TOKEN] = "token_required"
                 elif not await _probe_server(self.hass, base_url):
                     # CR.16: probe the URL before creating the entry. If
@@ -347,7 +348,7 @@ class EsphomeFleetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured(updates={CONF_BASE_URL: base_url})
 
         # `discovery_info.name` is the full mDNS service instance name,
-        # e.g. "ESPHome Fleet._esphome-fleet._tcp.local.". Strip the
+        # e.g. "Fleet for ESPHome._esphome-fleet._tcp.local.". Strip the
         # service-type suffix so the confirm dialog shows just the
         # human-readable instance label (#31).
         raw_name = (discovery_info.name or "").removesuffix(

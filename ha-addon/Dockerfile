@@ -46,7 +46,7 @@ ARG BUILD_ARCH
 ARG BUILD_VERSION
 
 LABEL \
-    io.hass.name="ESPHome Fleet" \
+    io.hass.name="Fleet for ESPHome" \
     io.hass.description="A modern Home Assistant UI for ESPHome — git-backed config history, live compile queue, per-device version pinning, scheduled OTA, optional distributed compilation" \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="addon" \

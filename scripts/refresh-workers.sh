@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh ESPHome Fleet client containers on a hardcoded list of remote hosts.
+# Refresh Fleet for ESPHome client containers on a hardcoded list of remote hosts.
 # Mirrors the docker-run template from ConnectWorkerModal.tsx (bash branch).
 # Continues past unreachable / non-Docker hosts.
 

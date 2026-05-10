@@ -1,4 +1,4 @@
-"""mDNS advertisement for ESPHome Fleet (HI.7).
+"""mDNS advertisement for Fleet for ESPHome (HI.7).
 
 Registers `_esphome-fleet._tcp.local.` so the HA custom integration's
 zeroconf matcher auto-discovers the add-on. Properties carry the
@@ -49,7 +49,7 @@ def _primary_ipv4() -> str | None:
 class FleetAdvertiser:
     """Owns a ServiceInfo registration for the add-on's own mDNS record."""
 
-    def __init__(self, zc: AsyncZeroconf, port: int, service_name: str = "ESPHome Fleet") -> None:
+    def __init__(self, zc: AsyncZeroconf, port: int, service_name: str = "Fleet for ESPHome") -> None:
         self._zc = zc
         self._port = port
         self._service_name = service_name

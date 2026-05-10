@@ -1,6 +1,6 @@
 # Environment variables — server and client
 
-Inventory of every environment variable the ESPHome Fleet server (`ha-addon/server/`) and worker (`ha-addon/client/`) read at runtime. Dev-loop scripts and the HA custom integration are out of scope — the integration reads none; dev scripts are orchestration glue, not app config.
+Inventory of every environment variable the Fleet for ESPHome server (`ha-addon/server/`) and worker (`ha-addon/client/`) read at runtime. Dev-loop scripts and the HA custom integration are out of scope — the integration reads none; dev scripts are orchestration glue, not app config.
 
 Generated 2026-04-23 from `grep -rnE 'os\.environ|os\.getenv' ha-addon/{server,client}/`.
 

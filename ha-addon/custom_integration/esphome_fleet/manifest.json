@@ -1,6 +1,6 @@
 {
   "domain": "esphome_fleet",
-  "name": "ESPHome Fleet",
+  "name": "Fleet for ESPHome",
   "codeowners": ["@weirded"],
   "config_flow": true,
   "documentation": "https://github.com/weirded/distributed-esphome",

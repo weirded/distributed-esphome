@@ -75,7 +75,7 @@ def test_in_process_thread_dump_captures_current_thread() -> None:
     """The dump contains at minimum the test-runner thread's name + a
     recognisable frame from the call site."""
     text = diagnostics.in_process_thread_dump()
-    assert "ESPHome Fleet thread dump" in text
+    assert "Fleet for ESPHome thread dump" in text
     assert "thread(s)" in text
     # Pytest's main thread is "MainThread"; the frame walk must
     # include the current test function name so downstream readers
@@ -123,7 +123,7 @@ def test_run_self_thread_dump_returns_ok_with_frames() -> None:
     on the in-process walk. Assert ``ok=True`` and the output shape."""
     ok, text = diagnostics.run_self_thread_dump()
     assert ok is True
-    assert text.startswith("ESPHome Fleet thread dump")
+    assert text.startswith("Fleet for ESPHome thread dump")
     assert "MainThread" in text
 
 

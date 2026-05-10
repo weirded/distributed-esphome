@@ -1,8 +1,8 @@
-"""QS.3 — System Health integration for ESPHome Fleet.
+"""QS.3 — System Health integration for Fleet for ESPHome.
 
 Surfaces add-on reachability, ESPHome version, worker count, and queue
 depth on HA's *System Health* panel (Settings → System → Repairs &
-Information → System Information → ESPHome Fleet).
+Information → System Information → Fleet for ESPHome).
 
 Why this matters: when something's wrong with the fleet, users
 typically go to the integration's device page first, not the add-on
@@ -30,7 +30,7 @@ from .const import CONF_BASE_URL, DOMAIN
 def async_register(
     hass: HomeAssistant, register: system_health.SystemHealthRegistration,
 ) -> None:
-    """Register ESPHome Fleet in the System Health panel."""
+    """Register Fleet for ESPHome in the System Health panel."""
     register.async_register_info(_system_health_info)
 
 

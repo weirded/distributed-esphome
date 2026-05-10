@@ -11,7 +11,7 @@ from integration_installer import install_integration
 def _write_manifest(directory: Path, version: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "manifest.json").write_text(
-        json.dumps({"domain": "esphome_fleet", "name": "ESPHome Fleet", "version": version})
+        json.dumps({"domain": "esphome_fleet", "name": "Fleet for ESPHome", "version": version})
     )
     (directory / "__init__.py").write_text("# stub\n")
 

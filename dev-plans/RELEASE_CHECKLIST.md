@@ -82,7 +82,7 @@ The goal here is **what isn't automated**. Anything covered by CI, the pre-push 
     magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 256x256 docs/brands-submission/custom_integrations/esphome_fleet/icon.png
     magick -background none ha-addon/ui/src/assets/esphome-logo.svg -resize 512x512 docs/brands-submission/custom_integrations/esphome_fleet/icon@2x.png
     WORDMARK() { magick -background none -fill "#18BCF2" -font "Helvetica-Bold" \
-      -pointsize "$1" label:"ESPHome Fleet" \
+      -pointsize "$1" label:"Fleet for ESPHome" \
       -bordercolor none -border "$2" "$3"; }
     WORDMARK 64   20x16  docs/brands-submission/custom_integrations/esphome_fleet/logo.png
     WORDMARK 128  40x32  docs/brands-submission/custom_integrations/esphome_fleet/logo@2x.png

@@ -8,9 +8,9 @@ Be extremely concise. Sacrifice grammar for the sake of concision.
 
 ## Project Overview
 
-ESPHome Fleet (internally: `distributed-esphome`) manages fleets of ESPHome devices — offloads compilation to remote workers, schedules upgrades, pins versions per device, and organizes devices via tags. Runs as a Home Assistant add-on with a built-in local worker. Additional build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices.
+Fleet for ESPHome (internally: `distributed-esphome`; previously branded "ESPHome Fleet" 1.5.0–1.7.0) manages fleets of ESPHome devices — offloads compilation to remote workers, schedules upgrades, pins versions per device, and organizes devices via tags. Runs as a Home Assistant add-on with a built-in local worker. Additional build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices. <!-- br1-allow: brand-history -->
 
-**Naming convention:** user-facing docs/UI/log lines say **"ESPHome Fleet"**. Code identifiers, the GitHub repo (`weirded/distributed-esphome`), Docker image names (`esphome-dist-server`, `esphome-dist-client`), the add-on slug (`esphome_dist_server`), Python module names, and the YAML comment marker (`# distributed-esphome:`) all keep their original `distributed_esphome` / `esphome-dist-*` form — changing those would force a migration on every existing install for no user benefit.
+**Naming convention:** user-facing docs/UI/log lines say **"Fleet for ESPHome"** (1.7.1 BR.1 rebrand). Code identifiers, the GitHub repo (`weirded/distributed-esphome`), Docker image names (`esphome-dist-server`, `esphome-dist-client`), the add-on slug (`esphome_dist_server`), the custom-integration domain (`esphome_fleet`), the mDNS service type (`_esphome-fleet._tcp.local.`), Python module names, and the YAML comment marker (`# distributed-esphome:`) all keep their existing form — changing those would force a migration on every existing install for no user benefit.
 
 ## Architecture
 

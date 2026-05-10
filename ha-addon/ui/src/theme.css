@@ -11,7 +11,7 @@
 /* Preflight overrides — constrain logo height. #85: bumped from 26px
    (sized for the old ESPHome wordmark) to 40px now that the header
    uses the square "house" glyph — 40px reads as a prominent brand
-   mark next to the 20px "ESPHome Fleet" wordmark while still leaving
+   mark next to the 20px "Fleet for ESPHome" wordmark while still leaving
    ~6px of vertical breathing room inside the 52px-tall header. */
 header img {
   height: 40px;
@@ -335,6 +335,9 @@ input[type="checkbox"] {
 .editor-header .modal-close:hover { color: #ccc; background: #3c3c3c; }
 .monaco-container { flex: 1; overflow: hidden; }
 .editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 4px 16px;
   font-size: 11px;
   color: #f59e0b;

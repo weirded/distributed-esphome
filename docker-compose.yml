@@ -1,4 +1,4 @@
-# ESPHome Fleet — standalone Docker deployment.
+# Fleet for ESPHome — standalone Docker deployment.
 #
 # This compose file is the supported shape for running the server
 # outside Home Assistant. `scripts/push-to-standalone.sh` uses it to

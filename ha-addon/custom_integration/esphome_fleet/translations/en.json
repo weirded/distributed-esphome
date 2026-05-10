@@ -1,10 +1,10 @@
 {
   "config": {
-    "flow_title": "ESPHome Fleet",
+    "flow_title": "Fleet for ESPHome",
     "step": {
       "user": {
-        "title": "Connect to ESPHome Fleet",
-        "description": "Enter the base URL of your ESPHome Fleet add-on (for example {example_url}) and the shared token from the add-on's Configuration tab.",
+        "title": "Connect to Fleet for ESPHome",
+        "description": "Enter the base URL of your Fleet for ESPHome add-on (for example {example_url}) and the **Server token** shown in the add-on's Settings drawer, under Authentication.",
         "data": {
           "base_url": "Base URL",
           "token": "Add-on token"
@@ -12,22 +12,22 @@
       },
       "discovery_confirm": {
         "title": "Set up {name}",
-        "description": "Home Assistant found an ESPHome Fleet server at {url}. Confirm or edit the URL to finish setup.",
+        "description": "Home Assistant found a Fleet for ESPHome server at {url}. Confirm or edit the URL to finish setup.",
         "data": {
           "base_url": "Base URL",
           "token": "Add-on token"
         }
       },
       "reauth_confirm": {
-        "title": "ESPHome Fleet needs a new token",
-        "description": "The add-on at {url} is rejecting requests. Re-enter the shared token from Settings → Add-ons → ESPHome Fleet → Configuration.",
+        "title": "Fleet for ESPHome needs a new token",
+        "description": "The add-on at {url} is rejecting requests. Open the add-on, click **Settings → Authentication**, copy the **Server token**, and paste it below.",
         "data": {
           "token": "Add-on token"
         }
       },
       "reconfigure_confirm": {
-        "title": "Reconfigure ESPHome Fleet",
-        "description": "Update the base URL or token for the ESPHome Fleet add-on currently at {url}.",
+        "title": "Reconfigure Fleet for ESPHome",
+        "description": "Update the base URL or token for the Fleet for ESPHome add-on currently at {url}.",
         "data": {
           "base_url": "Base URL",
           "token": "Add-on token"
@@ -37,8 +37,8 @@
     },
     "error": {
       "invalid_url": "Enter a valid http(s) URL.",
-      "cannot_connect": "Could not reach the ESPHome Fleet server at that URL. Check the URL, that the add-on is running, and that this host can reach it.",
-      "token_required": "The add-on token is required. Copy it from Settings → Add-ons → ESPHome Fleet → Configuration."
+      "cannot_connect": "Could not reach the Fleet for ESPHome server at that URL. Check the URL, that the add-on is running, and that this host can reach it.",
+      "token_required": "The add-on token is required. Copy it from the add-on's **Settings → Authentication → Server token**."
     },
     "abort": {
       "already_configured": "This server is already configured.",
@@ -77,11 +77,11 @@
   },
   "issues": {
     "config_entry_reauth": {
-      "title": "ESPHome Fleet needs a new token",
+      "title": "Fleet for ESPHome needs a new token",
       "fix_flow": {
         "step": {
           "init": {
-            "description": "The add-on at {url} is rejecting requests — the shared token may have been rotated. Click **Submit** to open the re-authentication form."
+            "description": "The add-on at {url} is rejecting requests — the shared token may have been rotated. Open the add-on, click **Settings → Authentication**, copy the current **Server token**, then click **Submit** to paste it into the re-authentication form."
           }
         }
       }
@@ -89,10 +89,10 @@
   },
   "exceptions": {
     "no_config_entry": {
-      "message": "No ESPHome Fleet config entry configured — add the integration first via Settings → Devices & Services."
+      "message": "No Fleet for ESPHome config entry configured — add the integration first via Settings → Devices & Services."
     },
     "no_managed_target_in_selection": {
-      "message": "None of the selected devices are managed ESPHome Fleet targets."
+      "message": "None of the selected devices are managed by Fleet for ESPHome."
     },
     "no_target_selected": {
       "message": "Select at least one device or provide a 'targets' list."
@@ -101,7 +101,7 @@
       "message": "Select a device or provide a 'target' filename."
     },
     "invalid_worker_device": {
-      "message": "The selected worker is not an ESPHome Fleet build worker."
+      "message": "The selected worker is not a Fleet for ESPHome build worker."
     },
     "no_targets_match_tags": {
       "message": "No managed devices match the supplied tag expression."

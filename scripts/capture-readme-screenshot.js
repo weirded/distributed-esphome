@@ -74,6 +74,12 @@ if (!TOKEN) {
     await page.waitForTimeout(800);
   }
 
+  // Opening the drawer can scroll the page; bring the header back into
+  // view so the screenshot includes the wordmark + tab strip — that's
+  // what makes it readable as the canonical hero.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(200);
+
   await page.screenshot({ path: '/tmp/screenshot-history-diff.png', fullPage: false });
   console.log('Wrote /tmp/screenshot-history-diff.png');
   await browser.close();

@@ -200,7 +200,7 @@ def install_integration(
     if destination_version is None:
         logger.info(
             "Installed HA integration esphome_fleet v%s → %s. "
-            "Add it via Settings → Devices & Services → ESPHome Fleet.",
+            "Add it via Settings → Devices & Services → Fleet for ESPHome.",
             source_version,
             destination_dir,
         )

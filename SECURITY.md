@@ -4,9 +4,9 @@
 
 | Version  | Supported          |
 |----------|--------------------|
-| 1.7.0    | ✅ Current release  |
-| 1.6.2    | ✅ Previous stable — security fixes only if trivially backportable |
-| < 1.6.2  | ❌ No patches       |
+| 1.7.1    | ✅ Current release  |
+| 1.7.0    | ✅ Previous stable — security fixes only if trivially backportable |
+| < 1.7.0  | ❌ No patches       |
 
 *(Note: the 1.5 release was developed as `1.4.1-dev.N` through dev.72 and renumbered late cycle as scope grew beyond a patch release. Docker tags with the `1.4.1-dev.N` stamp remain pullable from GHCR but are superseded by the 1.5.x stable tags.)*
 
@@ -64,7 +64,7 @@ The stated threat model is a **trusted home network** behind Home Assistant's In
 
 ### UI-API authentication (mandatory since 1.5.0)
 
-- **`require_ha_auth` add-on option** — **default `true` in 1.5.0** (AU.7). Direct-port (`:8765`) `/ui/api/*` requests must carry a valid Bearer token or get `401 Bearer realm="ESPHome Fleet"`. Ingress-tunneled access is unaffected (Supervisor injects `X-Ingress-Path`).
+- **`require_ha_auth` add-on option** — **default `true` in 1.5.0** (AU.7). Direct-port (`:8765`) `/ui/api/*` requests must carry a valid Bearer token or get `401 Bearer realm="Fleet for ESPHome"`. Ingress-tunneled access is unaffected (Supervisor injects `X-Ingress-Path`).
 - **Two Bearer shapes accepted:** (a) the add-on's shared worker token — used automatically by the native HA integration's coordinator, which receives it via the Supervisor-discovery payload; (b) a Home Assistant long-lived access token, validated against the Supervisor's `/auth` endpoint.
 - **Mutation attribution** — when the request was authenticated, compile / pin / schedule / rename / delete log lines suffix the resolved user's name (`…enqueued by stefan`), giving per-user audit trails in the add-on log. System-Bearer callers (the integration) attribute to `esphome_fleet_integration` so you can distinguish system from user actions.
 
@@ -94,13 +94,22 @@ These are accepted risks within the home-network threat model; see the full audi
 - **HTTP between workers and server** (not HTTPS). Users with remote workers across network segments should front the server with their own reverse proxy.
 - **Bearer token visible to the browser** (required for the Connect Worker modal's `docker run` command UX).
 - **Direct-port `/ui/api/*` Bearer required by default** (AU.7). If a user flips `require_ha_auth: false` deliberately — for an isolated test harness, say — they're opting out of this default and the old "relies only on HA Ingress" trust model applies.
-- **`secrets.yaml` delivered to every build worker — filtered since 1.6.2** (workers receive only the `!secret` keys the bundled target actually references, courtesy of ESPHome 2026.4's built-in bundle format; the full `secrets.yaml` is no longer shipped). Workers are trusted per the threat model; this narrows the blast radius when a worker is on a less-trusted host.
+- **`secrets.yaml` delivered to every build worker — filtered when the server is on ESPHome 2026.4+** (workers receive only the `!secret` keys the bundled target actually references, courtesy of ESPHome 2026.4's built-in bundle format; the full `secrets.yaml` is no longer shipped on that path). When the server's *active* ESPHome is pinned below 2026.4 (lifted in 1.7.1, see #131), the bundle falls back to a full-config-dir tar that includes the entire `secrets.yaml` plus every other device's YAML. Workers are trusted per the threat model; the modern, scoped path is the default and narrows the blast radius when a worker is on a less-trusted host. Operators sharing workers with untrusted parties should keep the server pinned to 2026.4+ regardless of per-target version pins.
 - **Build workers can execute `external_components:` / `includes:` / `libraries:` Python** during compile — core ESPHome feature, accepted because workers are trusted.
 - **Worker-to-worker job-result authorization isn't checked** on `submit_result` / `update_status` — any authenticated worker can submit results for any job. Accepted because workers are trusted.
 
 ### Residual posture
 
-All 21 audit findings are now FIXED, WONTFIX-by-threat-model, or marked INFO. Cycle deltas for 1.7.0 (no F-* status flips):
+All 21 audit findings are now FIXED, WONTFIX-by-threat-model, or marked INFO. Cycle deltas for 1.7.1 (no F-* status flips):
+
+- **Brand rebrand — metadata-only at the network/auth layer.** *"ESPHome Fleet"* (1.5.0–1.7.0) renamed to **Fleet for ESPHome**. Verified pre-flip in WORKITEMS-1.7.1 BR.1 sub-bullet 12: code identifiers (add-on slug, integration domain, GHCR image names, mDNS service type, Bearer-realm consumers, all `esphome_fleet.*` HA service names) keep their existing forms. No migration on existing installs; no trust-boundary change. <!-- br1-allow: rebrand chronology -->
+- **Legacy full-config-dir bundle path (#131).** Lifted the install-time refusal of ESPHome <2026.4. The server's `create_bundle` now branches on the *server*'s installed ESPHome version: ≥2026.4 keeps the validated, target-scoped `ConfigBundleCreator` subprocess; <2026.4 falls back to a deterministic full-config-dir tar (mirrors the pre-1.6.2 layout). Trade-off: the legacy path ships every device's `secrets.yaml` and every other device's YAML to the worker — see the bullet under "What is *not* in scope" above. Per-job ESPHome version selection is independent of the server's bundling version (the server's *active* venv decides bundle shape; the *job*'s pinned version decides what the worker compiles with), so an operator who keeps the server on 2026.4+ retains the scoped bundle even when individual targets compile against older releases.
+- **Quieter device polling (#238).** Pre-1.7.1 the add-on opened a fresh `aioesphomeapi` connection to every known device every 60 s. The new default reads steady-state liveness from mDNS announcements (which already carry `version` in the TXT record) and only opens an API connection on first sight of a new device or right after a Fleet-driven OTA. Reduces the add-on's egress footprint inside the LAN by ~60×. New `device_native_api_poll` Setting (default OFF) restores the old behaviour for users diagnosing a flaky device. Defensive only.
+- **Worker eligibility-check error handling (#234).** `GET /api/v1/jobs/next` now wraps the per-worker eligibility check in a try/except that logs the traceback at WARNING with `client_id` and falls through to HTTP 204 instead of bubbling a HTTP 500. Closes a DoS-by-stupidity loop where a single misformatted worker would lock-loop the server with 500s while never claiming a job. Same trust tier; defensive only.
+- **Server-side firmware-upload grace window (#236).** `POST /api/v1/jobs/{id}/firmware/{variant}` accepts a 60-second grace past `finished_at` for the still-assigned worker only (other workers' uploads on a finished job continue to be rejected via `client_id` lookup). Logged at INFO. Closes a worker-side race where slow variant uploads after the OTA succeeded would land just after the timeout-checker flipped the job to FAILED. Not a trust-boundary change.
+- **Dependabot alerts at release time:** two open HIGH alerts on `fast-uri` (#10 / #14) — transitive of the *dev-only* `shadcn` CLI → `@modelcontextprotocol/sdk` → `ajv`. Never reaches production bundles (Vite-built UI does not import `shadcn` at runtime). Upstream advisories list `first_patched_version: null` — nothing to upgrade to. Tracked as `fast-uri-DEV` WONTFIX in `WORKITEMS-1.7.1.md`; re-evaluate next release.
+
+Cycle deltas for 1.7.0 (no F-* status flips):
 
 - **`NET_RAW` capability added (DM.2 / #206).** The new ICMP ping diagnostic needs raw ICMP sockets on installs where `net.ipv4.ping_group_range` is empty (HAOS default `1 0`). `config.yaml` declares `privileged: [NET_RAW]`; the helper tries the unprivileged datagram path first and only falls back to raw sockets when the kernel refuses the safer path. Scoped to ICMP — the endpoint accepts no arbitrary host, only resolves the configured device's OTA address through `device_poller.resolve_ota_address`. The capability is the only non-default Linux capability the add-on holds.
 - **Bundle-creation race eliminated (#111).** Before 1.7.0, parallel job claims could race ESPHome's `git.clone_or_update` (which is not safe under concurrent invocation) and surface partial-state trees as misleading validation errors in build logs. 1.7.0 wraps every bundle subprocess behind a server-wide `asyncio.Lock`, eliminating both the sporadic build-log error confusion and the (lower-probability) race-window in which a concurrently-extracting `external_components` checkout could leak intermediate state into another job's bundle. Filed upstream against ESPHome.

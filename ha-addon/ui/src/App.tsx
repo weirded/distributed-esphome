@@ -753,13 +753,13 @@ export default function App() {
     <>
       <header>
         {/* #85: replaced the CDN-hotlinked ESPHome wordmark with just the
-            house glyph served locally, paired with our own "ESPHome Fleet"
+            house glyph served locally, paired with our own "Fleet for ESPHome"
             wordmark rendered in the app's own type. Also removes the
             dependency on a third-party CDN at page-load time (wordmark
             was served from media.esphome.io). */}
         <img
           src={esphomeLogoUrl}
-          alt="ESPHome Fleet"
+          alt="Fleet for ESPHome"
           /* actual size is driven by `header img { height: 40px }` in
              theme.css — attributes here are just intrinsic-aspect hints
              for the browser (square → width = height). */
@@ -776,7 +776,7 @@ export default function App() {
             letterSpacing: '-0.01em',
           }}
         >
-          ESPHome Fleet
+          Fleet for ESPHome
         </span>
         <span className="rounded-full border border-[var(--border)] bg-[var(--surface2)] px-2 py-0.5 text-[11px] text-[var(--text-muted)] whitespace-nowrap">
           {serverInfo.addon_version ? `v${serverInfo.addon_version}` : 'v?'}
@@ -978,7 +978,7 @@ export default function App() {
               Session expired
             </h2>
             <p className="mb-4 text-sm text-[var(--text-muted)]">
-              ESPHome Fleet requires a valid Home Assistant session. Your
+              Fleet for ESPHome requires a valid Home Assistant session. Your
               session likely timed out, or the <code>?token=</code> you used
               for direct-port access is no longer valid. Reload to
               re-authenticate through Home Assistant.

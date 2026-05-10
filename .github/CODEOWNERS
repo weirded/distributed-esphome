@@ -1,4 +1,4 @@
-# CODEOWNERS for distributed-esphome (ESPHome Fleet).
+# CODEOWNERS for distributed-esphome (Fleet for ESPHome).
 #
 # Single maintainer today; the wildcard claims the whole tree so
 # every PR gets an explicit reviewer assignment. If the project ever

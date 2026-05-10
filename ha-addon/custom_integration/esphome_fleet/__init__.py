@@ -1,4 +1,4 @@
-"""ESPHome Fleet Home Assistant integration.
+"""Fleet for ESPHome Home Assistant integration.
 
 Wires up:
   - HI.1  a config entry per add-on base URL (see config_flow.py)
@@ -50,7 +50,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up ESPHome Fleet from a config entry."""
+    """Set up Fleet for ESPHome from a config entry."""
     base_url = entry.data[CONF_BASE_URL]
     # AU.7: token is optional only for entries created before AU.7
     # shipped — new entries always carry it, and the add-on now requires
@@ -109,12 +109,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     event_stream.start()
     entry.async_on_unload(event_stream.stop)
 
-    _LOGGER.info("ESPHome Fleet entry %s set up against %s", entry.entry_id, base_url)
+    _LOGGER.info("Fleet for ESPHome entry %s set up against %s", entry.entry_id, base_url)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload an ESPHome Fleet config entry."""
+    """Unload an Fleet for ESPHome config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
         return False

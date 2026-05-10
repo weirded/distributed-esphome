@@ -1,4 +1,4 @@
-# ESPHome Fleet — End-User Persona (draft v1)
+# Fleet for ESPHome — End-User Persona (draft v1)
 
 **Purpose.** A single page we can point at when making scope / UX / copywriting decisions: *"is this the right move for who we're actually building for?"* Sketched from the product docs (`README.md`, `ha-addon/DOCS.md`), the internal-engineering stance (`CLAUDE.md`), the threat model (`dev-plans/SECURITY_AUDIT.md` §Threat Model), the UX review (`dev-plans/UX_REVIEW.md`), the four live WORKITEMS files, and the live hass-4 install the UX review profiled (65/67 devices, 4 remote workers on Linux/macOS/Windows/Proxmox).
 
@@ -23,7 +23,7 @@ Grounded in the [2024 Home Assistant Community Survey](https://www.home-assistan
 - **"Tech-curious"** is HA's own framing for its majority — deliberately broader than "tech-professional."
 - **3+ years of HA use** for the majority — this is not a fad-chaser community.
 - **2.8 people per household** on average — family homes, not single-occupant techie caves.
-- **11–100 devices** per typical install — with a long tail into the hundreds that ESPHome Fleet specifically serves.
+- **11–100 devices** per typical install — with a long tail into the hundreds that Fleet for ESPHome specifically serves.
 - **21,000+ GitHub contributors** in 2024 — but contributors are a small fraction of users; the vast majority never touch a PR.
 - **Values alignment** around privacy and choice is stronger than around "cool tech."
 
@@ -37,7 +37,7 @@ Grounded in the [2024 Home Assistant Community Survey](https://www.home-assistan
 4. **Australia / New Zealand.**
 5. **Growing but under-represented:** Southern Europe (Spain, Italy, Portugal), Eastern Europe, East Asia (Japan, Taiwan, Singapore), Brazil, and parts of the Middle East.
 
-For ESPHome Fleet specifically this means: English is the lingua franca of the community but is a second language for a substantial fraction of the user base. Units, number formats, electrical standards (230V/50Hz vs 120V/60Hz), WiFi regulatory domains, Thread/Matter availability all vary. The maintainer's own install happens to be US-located — but the product should never *assume* that.
+For Fleet for ESPHome specifically this means: English is the lingua franca of the community but is a second language for a substantial fraction of the user base. Units, number formats, electrical standards (230V/50Hz vs 120V/60Hz), WiFi regulatory domains, Thread/Matter availability all vary. The maintainer's own install happens to be US-located — but the product should never *assume* that.
 
 **Profession: not primarily software engineers.** Tech-curious doesn't map cleanly onto a job title. The HA user base includes software engineers and sysadmins, yes, but also:
 - **Engineers in other disciplines** — mechanical, electrical, civil, industrial control.
@@ -125,12 +125,12 @@ Drawn from the live hass-4 install the UX review observed, which is the maintain
 
 ---
 
-## Goals (what Pat hires ESPHome Fleet to do)
+## Goals (what Pat hires Fleet for ESPHome to do)
 
 1. **Parallelize fleet-wide upgrades across every machine Pat can spare — the original reason this project exists.** When a new ESPHome release drops and Pat wants to move the whole fleet to it, a sequential compile-per-device on a single worker — even a beefy one — is **hours of wall-clock time** at 50+ devices. Distributing the queue across the Proxmox VM, the idle gaming PC overnight, the macOS Mini in the office, and the built-in local worker cuts the same job to minutes. This is the headline win that justifies the whole distributed-compile architecture; bulk operations, scheduling, and per-device pinning are the affordances that make it usable, but raw wall-clock speed on a fleet-wide upgrade is the *why*.
 2. **Offload a single compile to hardware that can actually do it.** HA runs on a Pi for a reason; compiles don't belong there. Even without a multi-worker fleet-wide upgrade in play, a one-off "I just edited `cyd-office-info.yaml`, compile it" shouldn't take 8 minutes on the HA host when a 30-second compile is possible on a faster box.
 3. **Keep a growing fleet maintainable without it eating my Saturdays.** Bulk operations, scheduling, pinned versions — so "upgrade everything to 2026.4.0 at 3 AM Sunday except the two devices pinned to 2026.3.3 because they're on an older framework" is a one-click setup, not a shell-script ritual.
-4. **Keep Home Assistant as the single source of truth.** Pat's configs live in `/config/esphome/`; Pat's dashboard shows device state; Pat's automations trigger compiles. ESPHome Fleet is the *management layer*, not a parallel universe.
+4. **Keep Home Assistant as the single source of truth.** Pat's configs live in `/config/esphome/`; Pat's dashboard shows device state; Pat's automations trigger compiles. Fleet for ESPHome is the *management layer*, not a parallel universe.
 5. **See everything in one view.** Fleet-wide "is anything outdated?", "which devices haven't compiled successfully in the last week?", "what's pinned where?" — the Devices tab *is* the answer.
 6. **Test carefully before rolling out.** Pin one device to a new ESPHome version, compile + OTA it, watch the logs for a week, then roll out to the fleet with Upgrade Outdated.
 7. **Schedule disruptive operations for off-hours.** OTA reboots light bulbs. Pat wants them at 3 AM, not while the kids are doing homework.
@@ -138,7 +138,7 @@ Drawn from the live hass-4 install the UX review observed, which is the maintain
 
 ---
 
-## Pain points before ESPHome Fleet
+## Pain points before Fleet for ESPHome
 
 The documented hook that brings Pat here (from `ha-addon/DOCS.md` and implied in `README.md`):
 

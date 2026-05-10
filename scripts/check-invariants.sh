@@ -383,6 +383,41 @@ if [[ $total_tests -gt 0 ]]; then
 fi
 
 # -----------------------------------------------------------------------------
+# (PY-12) BR.1 anti-drift: "ESPHome Fleet" must not appear in user-facing
+# strings outside the rebrand allowlist. The 1.7.1 brand refresh renamed
+# every customer-visible mention to "Fleet for ESPHome" (BR.1); this rule
+# keeps the old wording from creeping back via a forgotten string, a
+# copy-pasted log line, or a refactor that lifts a stale comment into a
+# live label.
+#
+# Allowlisted because the old literal is intentional there:
+#   - dev-plans/archive/             (frozen historical plans)
+#   - dev-plans/WORKITEMS-1.7.1.md   (the rebrand plan itself)
+#   - ha-addon/CHANGELOG.md          (entries describing past releases)
+#   - any line containing the marker "br1-allow: <reason>" (per-line opt-out)
+#
+# To opt out a single legitimate reference (back-compat string for old
+# user YAMLs, brand-history sentence in a top-level doc, etc.), add an
+# inline "br1-allow: <reason>" comment and explain *why* the old literal
+# is the right text there. Aim for fewer than ten markers across the repo;
+# beyond that, prefer rephrasing.
+# -----------------------------------------------------------------------------
+rule_count=$((rule_count + 1))
+br1_hits=$(git ls-files \
+    | grep -vE '^dev-plans/archive/' \
+    | grep -vE '^dev-plans/WORKITEMS-1\.7\.1\.md$' \
+    | grep -vE '^ha-addon/CHANGELOG\.md$' \
+    | grep -vE '^scripts/check-invariants\.sh$' \
+    | xargs grep -nHI 'ESPHome Fleet' 2>/dev/null \
+    | grep -v 'br1-allow:' \
+    || true)
+if [[ -n "$br1_hits" ]]; then
+    fail "PY-12" \
+        "'ESPHome Fleet' literal found outside the BR.1 allowlist (Fleet for ESPHome rebrand). Rename it to 'Fleet for ESPHome', or add an inline 'br1-allow: <reason>' marker comment if the old wording is intentional." \
+        "$br1_hits"
+fi
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 

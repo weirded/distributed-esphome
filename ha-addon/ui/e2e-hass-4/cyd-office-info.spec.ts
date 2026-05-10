@@ -69,9 +69,9 @@ test.describe.serial('cyd-office-info hass-4 smoke', () => {
 
     // Header sanity — version badge should reflect the deployed version
     await expect(page.locator('header')).toBeVisible();
-    // #85: header wordmark is now "ESPHome Fleet" (previously just "Fleet"
-    // beside the ESPHome logo image).
-    await expect(page.getByText('ESPHome Fleet', { exact: true })).toBeVisible();
+    // BR.1: header wordmark is "Fleet for ESPHome" (was "ESPHome Fleet"  // br1-allow: prior-brand reference
+    // 1.5–1.7.0; was just "Fleet" beside the ESPHome logo image earlier).
+    await expect(page.getByText('Fleet for ESPHome', { exact: true })).toBeVisible();
     await expect(page.getByText(`v${EXPECTED_VERSION}`)).toBeVisible();
 
     // Devices tab is the default — wait for the device table to populate

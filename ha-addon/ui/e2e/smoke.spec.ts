@@ -12,8 +12,8 @@ test.beforeEach(async ({ page }) => {
 test('page loads and shows header', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('header')).toBeVisible();
-  // #85: wordmark is now "ESPHome Fleet" alongside the house glyph.
-  await expect(page.getByText('ESPHome Fleet', { exact: true })).toBeVisible();
+  // #85 + BR.1: wordmark is "Fleet for ESPHome" alongside the house glyph.
+  await expect(page.getByText('Fleet for ESPHome', { exact: true })).toBeVisible();
   await expect(page.getByText(/^v\d+\.\d+/)).toBeVisible();
 });
 

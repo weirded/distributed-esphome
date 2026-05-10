@@ -1,10 +1,16 @@
-# ESPHome Fleet
+# Fleet for ESPHome
+
+> Previously known as **ESPHome Fleet** (1.5.0–1.7.0). <!-- br1-allow: rebrand-history hint, removed for 1.8 -->
+
+> **Not an official ESPHome project.** Fleet for ESPHome is an independent, community-built tool that depends on [ESPHome](https://esphome.io) but is not part of the ESPHome project and is not maintained by the ESPHome team. "ESPHome" is a trademark of its respective owners; this project uses the name only to describe what it works with.
+
+> This file covers the **Home Assistant add-on** — available on HAOS and HA Supervised installs only. Running HA Container or HA Core? See [Standalone Docker installation](../README.md#as-a-standalone-docker-container) instead.
 
 A modern Home Assistant UI for ESPHome — works just as well for three devices as for a hundred. Git-backed config history with one-click rollback, a real device table, a live compile queue with searchable history, an inline YAML editor with autocomplete, per-device ESPHome version pinning, scheduled OTA upgrades, and optional distributed compilation when a slow HA host becomes the bottleneck.
 
 ## Getting Started
 
-Start the add-on, then open the web UI via the **ESPHome Fleet** entry in the HA sidebar.
+Start the add-on, then open the web UI via the **Fleet for ESPHome** entry in the HA sidebar.
 
 From 1.6.2, installing this add-on pulls a prebuilt image from GitHub Container Registry instead of building locally on your Home Assistant host. Installs now finish in a few seconds instead of a few minutes, and no longer fail when Docker Hub is rate-limiting or briefly unreachable.
 
@@ -16,7 +22,7 @@ From 1.6.2, installing this add-on pulls a prebuilt image from GitHub Container 
 2. The add-on includes a **built-in local worker** that runs inside the HA host. It starts with one build slot — enough to compile any target sequentially. On a fast host you can raise it to 2–4+ via the `+`/`-` buttons next to `local-worker` on the **Workers** tab. Setting slots to 0 pauses the local worker entirely (useful if you've connected remote workers and want the HA host out of the build loop).
 3. To offload compilation to a faster machine, click **+ Connect Worker** in the Workers tab. Pick **Bash**, **PowerShell**, or **Docker Compose**, copy the generated snippet, and run it on whatever machine you want to compile on. The snippet includes your actual server URL and token, so there's nothing to edit. Workers poll the add-on over HTTP for jobs (bearer token auth) and push firmware directly to ESP devices; no inbound ports need to be open on the worker machine, but it does need network reach to the ESP devices it'll flash.
 4. **Restart Home Assistant** once after the first install. The add-on ships a custom HA integration (`esphome_fleet`) that it auto-installs to `/config/custom_components/` on startup — but Home Assistant only loads integrations at Core startup, so the integration stays dormant until you restart HA. Go to **Settings → System → Restart** and pick *Restart Home Assistant*.
-5. After the restart, Home Assistant will pop an "ESPHome Fleet discovered" notification within a few seconds. Accept it to get all the devices, workers, and the add-on itself as real HA devices with entities.
+5. After the restart, Home Assistant will pop a "Fleet for ESPHome discovered" notification within a few seconds. Accept it to get all the devices, workers, and the add-on itself as real HA devices with entities.
 
 > **Upgrading the add-on later?** If a Fleet release changes the integration (check the changelog — look for the `Integration` heading), you'll need to restart Home Assistant again after the add-on finishes updating. Restarting *the add-on* alone doesn't pick up integration changes, because HA Core only loads Python integrations at boot.
 
@@ -126,7 +132,7 @@ cosign verify-attestation \
 
 ## Why this add-on requests these permissions
 
-Home Assistant's add-on store shows each add-on's "stars" — a score based on how little Supervisor privilege it asks for. ESPHome Fleet will never be a five-star add-on because managing a fleet of ESPHome devices genuinely requires a handful of elevated permissions. This section documents each one so the lower score is understood rather than mysterious.
+Home Assistant's add-on store shows each add-on's "stars" — a score based on how little Supervisor privilege it asks for. Fleet for ESPHome will never be a five-star add-on because managing a fleet of ESPHome devices genuinely requires a handful of elevated permissions. This section documents each one so the lower score is understood rather than mysterious.
 
 - **`host_network: true`** — mDNS device discovery needs to see the LAN's `_esphomelib._tcp` broadcasts, which the default bridge network on a Supervisor add-on doesn't expose. Without host networking, Fleet wouldn't automatically discover ESPHome devices on your network; you'd have to hand-enter each IP. This is the single biggest "why not five stars" item, and it's load-bearing.
 - **`hassio_api: true`** — used to query the Supervisor for the currently-installed ESPHome add-on version (so Fleet's default compile version tracks whatever you have installed) and to post discovery entries so the HA integration auto-pairs. Read + narrow-scoped writes only.

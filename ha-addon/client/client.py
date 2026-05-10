@@ -46,7 +46,7 @@ from sysinfo import collect_system_info
 # can detect the mismatch and self-update.
 # ---------------------------------------------------------------------------
 
-CLIENT_VERSION = "1.7.0"
+CLIENT_VERSION = "1.7.1"
 
 
 def _read_image_version() -> Optional[str]:
@@ -918,7 +918,7 @@ def _in_process_thread_dump() -> str:
     threads_by_ident = {t.ident: t for t in threading.enumerate()}
 
     lines: list[str] = [
-        "ESPHome Fleet worker thread dump",
+        "Fleet for ESPHome worker thread dump",
         f"Process: pid={os.getpid()}  v{CLIENT_VERSION}  image={IMAGE_VERSION}",
         f"Python {platform.python_version()} on {sys.platform}",
         f"{len(frames)} thread(s)",
@@ -1492,9 +1492,13 @@ def run_job(client_id: str, job: dict, version_manager: VersionManager, worker_i
     # flaky links — see GitHub #6. setdefault lets operators override via the
     # worker env if needed. Both PIP_DEFAULT_TIMEOUT and PIP_TIMEOUT map to
     # pip's --timeout option (verified in pip source).
-    subprocess_env.setdefault("UV_HTTP_TIMEOUT", "180")
+    # Bug #127: bumped UV_HTTP_TIMEOUT from 180 → 300 after HAOS 2026.4.4
+    # reports of "uv installation via pip timed out" on slow ARM hosts.
+    # UV_REQUEST_TIMEOUT added — newer uv versions use this over UV_HTTP_TIMEOUT.
+    subprocess_env.setdefault("UV_HTTP_TIMEOUT", "300")
+    subprocess_env.setdefault("UV_REQUEST_TIMEOUT", "300")
     subprocess_env.setdefault("UV_HTTP_CONNECT_TIMEOUT", "30")
-    subprocess_env.setdefault("PIP_DEFAULT_TIMEOUT", "180")
+    subprocess_env.setdefault("PIP_DEFAULT_TIMEOUT", "300")
 
     # Install ESPHome version (BEFORE starting the timeout timer)
     if ESPHOME_BIN:

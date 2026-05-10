@@ -1,10 +1,10 @@
-# ESPHome Fleet service descriptors (HI.2).
+# Fleet for ESPHome service descriptors (HI.2).
 #
 # Two separate device pickers (#66): the top-level `target:` picks one
 # or more managed devices to compile (filtered to manufacturer "ESPHome"
 # so only target devices show). The `worker` field picks an optional
-# build worker to pin the job to (filtered to manufacturer "ESPHome
-# Fleet Worker" so only workers show). This replaces the earlier
+# build worker to pin the job to (filtered to manufacturer "Fleet for
+# ESPHome Worker" so only workers show). This replaces the earlier
 # "mix devices + workers in one picker" approach which was confusing.
 #
 # The explicit `targets` list field stays as an alternative for
@@ -32,7 +32,7 @@ compile:
         device:
           filter:
             - integration: esphome_fleet
-              manufacturer: "ESPHome Fleet Worker"
+              manufacturer: "Fleet for ESPHome Worker"
     targets:
       name: Targets (alternative)
       description: >

@@ -344,7 +344,7 @@ def _ensure_gitignore(config_dir: Path) -> None:
     if existing and not existing.endswith("\n"):
         parts.append("\n")
     if not existing:
-        parts.append("# Added by ESPHome Fleet auto-versioning\n")
+        parts.append("# Added by Fleet for ESPHome auto-versioning\n")
     for entry in missing:
         parts.append(entry + "\n")
     new_content = "".join(parts)

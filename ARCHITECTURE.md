@@ -1,10 +1,10 @@
-# ESPHome Fleet — Architecture
+# Fleet for ESPHome — Architecture
 
 A single-page map of how the pieces fit together. Aimed at outside readers opening the repo for the first time; for the deep internal conventions (invariants, the end-of-turn loop, design-judgment rules) read `CLAUDE.md`.
 
 ## What this is
 
-ESPHome Fleet is a Home Assistant add-on that manages a fleet of ESPHome devices. It discovers the ESPHome YAMLs already in `/config/esphome/`, runs a web UI that talks to them, and offloads firmware compilation to one or more build workers. Workers are Docker containers — the first one runs inside the add-on itself; any number of additional ones run on other machines (a gaming PC, a NAS, a mini-PC) for faster compiles.
+Fleet for ESPHome is a Home Assistant add-on that manages a fleet of ESPHome devices. It discovers the ESPHome YAMLs already in `/config/esphome/`, runs a web UI that talks to them, and offloads firmware compilation to one or more build workers. Workers are Docker containers — the first one runs inside the add-on itself; any number of additional ones run on other machines (a gaming PC, a NAS, a mini-PC) for faster compiles.
 
 ## Three tiers
 

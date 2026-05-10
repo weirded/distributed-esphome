@@ -1,7 +1,7 @@
-"""Constants for the ESPHome Fleet integration."""
+"""Constants for the Fleet for ESPHome integration."""
 
 DOMAIN = "esphome_fleet"
-DEFAULT_TITLE = "ESPHome Fleet"
+DEFAULT_TITLE = "Fleet for ESPHome"
 
 CONF_BASE_URL = "base_url"
 CONF_TOKEN = "token"

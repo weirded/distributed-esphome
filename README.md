@@ -1,13 +1,17 @@
-# ESPHome Fleet
+# Fleet for ESPHome
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/weirded)
 
 **A modern Home Assistant UI for ESPHome — works just as well for three devices as it does for a hundred.** Compile, flash, edit, and track every ESPHome device with config history you can roll back, a live job queue, and a UI that actually shows you what's happening.
 
-![ESPHome Fleet — Devices tab](docs/screenshot.png)
+> Previously known as **ESPHome Fleet** (1.5.0–1.7.0). <!-- br1-allow: rebrand-history hint, removed for 1.8 -->
 
-![ESPHome Fleet — fleet tags and tag filter pills](docs/screenshot-tags.png)
+> **Not an official ESPHome project.** Fleet for ESPHome is an independent, community-built tool that depends on [ESPHome](https://esphome.io) but is not part of the ESPHome project and is not maintained by the ESPHome team. "ESPHome" is a trademark of its respective owners; this project uses the name only to describe what it works with.
+
+![Fleet for ESPHome — Devices tab](docs/screenshot.png)
+
+![Fleet for ESPHome — fleet tags and tag filter pills](docs/screenshot-tags.png)
 
 ## Why use this instead of the ESPHome builder?
 
@@ -32,7 +36,7 @@ Three moving parts:
                         ┌─────┤   Worker 1   ├───► ESP devices
   Home Assistant        │     └──────────────┘
 ┌──────────────────┐    │     ┌──────────────┐
-│  ESPHome Fleet   │◄───┼─────┤   Worker 2   ├───► ESP devices
+│ Fleet for ESPHome│◄───┼─────┤   Worker 2   ├───► ESP devices
 │    (add-on)      │    │     └──────────────┘
 └──────────────────┘    │     ┌──────────────┐
                         └─────┤   Worker N   ├───► ESP devices
@@ -50,12 +54,14 @@ Three moving parts:
 
 ### As a Home Assistant add-on (recommended)
 
+> **Add-ons only work on Home Assistant OS (HAOS) and Home Assistant Supervised.** If you're on **HA Container** (HA running in Docker) or **HA Core** (HA in a Python venv), there's no Add-on Store and the badge below won't do anything — skip to [As a standalone Docker container](#as-a-standalone-docker-container) instead. Not sure which you have? Open **Settings → About** in Home Assistant; *Installation Type* tells you.
+
 [![Add repository to my Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fweirded%2Fdistributed-esphome)
 
 Or manually:
 
 1. **Settings → Add-ons → Add-on Store → ⋮ (top right) → Repositories** and add `https://github.com/weirded/distributed-esphome`.
-2. Find **ESPHome Fleet** in the store and click **Install**.
+2. Find **Fleet for ESPHome** in the store and click **Install**.
 3. **Start** the add-on. Open the web UI from the HA sidebar.
 
 Home Assistant also auto-discovers the add-on and offers to add the companion integration — accept that notification once to get the device, sensor, and update entities into HA.
@@ -74,7 +80,7 @@ The worker's Python source updates itself from the server whenever the add-on up
 
 ### As a standalone Docker container
 
-Only if you're running the server outside Home Assistant. Most people don't need this.
+Use this path if you're running **HA Container**, **HA Core**, or no Home Assistant at all — none of those have an Add-on Store, so the add-on path above doesn't apply. Everything still works; the few HA-Supervisor-only features (auto-discovery, the HA-connectivity column, the HA-service Restart fallback) fail-soft and the rest of the UI is unchanged. See [What works and what doesn't without Home Assistant](#what-works-and-what-doesnt-without-home-assistant) for the full list.
 
 ```bash
 docker run -d \

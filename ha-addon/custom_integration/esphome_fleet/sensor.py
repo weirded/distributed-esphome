@@ -218,7 +218,7 @@ class SelectedEsphomeVersionSensor(_HubSensorBase):
 
 
 class FleetVersionSensor(_HubSensorBase):
-    """#44 — ESPHome Fleet add-on version."""
+    """#44 — Fleet for ESPHome add-on version."""
 
     _attr_name = "Fleet version"
     _attr_icon = "mdi:information-outline"

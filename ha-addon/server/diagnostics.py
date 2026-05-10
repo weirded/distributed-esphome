@@ -171,7 +171,7 @@ def in_process_thread_dump() -> str:
     # closely enough that operators who've seen the old format
     # recognise it on sight.
     lines: list[str] = [
-        "ESPHome Fleet thread dump",
+        "Fleet for ESPHome thread dump",
         f"Process: pid={os.getpid()}  v{_read_server_version()}",
         f"Python {platform.python_version()} on {sys.platform}",
         f"{len(frames)} thread(s)",

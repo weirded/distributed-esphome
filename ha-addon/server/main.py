@@ -1,4 +1,4 @@
-"""aiohttp application entry point for ESPHome Fleet (formerly Distributed Build Server)."""
+"""aiohttp application entry point for Fleet for ESPHome — see CHANGELOG for the rebrand history."""
 
 from __future__ import annotations
 
@@ -1557,7 +1557,7 @@ def create_app() -> web.Application:
 
     # Startup/shutdown hooks
     async def on_startup(app: web.Application) -> None:
-        logger.info("Starting ESPHome Fleet")
+        logger.info("Starting Fleet for ESPHome")
         logger.info("Config dir: %s", cfg.config_dir)
         # SI (WORKITEMS-1.6.2): one-shot deployment-shape banner so
         # operators grep one line to confirm whether HA coupling is
@@ -1748,7 +1748,7 @@ def create_app() -> web.Application:
             logger.info("Started local worker (PID %d, %s slots); stderr → %s", proc.pid, local_slots, local_worker_log)
 
     async def on_shutdown(app: web.Application) -> None:
-        logger.info("Shutting down ESPHome Fleet")
+        logger.info("Shutting down Fleet for ESPHome")
 
         # Stop local worker
         proc = app.get("local_worker_proc")

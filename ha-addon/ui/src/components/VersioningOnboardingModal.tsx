@@ -60,7 +60,7 @@ export function VersioningOnboardingModal({ onDecided }: { onDecided: () => void
         </DialogHeader>
         <div className="px-4 py-3 text-sm text-[var(--text)] space-y-3">
           <p>
-            ESPHome Fleet can keep a local git history of{' '}
+            Fleet for ESPHome can keep a local git history of{' '}
             <code className="rounded bg-[var(--surface2)] px-1 py-0.5 font-mono text-xs">
               /config/esphome/
             </code>{' '}

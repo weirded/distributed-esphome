@@ -1,6 +1,6 @@
 # Home Lab
 
-The physical infrastructure used to integration-test ESPHome Fleet. This is a developer-only reference — not surfaced in user docs.
+The physical infrastructure used to integration-test Fleet for ESPHome. This is a developer-only reference — not surfaced in user docs.
 
 ## Network
 
@@ -43,7 +43,7 @@ Additional dev laptops (e.g. the AI MacBook) keep their own `id_ed25519`. Their 
 
 ## Lab add-on bearer token
 
-The ESPHome Fleet add-on on `hass-4` is pinned to the server token:
+The Fleet for ESPHome add-on on `hass-4` is pinned to the server token:
 
 ```
 2416d179b5d41bca62091f681065bca9

@@ -1,7 +1,7 @@
-# ESPHome Fleet HA integration
+# Fleet for ESPHome HA integration
 
 This subtree is the Home Assistant **custom integration** that pairs
-with the ESPHome Fleet add-on (the aiohttp server in `ha-addon/server/`).
+with the Fleet for ESPHome add-on (the aiohttp server in `ha-addon/server/`).
 It turns the add-on into a first-class HA citizen:
 
 - Discovers the add-on via Supervisor or `_esphome-fleet._tcp` mDNS
@@ -37,7 +37,7 @@ Python modules.
 The repo, Docker image names, add-on slug, and internal Python modules
 keep their original `distributed_esphome` / `esphome-dist-*` form —
 changing those would force a migration on every existing install. The
-**user-facing** branding is "ESPHome Fleet" (see `CLAUDE.md`'s Naming
+**user-facing** branding is "Fleet for ESPHome" (see `CLAUDE.md`'s Naming
 convention section). The integration's `domain: esphome_fleet` picks
 the user-facing name so HA users see a clean `esphome_fleet.compile`
 service and an `esphome_fleet` integration in their UI, without the

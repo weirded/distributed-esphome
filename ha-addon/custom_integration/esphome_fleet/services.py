@@ -1,4 +1,4 @@
-"""ESPHome Fleet HA services (HI.2).
+"""Fleet for ESPHome HA services (HI.2).
 
 Three services, all thin wrappers over the add-on's `/ui/api/*` JSON API:
 

@@ -1,10 +1,10 @@
-# Contributing to ESPHome Fleet
+# Contributing to Fleet for ESPHome
 
 Thanks for taking the time — a quick tour of how this repo works so you can get a PR landing without surprises.
 
 ## How this project is built
 
-ESPHome Fleet is **vibe-coded** — most of the code, tests, docs, and release checklists are produced by a single developer working alongside Claude Code (`claude.ai/code`) as the primary authoring tool. The maintainer drives scope and design decisions; the agent does the typing, writes the tests, catches the invariant violations, and keeps the cross-referenced documentation in lockstep with the code. That workflow shapes a few things you'll notice in the repo:
+Fleet for ESPHome is **vibe-coded** — most of the code, tests, docs, and release checklists are produced by a single developer working alongside Claude Code (`claude.ai/code`) as the primary authoring tool. The maintainer drives scope and design decisions; the agent does the typing, writes the tests, catches the invariant violations, and keeps the cross-referenced documentation in lockstep with the code. That workflow shapes a few things you'll notice in the repo:
 
 - **`CLAUDE.md`** at the repo root is the load-bearing design document. It's written to be loaded into the agent's context on every turn, so it's long, opinionated, and specific — "don't do this because we tried it in 1.3 and it broke X." It is also the single best single-file reference for humans; read it before making non-trivial changes.
 - **Comments are denser than typical** — the narrative of *why* a branch exists, who reported the bug it fixes, and why a particular shape was picked over an obvious alternative is in-tree rather than in a scattered wiki. Assume the comments are load-bearing for future refactors.

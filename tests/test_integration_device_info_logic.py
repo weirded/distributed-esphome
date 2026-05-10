@@ -14,7 +14,7 @@ from esphome_fleet.device import hub_device_info, target_device_info, worker_dev
 def test_hub_device_info_identifies_by_entry_id() -> None:
     info = hub_device_info("entry-xyz", "http://homeassistant.local:8765")
     assert info["identifiers"] == {(DOMAIN, "hub:entry-xyz")}
-    assert info["name"] == "ESPHome Fleet"
+    assert info["name"] == "Fleet for ESPHome"
     assert info["configuration_url"] == "http://homeassistant.local:8765"
 
 

@@ -21,7 +21,7 @@ arrives from the Supervisor peer IP (path 1).
   2. **System Bearer (AU.7).** When the request carries ``Authorization:
      Bearer <x>`` and ``x`` equals the add-on's shared worker token
      (``cfg.token``), treat the caller as a trusted system. Used by the
-     native ESPHome Fleet HA integration's coordinator so it can poll
+     native Fleet for ESPHome HA integration's coordinator so it can poll
      ``/ui/api/*`` without the user having to mint a long-lived access
      token. The add-on plumbs the same token into the Supervisor
      discovery payload so the config flow captures it automatically.
@@ -33,7 +33,7 @@ arrives from the Supervisor peer IP (path 1).
      is valid; the response body carries the user metadata.
 
   4. **Neither.** Respond with 401 + ``WWW-Authenticate: Bearer
-     realm="ESPHome Fleet"``. Gated by the add-on option
+     realm="Fleet for ESPHome"``. Gated by the add-on option
      ``require_ha_auth``. AU.7 (1.5.0) flipped the default to ``true``;
      bug #83 (1.6.2) flipped it back to ``false`` because the true
      default hard-broke the standalone ``docker-compose`` path where
@@ -69,7 +69,7 @@ from constants import HA_SUPERVISOR_IP
 logger = logging.getLogger(__name__)
 
 SUPERVISOR_URL = "http://supervisor"
-_WWW_AUTHENTICATE = 'Bearer realm="ESPHome Fleet"'
+_WWW_AUTHENTICATE = 'Bearer realm="Fleet for ESPHome"'
 
 
 def _prefers_html(accept: str) -> bool:
@@ -99,7 +99,7 @@ _HTML_401_PAGE = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESPHome Fleet — authentication required</title>
+  <title>Fleet for ESPHome — authentication required</title>
   <style>
     :root { color-scheme: dark light; }
     html, body { height: 100%; margin: 0; }
@@ -152,7 +152,7 @@ _HTML_401_PAGE = """<!doctype html>
 <main>
   <h1>Authentication required</h1>
   <p>
-    You&rsquo;re reaching ESPHome Fleet on its direct port
+    You&rsquo;re reaching Fleet for ESPHome on its direct port
     (<code>:8765</code>). This install has the <code>require_ha_auth</code>
     setting turned on, so every request from outside Home Assistant&rsquo;s
     Ingress proxy needs to carry a bearer token.
@@ -173,7 +173,7 @@ _HTML_401_PAGE = """<!doctype html>
   <p>
     If this server is only reachable on a trusted LAN and you&rsquo;d
     rather not deal with bearer tokens, open the web UI via Home
-    Assistant (Settings &rarr; Add-ons &rarr; ESPHome Fleet &rarr; Open Web UI,
+    Assistant (Settings &rarr; Add-ons &rarr; Fleet for ESPHome &rarr; Open Web UI,
     which arrives through Ingress and is always allowed), open the
     Settings drawer, and turn off <strong>Require HA authentication on
     direct port</strong>.
@@ -188,7 +188,7 @@ _HTML_401_PAGE = """<!doctype html>
 
   <hr>
   <p class="muted">
-    HTTP 401 &middot; <code>WWW-Authenticate: Bearer realm=&quot;ESPHome Fleet&quot;</code>
+    HTTP 401 &middot; <code>WWW-Authenticate: Bearer realm=&quot;Fleet for ESPHome&quot;</code>
   </p>
 </main>
 </body>

@@ -1,6 +1,6 @@
 """Shared DeviceInfo helpers for HA device registry (HI.11).
 
-Three kinds of HA devices in the registry for ESPHome Fleet:
+Three kinds of HA devices in the registry for Fleet for ESPHome:
 
   1. A single "hub" device representing the add-on instance itself.
      Queue-depth sensor hangs off this one. Uniquely keyed by the
@@ -45,8 +45,8 @@ def _normalize_mac(value: str | None) -> str | None:
 def hub_device_info(entry_id: str, base_url: str) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, f"hub:{entry_id}")},
-        name="ESPHome Fleet",
-        manufacturer="ESPHome Fleet",
+        name="Fleet for ESPHome",
+        manufacturer="Fleet for ESPHome",
         model="Add-on server",
         configuration_url=base_url,
         entry_type=None,  # a real hub, not a service
@@ -122,8 +122,8 @@ def worker_device_info(worker: dict[str, Any], hub_entry_id: str) -> DeviceInfo:
         # #66: a distinct manufacturer string lets the compile service
         # filter the "worker" device selector to only show workers
         # (and the target selector to only show devices via a
-        # `manufacturer: "ESPHome"` filter). Hub keeps "ESPHome Fleet".
-        manufacturer="ESPHome Fleet Worker",
+        # `manufacturer: "ESPHome"` filter). Hub keeps "Fleet for ESPHome".
+        manufacturer="Fleet for ESPHome Worker",
         model=model,
         sw_version=worker.get("client_version") or None,
         via_device=(DOMAIN, f"hub:{hub_entry_id}"),

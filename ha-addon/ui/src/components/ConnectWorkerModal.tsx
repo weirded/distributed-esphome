@@ -176,9 +176,12 @@ export function ConnectWorkerModal({ serverInfo, esphomeVersion, onClose, preset
   // modal is short-lived and a mid-edit prop change would be surprising.
   const [form, dispatch] = useReducer(formReducer, {
     serverUrl: urlOptions[0] || '',
-    // UX.9: renamed from 'distributed-esphome-worker' to match the
-    // ESPHome Fleet rebrand. Shows in `docker ps`, dashboards, and
-    // logs — only affects newly-copied commands, not existing containers.
+    // UX.9: renamed from 'distributed-esphome-worker' to the shorter
+    // 'esphome-fleet-worker' (Docker-friendly slug; intentionally kept
+    // through the 1.7.1 "Fleet for ESPHome" rebrand — flipping the
+    // container name would break every operator's `docker ps` muscle
+    // memory). Shows in `docker ps`, dashboards, and logs — only
+    // affects newly-copied commands, not existing containers.
     containerName: 'esphome-fleet-worker',
     hostname: preset?.hostname ?? '',
     maxJobs: preset?.max_parallel_jobs ?? 2,

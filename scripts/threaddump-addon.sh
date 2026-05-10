@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture a Python thread dump from the running ESPHome Fleet add-on.
+# Capture a Python thread dump from the running Fleet for ESPHome add-on.
 #
 # **Normally you don't need this script.** Since 1.6.2 (#189) the
 # add-on UI has a first-class "Request diagnostics" action (Settings
@@ -49,7 +49,7 @@ esac
 
 CONTAINER="$(docker ps --format '{{.Names}}' | grep -E '^addon_.*_esphome_dist_server$' | head -1 || true)"
 if [[ -z "$CONTAINER" ]]; then
-  echo "No running ESPHome Fleet add-on container found." >&2
+  echo "No running Fleet for ESPHome add-on container found." >&2
   echo "Running add-on containers:" >&2
   docker ps --format '  {{.Names}}' | grep -E '^addon_' >&2 || echo "  (none)" >&2
   exit 1

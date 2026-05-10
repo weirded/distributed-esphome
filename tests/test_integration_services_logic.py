@@ -413,7 +413,7 @@ def test_services_yaml_parses() -> None:
     # filtered to the worker manufacturer so stable/target devices hide.
     worker_field = data[SERVICE_COMPILE]["fields"]["worker"]
     worker_filter = worker_field["selector"]["device"]["filter"]
-    assert any(f.get("manufacturer") == "ESPHome Fleet Worker" for f in worker_filter)
+    assert any(f.get("manufacturer") == "Fleet for ESPHome Worker" for f in worker_filter)
     # #65: legacy `worker_id` string field is gone.
     assert "worker_id" not in data[SERVICE_COMPILE]["fields"]
     # 114: tag-expression fields are exposed on both compile and validate.

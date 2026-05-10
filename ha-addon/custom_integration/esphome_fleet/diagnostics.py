@@ -1,7 +1,7 @@
-"""QS.1 — Diagnostics support for the ESPHome Fleet integration.
+"""QS.1 — Diagnostics support for the Fleet for ESPHome integration.
 
 Exposes ``async_get_config_entry_diagnostics`` so HA's *Download
-diagnostics* button (Settings → Devices & Services → ESPHome Fleet →
+diagnostics* button (Settings → Devices & Services → Fleet for ESPHome →
 ⋮ → Download diagnostics) produces a JSON dump with enough detail to
 reproduce a support issue, but with the sensitive bits redacted
 (bearer token, direct-port URL with ``?token=…`` query params, API

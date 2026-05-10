@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.7.1
+
+A brand-refresh release.
+
+**Renamed to "Fleet for ESPHome"** (the add-on shipped as **ESPHome Fleet** in 1.5.0–1.7.0; before that **ESPHome Distributed Build Server**). The add-on store entry, sidebar tile, browser tab title, in-app wordmark, HA-integration display name, and the device-registry rows under Settings → Devices all flip to the new name on next deploy. The add-on slug, the integration domain, every `esphome_fleet.*` HA service, the GitHub repo, and the worker's Docker image names stay on their existing identifiers — nothing to migrate.
+
+**YAML editor — Save vs. Save & Close.** The editor footer now offers two save buttons: **Save** writes the file to disk and stays open without creating a git commit (use it as a working checkpoint while you keep editing); **Save & Close** writes the file, commits, and closes the modal. With auto-commit on the close path commits silently with a default message; with auto-commit off it prompts for a message. The old "Save & Commit" button is gone — Save & Close covers both flows. The browser's "Save As HTML" no longer hijacks Ctrl+S (Cmd+S on Mac) inside the editor either; Ctrl+S maps to the same plain Save. The footer also has an explicit Close button (or just press Esc).
+
+**Scheduler — remote workers no longer starve behind a fast local one.** With the local worker on 1 slot and remote workers idle, the scheduler used to defer every remote claim back to the local worker (because the local's "active" count momentarily dipped to 0 between jobs). The queue now claims onto remote workers as soon as it exceeds what the higher-priority pool can drain alone, so a 6-job queue across 1 local + 3 remote workers actually parallelises.
+
+**Worker registration — fresh workers no longer get stuck in 500 loops.** A freshly registered worker that hadn't reported a `perf_score` yet could trip a server-side `TypeError` on every job poll, returning HTTP 500 forever; the worker would never claim a job, never benchmark, and never recover. The scheduler is now defensive on missing/None perf data and falls through to "no job for you right now" on any unexpected eligibility-check error so a single bad worker can't lock itself out of the fleet.
+
+**Worker firmware archive — no more spurious "Failed" jobs after a successful flash.** A slow worker uploading both factory + ota variants of the compiled binary could race the server's job-timeout checker mid-upload; the server then refused both uploads with HTTP 409 and the UI flagged the job as failed even though the device was already flashed. The server now tolerates a brief grace window after a job finishes so the still-assigned worker's late variant uploads land cleanly.
+
+**Slow networks — pip install for ESPHome venvs is more patient.** The `pip install esphome==X.Y.Z` step that runs on first use of a new ESPHome version was timing out for some HAOS users on slower or remote networks. Bumped the timeout, added a single retry, and a failure now names the network/PyPI cause so it's distinguishable from a real compile error.
+
+**Install docs — HA Container / HA Core users now have a clearer path.** The README and add-on docs both spell out that the Add-on Store install path is HAOS / HA Supervised only, and point HA Container / HA Core users straight at the standalone Docker section.
+
+**Older ESPHome versions are installable again.** The version dropdown showed every release back to 2024 but rejected any pin below 2026.4 — pre-1.7.1 the server's bundle path required `esphome.bundle` (which only landed in 2026.4), so anyone pinning an older release got "Fleet for ESPHome 1.6.2+ requires 2026.4.0 or newer" and a stuck install. 1.7.1 keeps the modern, scoped bundle for ESPHome 2026.4+ and falls back to a full-config-dir tar for older versions, so pinning 2026.3.x to dodge a 2026.4 YAML-parser regression (or to keep an older toolchain) just works. The legacy bundle ships the full config directory to the worker — same shape ESPHome's own dashboard uses — so users sharing workers with untrusted parties should still pin to 2026.4+; single-user fleets are unaffected.
+
+**Quieter device logs — Fleet no longer reconnects every 60 seconds.** The add-on used to open a fresh native-API connection to every known ESPHome device once a minute just to read the running firmware version. On a device with `on_connect:` automations or a chatty publish-on-connect path, those automations re-fired on every Fleet poll; on devices whose ESPHome firmware allowed only one API client, the constant churn could compete with Home Assistant's persistent connection and pressure the device's `reboot_timeout`. Fleet now leans on mDNS announcements (which already carry the running version) for steady-state liveness and only opens an API connection on first sight of a new device or right after a Fleet-driven OTA. Power users diagnosing a flaky device can re-enable the old behaviour by flipping `device_native_api_poll` in Settings.
+
+**Bug fixes (carried from earlier in the cycle).**
+
+- **#231** — The "Authentication Expired" repair flow, the initial config-flow copy, and the underlying error message used to point users to *Settings → Add-ons → ESPHome Fleet → Configuration* (the Supervisor add-on Configuration tab). The Server token actually lives in the add-on's own UI at **Settings → Authentication → Server token**. The four affected strings now match the visible UI labels.
+
 ## 1.7.0
 
 A major release built around **fleet tags + rule-based job routing**, with bounded worker disk, device-management polish, and a unified Upgrade modal on top.
