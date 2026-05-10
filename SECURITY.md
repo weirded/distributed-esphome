@@ -12,7 +12,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please [open a GitHub issue](https://github.com/weirded/distributed-esphome/issues/new) with:
+If you discover a security vulnerability, please [open a GitHub issue](https://github.com/weirded/fleet-for-esphome/issues/new) with:
 
 - A description of the vulnerability
 - Steps to reproduce
@@ -44,7 +44,7 @@ The stated threat model is a **trusted home network** behind Home Assistant's In
 - **Cosign-signed GHCR images** (keyless / GitHub OIDC) — verify with:
   ```bash
   cosign verify \
-    --certificate-identity-regexp 'https://github.com/weirded/distributed-esphome/.github/workflows/publish-.*\.yml@.*' \
+    --certificate-identity-regexp 'https://github.com/weirded/fleet-for-esphome/.github/workflows/publish-.*\.yml@.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     ghcr.io/weirded/esphome-dist-client:latest
   ```

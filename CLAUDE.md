@@ -10,7 +10,7 @@ Be extremely concise. Sacrifice grammar for the sake of concision.
 
 Fleet for ESPHome (internally: `distributed-esphome`; previously branded "ESPHome Fleet" 1.5.0–1.7.0, "ESPHome Distributed Build Server" before that) manages fleets of ESPHome devices — offloads compilation to remote workers, schedules upgrades, pins versions per device, and organizes devices via tags. Runs as a Home Assistant add-on with a built-in local worker. Additional build workers run in Docker on remote machines, poll the server for jobs, compile firmware using ESPHome, and push firmware via OTA directly to ESP devices. <!-- br1-allow: brand-history -->
 
-**Naming convention:** user-facing docs/UI/log lines say **"Fleet for ESPHome"** (1.7.1 BR.1 rebrand). Code identifiers, the GitHub repo (`weirded/distributed-esphome`), Docker image names (`esphome-dist-server`, `esphome-dist-client`), the add-on slug (`esphome_dist_server`), the custom-integration domain (`esphome_fleet`), the mDNS service type (`_esphome-fleet._tcp.local.`), Python module names, and the YAML comment marker (`# distributed-esphome:`) all keep their existing form — changing those would force a migration on every existing install for no user benefit.
+**Naming convention:** user-facing docs/UI/log lines say **"Fleet for ESPHome"** (1.7.1 BR.1 rebrand). Code identifiers, Docker image names (`esphome-dist-server`, `esphome-dist-client`), the add-on slug (`esphome_dist_server`), the custom-integration domain (`esphome_fleet`), the mDNS service type (`_esphome-fleet._tcp.local.`), Python module names, and the YAML comment marker (`# distributed-esphome:`) all keep their existing form — changing those would force a migration on every existing install for no user benefit. The GitHub repo was renamed to `weirded/fleet-for-esphome` in 1.7.2; GitHub auto-redirects the old URL.
 
 ## Architecture
 
@@ -288,7 +288,7 @@ gh api graphql -f query='
 # "replies" off the first comment:
 CID=$(gh api graphql -f query='query($id:ID!){node(id:$id){... on PullRequestReviewThread{comments(first:1){nodes{databaseId}}}}}' \
       -F id=PRRT_kwDO... --jq .data.node.comments.nodes[0].databaseId)
-gh api "repos/weirded/distributed-esphome/pulls/<PR>/comments/$CID/replies" \
+gh api "repos/weirded/fleet-for-esphome/pulls/<PR>/comments/$CID/replies" \
   -X POST -f body='Fixed in <SHA> — <one-line what-changed>.'
 
 # Resolve one by its thread id (from the query above):
