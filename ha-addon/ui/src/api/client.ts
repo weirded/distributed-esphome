@@ -293,6 +293,12 @@ export interface AppSettings {
   // 'iso' = YYYY-MM-DD, 'us' = M/D/YYYY, 'eu' = DD/MM/YYYY,
   // 'long' = "Apr 27, 2026". Wired to App.tsx → setDateFormatPref.
   date_format: 'auto' | 'iso' | 'us' | 'eu' | 'long';
+  // I18N.2 (#141) — UI locale. 'auto' resolves to navigator.language;
+  // 'en' / 'de' force a specific locale. Wired to App.tsx →
+  // i18n.changeLanguage(). Adding a language requires (a) shipping its
+  // catalog in src/i18n/locales/, (b) adding it here, and (c) listing
+  // it in `_validate_enum` on the server.
+  language: 'auto' | 'en' | 'de';
 }
 
 export async function getSettings(): Promise<AppSettings> {

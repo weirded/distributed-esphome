@@ -165,6 +165,30 @@ async def test_time_format_defaults_to_auto(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# I18N.2 (#141) — language enum
+# ---------------------------------------------------------------------------
+
+
+async def test_update_settings_accepts_language_values(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    for val in ("auto", "en", "de"):
+        updated = await update_settings({"language": val})
+        assert updated.language == val
+
+
+async def test_update_settings_rejects_unknown_language(tmp_path):
+    init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    with pytest.raises(SettingsValidationError) as exc:
+        await update_settings({"language": "fr"})
+    assert exc.value.field == "language"
+
+
+async def test_language_defaults_to_auto(tmp_path):
+    s = init_settings(settings_path=tmp_path / "s.json", options_path=tmp_path / "o.json")
+    assert s.language == "auto"
+
+
+# ---------------------------------------------------------------------------
 # #98 — versioning_enabled tristate + legacy bool migration
 # ---------------------------------------------------------------------------
 
@@ -568,6 +592,7 @@ def test_init_creates_settings_file_when_absent(tmp_path: Path):
         "require_ha_auth": False,
         "time_format": "auto",
         "date_format": "auto",
+        "language": "auto",
         "default_worker_disk_quota_bytes": 10 * 1024 ** 3,
     }
     # Everything else matches the dataclass defaults.
@@ -841,6 +866,7 @@ def test_settings_as_dict_round_trips():
         "require_ha_auth": False,
         "time_format": "auto",
         "date_format": "auto",
+        "language": "auto",
         "default_worker_disk_quota_bytes": 10 * 1024 ** 3,
     }
 

@@ -181,6 +181,15 @@ class AppSettings:
     # load and on every drawer commit.
     date_format: str = "auto"
 
+    # I18N.2 (#141): UI language preference. ``'auto'`` resolves to
+    # ``navigator.language`` in the browser; explicit ``'en'`` / ``'de'``
+    # force the locale regardless of the browser setting. Wired through
+    # ``i18next.changeLanguage()`` from App.tsx. Adding a language here is
+    # not enough — its catalog also has to ship in
+    # ``ha-addon/ui/src/i18n/locales/`` and the ``_validate_enum`` call
+    # below has to enumerate it.
+    language: str = "auto"
+
     # DQ.1: fleet-wide default per-worker disk quota for the
     # ``/esphome-versions/`` tree (venvs + per-target caches + per-slot
     # working dirs + pio-slot toolchains). Pushed to every worker on every
@@ -328,6 +337,8 @@ _VALIDATORS: dict[str, Callable[[Any, str], Any]] = {
     # Bug #5: date enum — 'auto' / 'iso' (2026-04-27) / 'us' (4/27/2026)
     # / 'eu' (27/04/2026) / 'long' (Apr 27, 2026).
     "date_format": _validate_enum("auto", "iso", "us", "eu", "long"),
+    # I18N.2 (#141): UI locale — 'auto' (browser) / 'en' / 'de'.
+    "language": _validate_enum("auto", "en", "de"),
     # DQ.1: ≥1 GiB floor stops a typo from starving every worker into
     # constant eviction; 1 TiB ceiling matches firmware_cache_max_gb's
     # upper bound (anything bigger is misconfiguration). Also pinned to

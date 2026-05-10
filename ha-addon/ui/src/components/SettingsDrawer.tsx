@@ -236,6 +236,23 @@ export function SettingsDrawer({ open, onOpenChange, dirtyTargets = [], onReques
                   ]}
                   onCommit={v => patch({ date_format: v as 'auto' | 'iso' | 'us' | 'eu' | 'long' })}
                 />
+                {/* I18N.2 (#141) — UI language. 'auto' follows the
+                    browser's preferred locale (`navigator.language`);
+                    explicit values override. At I18N.2 the catalogs
+                    are still empty, so every value renders the same
+                    English literals — picking Deutsch becomes
+                    visible once I18N.4/I18N.9 land. */}
+                <EnumRow
+                  label="Language"
+                  help="Interface language. Translations land progressively across 1.7.2."
+                  value={data.language}
+                  options={[
+                    { value: 'auto', label: 'Auto (follow browser locale)' },
+                    { value: 'en', label: 'English' },
+                    { value: 'de', label: 'Deutsch' },
+                  ]}
+                  onCommit={v => patch({ language: v as 'auto' | 'en' | 'de' })}
+                />
               </Section>
               </>}
               {activeTab === 'advanced' && <>

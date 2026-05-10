@@ -626,6 +626,10 @@ export async function mockApi(page: Page) {
     require_ha_auth: true,
     // #82: default to 'auto' (follow browser locale).
     time_format: 'auto',
+    // I18N.2 (#141): UI locale picker. ``'auto'`` defers to
+    // navigator.language; the Settings drawer renders an EnumRow
+    // wired against this field.
+    language: 'auto',
   };
   await page.route('**/ui/api/settings', async (route) => {
     const method = route.request().method();
