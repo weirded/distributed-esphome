@@ -1,5 +1,5 @@
 aiohttp>=3.13.5
-pydantic>=2.13.3
+pydantic>=2.13.4
 croniter>=6.2.2
 apscheduler>=3.11.2,<4
 aioesphomeapi>=44.23.0
@@ -11,7 +11,7 @@ pyyaml>=6.0.3
 # VersionManager. This eliminates #51 (bundle upgrade friction) + #56
 # (macOS-only transitives leaking in) + #20 (upstream API changes
 # invisible until re-bump) in one go. The image is ~200 MB smaller.
-requests>=2.33.1
+requests>=2.34.0
 icmplib>=3.0.4
 # #108 briefly added py-spy here for external `docker exec` thread
 # dumps. #189 replaced the py-spy path with an in-process frame walk
