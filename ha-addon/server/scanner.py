@@ -1545,6 +1545,11 @@ def _extract_metadata(config: dict, result: dict) -> None:
         board = config["rp2040"].get("board")
         if board:
             result["board"] = str(board)
+    elif isinstance(config.get("bk72xx"), dict):
+        result["esp_type"] = "BK72XX"
+        board = config["bk72xx"].get("board")
+        if board:
+            result["board"] = str(board)
     elif "host" in config:
         # Host platform has no board — it's a virtual platform for
         # tests / CI runs against the developer's machine.
