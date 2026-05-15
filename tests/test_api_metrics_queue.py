@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 
-from tests.test_api import (  # type: ignore[import-not-found]
+from test_api import (  # type: ignore[import-not-found]
     AUTH_HEADERS,
     _enqueue_job,
     _make_app,
