@@ -14,7 +14,7 @@ Watch the scaler:
   kubectl -n {{ .Release.Namespace }} get scaledobject,deployment,pods -l app.kubernetes.io/instance={{ .Release.Name }}
 {{- else }}
 
-Autoscaling: disabled. Running {{ .Values.replicas }} fixed replica(s).
+Autoscaling: disabled. Running {{ .Values.autoscaling.minReplicaCount }} fixed replica(s).
 {{- end }}
 
 Verify the workers registered with the server:

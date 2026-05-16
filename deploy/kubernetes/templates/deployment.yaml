@@ -5,9 +5,9 @@
 {{- if and (not .Values.server.token) (not .Values.server.existingSecret) -}}
 {{- fail "esphome-fleet-worker: either server.token or server.existingSecret must be set (the worker image requires SERVER_TOKEN at startup)" -}}
 {{- end -}}
-{{- if and .Values.persistence.enabled (not .Values.autoscaling.enabled) (gt (.Values.replicas | int) 1) -}}
+{{- if and .Values.persistence.enabled (not .Values.autoscaling.enabled) (gt (.Values.autoscaling.minReplicaCount | int) 1) -}}
 {{- if not (has "ReadWriteMany" .Values.persistence.accessModes) -}}
-{{- fail "esphome-fleet-worker: with persistence.enabled and replicas > 1, persistence.accessModes must include ReadWriteMany — a single RWO PVC cannot multi-attach across pods. Either set persistence.enabled=false (use emptyDir), reduce replicas to 1, or provide RWX storage." -}}
+{{- fail "esphome-fleet-worker: with persistence.enabled and autoscaling.minReplicaCount > 1, persistence.accessModes must include ReadWriteMany — a single RWO PVC cannot multi-attach across pods. Either set persistence.enabled=false (use emptyDir), reduce autoscaling.minReplicaCount to 1, or provide RWX storage." -}}
 {{- end -}}
 {{- end -}}
 apiVersion: apps/v1
@@ -18,7 +18,7 @@ metadata:
     {{- include "esphome-fleet-worker.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicas }}
+  replicas: {{ .Values.autoscaling.minReplicaCount }}
   {{- end }}
   selector:
     matchLabels:

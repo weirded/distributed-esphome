@@ -79,9 +79,8 @@ See `values.yaml` for the full list. The most-touched fields:
 | `server.url` | `""` | **Required.** e.g. `http://homeassistant.local:8765` |
 | `server.token` | `""` | Bearer token from Fleet Settings drawer. Use `existingSecret` instead in production. |
 | `server.existingSecret` | `""` | Name of a Secret with key `SERVER_TOKEN`. Skip `server.token` when set. |
-| `replicas` | `1` | Used when `autoscaling.enabled=false`. |
 | `autoscaling.enabled` | `false` | Requires KEDA installed in cluster. |
-| `autoscaling.minReplicaCount` | `0` | Set to `1` for an always-on baseline. |
+| `autoscaling.minReplicaCount` | `1` | Baseline replica count. Also the fixed Deployment replica count when `autoscaling.enabled=false`. There is no separate `replicas` knob. |
 | `autoscaling.maxReplicaCount` | `3` | Cap to your worker-slot count. |
 | `autoscaling.cooldownPeriod` | `600` | Seconds before scale-down once queue is empty. |
 | `autoscaling.targetQueueSize` | `2` | Desired jobs per worker. KEDA: `ceil(queue_size / targetQueueSize)`. |

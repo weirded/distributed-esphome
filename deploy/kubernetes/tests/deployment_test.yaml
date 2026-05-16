@@ -7,11 +7,11 @@ release:
 chart:
   appVersion: 1.7.0
 tests:
-  - it: sets fixed replicas when autoscaling disabled
+  - it: sets fixed replicas from minReplicaCount when autoscaling disabled
     set:
       server.url: http://example:8765
       server.token: tok
-      replicas: 2
+      autoscaling.minReplicaCount: 2
       persistence.enabled: false
     asserts:
       - equal:
@@ -130,23 +130,23 @@ tests:
       - failedTemplate:
           errorMessage: "esphome-fleet-worker: either server.token or server.existingSecret must be set (the worker image requires SERVER_TOKEN at startup)"
 
-  - it: fails when fixed-mode persistence + replicas > 1 + RWO only
+  - it: fails when fixed-mode persistence + minReplicaCount > 1 + RWO only
     set:
       server.url: http://example:8765
       server.token: tok
-      replicas: 2
+      autoscaling.minReplicaCount: 2
       persistence.enabled: true
       persistence.accessModes:
         - ReadWriteOnce
     asserts:
       - failedTemplate:
-          errorMessage: "esphome-fleet-worker: with persistence.enabled and replicas > 1, persistence.accessModes must include ReadWriteMany — a single RWO PVC cannot multi-attach across pods. Either set persistence.enabled=false (use emptyDir), reduce replicas to 1, or provide RWX storage."
+          errorMessage: "esphome-fleet-worker: with persistence.enabled and autoscaling.minReplicaCount > 1, persistence.accessModes must include ReadWriteMany — a single RWO PVC cannot multi-attach across pods. Either set persistence.enabled=false (use emptyDir), reduce autoscaling.minReplicaCount to 1, or provide RWX storage."
 
-  - it: passes when fixed-mode persistence + replicas > 1 + RWX
+  - it: passes when fixed-mode persistence + minReplicaCount > 1 + RWX
     set:
       server.url: http://example:8765
       server.token: tok
-      replicas: 2
+      autoscaling.minReplicaCount: 2
       persistence.enabled: true
       persistence.accessModes:
         - ReadWriteMany
@@ -155,11 +155,11 @@ tests:
           path: spec.replicas
           value: 2
 
-  - it: passes when replicas > 1 + persistence disabled (emptyDir)
+  - it: passes when minReplicaCount > 1 + persistence disabled (emptyDir)
     set:
       server.url: http://example:8765
       server.token: tok
-      replicas: 3
+      autoscaling.minReplicaCount: 3
       persistence.enabled: false
     asserts:
       - equal:

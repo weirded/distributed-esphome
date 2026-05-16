@@ -47,7 +47,6 @@
         "extraEnv": { "type": "array", "items": { "type": "object" } }
       }
     },
-    "replicas": { "type": "integer", "minimum": 0 },
     "autoscaling": {
       "type": "object",
       "additionalProperties": false,

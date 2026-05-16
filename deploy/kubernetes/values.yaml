@@ -29,11 +29,12 @@ worker:
   otaTimeout: 120
   extraEnv: []
 
-replicas: 1
-
 autoscaling:
   enabled: false
-  minReplicaCount: 0
+  # Baseline replica count and the single always-on knob — there is no
+  # separate `replicas` value. When autoscaling.enabled is false this is the
+  # fixed Deployment replica count; when true it is KEDA's scale-to floor.
+  minReplicaCount: 1
   maxReplicaCount: 3
   cooldownPeriod: 600
   pollingInterval: 30

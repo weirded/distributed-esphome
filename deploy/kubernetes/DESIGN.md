@@ -8,7 +8,7 @@ The chart deploys workers only — the server still runs as the HA add-on (or a 
 
 - **Pure replica scaling.** The chart has zero awareness of node-level state (sleep/wake/cordon). It exposes `minReplicaCount` and `maxReplicaCount` and lets the cluster handle the rest. Power-management features like Wake-on-LAN node autoscaling are explicitly out of scope and live in the user's own platform layer.
 - **Replicas cap at worker count, not job count.** `maxReplicaCount` should be set to the number of physical worker slots the user wants utilized (typically equal to the number of nodes in the target pool, or 2× if `MAX_PARALLEL_JOBS=2`). distributed-esphome's queue plus per-worker `MAX_PARALLEL_JOBS` already handle oversubscription — N workers will drain a queue of 100 jobs sequentially, no need to spawn 100 pods. README will hammer this point.
-- **KEDA optional.** With `autoscaling.enabled=false` the chart is just a fixed-replica `Deployment` with `replicas: {{ .Values.replicas }}`. With `autoscaling.enabled=true` we deploy a `ScaledObject` against a `metrics-api` scaler hitting `/api/v1/status` (Bearer auth) and reading `queue_size`.
+- **KEDA optional.** With `autoscaling.enabled=false` the chart is just a fixed-replica `Deployment` with `replicas: {{ .Values.autoscaling.minReplicaCount }}`. With `autoscaling.enabled=true` we deploy a `ScaledObject` against a `metrics-api` scaler hitting `/api/v1/status` (Bearer auth) and reading `queue_size`. `autoscaling.minReplicaCount` is the single always-on knob — there is no separate `replicas` value.
 - **No KEDA scale-up timeout.** When KEDA scales the Deployment up, pods sit `Pending` until the scheduler can place them. There's no per-pod "wake the node" timeout in Kubernetes — the pod stays Pending forever (unless a deadline is explicitly set, which the chart does NOT set). This means the chart works fine on clusters where node provisioning is slow (cluster autoscaler, WoL, Cluster API, Karpenter). Documented in README.
 - **`cooldownPeriod` (default 600s)** governs how long after `queue_size` returns to zero before KEDA scales replicas back down. Tunable via `autoscaling.cooldownPeriod`. Chart README points users at their own node-sleep idle threshold for tuning.
 - **Server token** lives in a `Secret` the chart creates from `serverToken` in values, OR references an existing Secret via `existingSecret`. README discourages putting the token in the values file directly; recommends sealed-secrets / SOPS / external-secrets.
@@ -66,11 +66,9 @@ worker:
   otaTimeout: 120
   extraEnv: []
 
-replicas: 1              # used when autoscaling.enabled is false
-
 autoscaling:
   enabled: false
-  minReplicaCount: 0
+  minReplicaCount: 1       # baseline + fixed replica count; no separate `replicas` knob
   maxReplicaCount: 3
   cooldownPeriod: 600
   pollingInterval: 30
@@ -131,16 +129,17 @@ We can ship raw manifests too (just `helm template ... > kubernetes-manifests.ya
   - `hostNetwork=true` propagates correctly.
 - No live cluster integration test in this PR; that needs a kind/k3d harness that doesn't yet exist in CI. Could follow up with a separate `chart-testing` GitHub Action.
 
-## Open questions for the maintainer
+## Open questions for the maintainer — resolved
 
-1. Path: `deploy/kubernetes/` vs `charts/esphome-fleet-worker/` vs separate repo. I picked `deploy/kubernetes/` because it sits next to `docker-compose.yml` at the repo root — same "deployment artifacts" idea. Push back if you'd rather a `charts/` dir or even a separate repo for chart releases.
-2. Chart publishing: do you want the chart pushed to GHCR as an OCI artifact on releases (`ghcr.io/weirded/charts/esphome-fleet-worker`)? Or keep it as a repo-only chart users install via `helm install ... ./deploy/kubernetes`?
-3. The "always-on" use case: the chart already supports it via `autoscaling.minReplicaCount: 1`. Is that good, or would you prefer a separate `replicas` knob that's mutually exclusive with autoscaling? My take: one knob is simpler.
-4. Should the chart also offer to deploy a **standalone server** (the `ghcr.io/weirded/esphome-dist-server` image) for users without HA? Out of scope here, but worth asking — it'd be a sibling chart `esphome-fleet-server`.
+All four were answered by the maintainer in PR #107 review:
+
+1. **Path** — keep `deploy/kubernetes/` (parallel to `deploy/proxmox/scaler/`); `deploy/` is the parent for community deployment backends.
+2. **Chart publishing** — yes, publish to GHCR as OCI artifacts on `v*` tag releases (`ghcr.io/weirded/charts/...`). Implemented in `.github/workflows/chart-release.yml`.
+3. **Always-on knob** — use `autoscaling.minReplicaCount` (default `1`) as the single baseline knob; no separate `replicas` value.
+4. **Standalone-server chart** — in scope: a sibling chart now lives at `deploy/kubernetes/server/` (`esphome-fleet-server`).
 
 ## Out of scope here
 
-- Standalone-server chart (see #4).
 - Cluster autoscaler / Karpenter / WoL integration.
 - Per-tenant or multi-server worker setups.
 - ARM64 worker images (the upstream `esphome-dist-client` image is multi-arch; the chart just inherits whatever the user's nodes can pull).
