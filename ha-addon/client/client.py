@@ -786,6 +786,12 @@ def _run_disk_quota_sweep(
         return
 
     pinned = _active_job_set.snapshot()
+    # #119 (round 2): the embedded local worker shares this dir with the
+    # server's bundling venv. Pin the server's active version(s) so the
+    # disk-quota sweep never evicts the venv `scanner.create_bundle`
+    # shells into. Remote workers (own dir) read an empty set — no-op.
+    from version_manager import read_server_active_versions  # noqa: PLC0415
+    pinned.venv_versions |= read_server_active_versions(base)
     total_freed = 0
     summary_parts: list[str] = []
 
