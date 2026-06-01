@@ -2,6 +2,8 @@
 
 ## 1.7.2 (unreleased — dev only)
 
+**Compiles no longer get stuck failing after the built-in worker frees disk space.** When the add-on's built-in worker trimmed its ESPHome version cache to stay within its disk budget, it could delete the very ESPHome version the server needs to prepare each build — after which every compile failed with a “Bundle creation failed” error and the queue stalled until the add-on was restarted. The server now reserves its active ESPHome version so the worker's cache cleanup leaves it alone, and transparently reinstalls it if it ever goes missing, so the build queue keeps running on its own.
+
 **Settings → Display → Font size.** New three-way picker (Small / Normal / Large) that scales the whole UI proportionally — tables, buttons, dialogs, and modals shrink or grow together rather than just body copy. Useful if you run Home Assistant at a non-100 % browser zoom and find Fleet's secondary text too small. Default stays at Normal so existing installs render byte-identical to 1.7.1.
 
 **Per-worker "Working" sensor.** Every build worker now exposes a `binary_sensor.fleet_<worker>_working` entity in Home Assistant alongside the existing `_online` sensor. The entity flips on while the worker has a compile in flight, so you can write automations like "stop the VSCode add-on while any worker is busy" — exposed as the building block rather than hard-coding any specific stop/start action. Generalises beyond VSCode to Frigate, NodeRED, AdGuard, or a dashboard warning card; mirrors HA's `BinarySensorDeviceClass.RUNNING` for the right icon and label.
